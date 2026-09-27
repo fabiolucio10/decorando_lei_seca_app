@@ -1,0 +1,6 @@
+.venv/
+__pycache__/
+*.pyc
+decorando_lei.db
+leis_importadas/
+.streamlit/secrets.toml
