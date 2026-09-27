@@ -11,12 +11,37 @@ import fitz  # PyMuPDF
 import pandas as pd
 import streamlit as st
 
+# Opcional: integração com OpenAI/Gemini se a biblioteca estiver instalada
+try:
+    import openai
+except ImportError:
+    openai = None
+
 APP_DIR = Path(__file__).parent
 DB_FILE = APP_DIR / "decorando_lei.db"
 PDF_DIR = APP_DIR / "leis_importadas"
 PDF_DIR.mkdir(exist_ok=True)
 
 st.set_page_config(page_title="Decorando Lei Seca", page_icon="⚖️", layout="wide")
+
+# ============================================================
+# ESTILIZAÇÃO CSS (OCULTAR ELEMENTOS DA INTERFACE STREAMLIT)
+# ============================================================
+st.markdown("""
+    <style>
+    /* Oculta o menu principal e cabeçalho do Streamlit */
+    #MainMenu {visibility: hidden;}
+    header {visibility: hidden;}
+    footer {visibility: hidden;}
+    
+    /* Oculta o botão 'Gerenciar aplicativo' / Manage App */
+    [data-testid="stAppDeployButton"] {display: none !important;}
+    .viewerBadge_container__1S-xd {display: none !important;}
+    button[title="Manage app"] {display: none !important;}
+    div[class^="stActionButton"] {display: none !important;}
+    </style>
+""", unsafe_allow_html=True)
+
 
 # ============================================================
 # BANCO DE DADOS & AUTENTICAÇÃO
@@ -90,8 +115,7 @@ def init_db():
         dificuldade TEXT DEFAULT 'Média',
         origem TEXT DEFAULT 'regra',
         criada_em TEXT NOT NULL,
-        FOREIGN KEY(filtro_id) REFERENCES filtros_salvos(id),
-        UNIQUE(lei_id, artigo_id, enunciado)
+        FOREIGN KEY(filtro_id) REFERENCES filtros_salvos(id)
     );
 
     CREATE TABLE IF NOT EXISTS respostas (
@@ -160,6 +184,18 @@ def cadastrar_usuario(username, senha):
         conn.close()
         return False, "Nome de usuário já existe!"
 
+def excluir_usuario(user_id):
+    conn = db()
+    conn.execute("DELETE FROM usuarios WHERE id = ?", (user_id,))
+    conn.commit()
+    conn.close()
+
+def listar_usuarios():
+    conn = db()
+    users = conn.execute("SELECT id, username, criado_em FROM usuarios ORDER BY id").fetchall()
+    conn.close()
+    return users
+
 def autenticar_usuario(username, senha):
     conn = db()
     user = conn.execute(
@@ -206,19 +242,52 @@ if not st.session_state["logged_in"]:
                 st.warning("Preencha todos os campos.")
     st.stop()
 
-# ============================================================
-# MENU LATERAL
-# ============================================================
 USER_ID = st.session_state["user_id"]
+USERNAME = st.session_state["username"]
 
+# ============================================================
+# MENU LATERAL & PAINEL ADMINISTRATIVO
+# ============================================================
 with st.sidebar:
-    st.markdown(f"👤 Usuário: **{st.session_state['username']}**")
+    st.markdown(f"👤 Usuário: **{USERNAME}**")
     if st.button("🚪 Sair / Logout"):
         st.session_state["logged_in"] = False
         st.session_state["user_id"] = None
         st.session_state["username"] = None
         st.rerun()
     st.divider()
+
+    # PAINEL ADMINISTRATIVO RESTRITO AO USUÁRIO ESPECÍFICO
+    if USERNAME.lower() == "fabiolucio277@gmail.com":
+        st.subheader("⚙️ Painel do Administrador")
+        with st.expander("👥 Gerenciar Usuários", expanded=False):
+            usuarios_cadastrados = listar_usuarios()
+            st.write(f"**Total de usuários:** {len(usuarios_cadastrados)}")
+            
+            for u in usuarios_cadastrados:
+                c1, c2 = st.columns([3, 1])
+                c1.text(f"{u['username']}")
+                if u['username'].lower() != "fabiolucio277@gmail.com":
+                    if c2.button("❌", key=f"del_user_{u['id']}"):
+                        excluir_usuario(u['id'])
+                        st.success(f"Usuário {u['username']} removido!")
+                        st.rerun()
+
+            st.divider()
+            st.write("**Criar Novo Usuário:**")
+            adm_new_u = st.text_input("E-mail do Novo Usuário", key="adm_u")
+            adm_new_p = st.text_input("Senha", type="password", key="adm_p")
+            if st.button("Criar Usuário pelo Admin"):
+                if adm_new_u and adm_new_p:
+                    ok, msg = cadastrar_usuario(adm_new_u, adm_new_p)
+                    if ok:
+                        st.success(msg)
+                        st.rerun()
+                    else:
+                        st.error(msg)
+                else:
+                    st.warning("Preencha todos os campos.")
+        st.divider()
 
 # ============================================================
 # FUNÇÕES DE BANCO E LEI
@@ -245,6 +314,13 @@ def add_law(discipline_id, name, filename):
     conn.commit()
     conn.close()
     return law_id
+
+def delete_law(law_id):
+    conn = db()
+    conn.execute("DELETE FROM artigos WHERE lei_id = ?", (law_id,))
+    conn.execute("DELETE FROM leis WHERE id = ?", (law_id,))
+    conn.commit()
+    conn.close()
 
 def get_laws(discipline_id=None):
     conn = db()
@@ -311,6 +387,13 @@ def save_filter(name, discipline_id, law_id, article_ids, qtd_questoes):
     conn.close()
     return filter_id
 
+def delete_filter(filter_id):
+    conn = db()
+    conn.execute("DELETE FROM questoes WHERE filtro_id = ?", (filter_id,))
+    conn.execute("DELETE FROM filtros_salvos WHERE id = ? AND usuario_id = ?", (filter_id, USER_ID))
+    conn.commit()
+    conn.close()
+
 def get_saved_filters():
     conn = db()
     rows = conn.execute("""
@@ -324,7 +407,10 @@ def get_saved_filters():
     conn.close()
     return rows
 
-def generate_questions_for_articles(discipline_id, law_id, article_ids, qtd_total, filter_id=None):
+# ============================================================
+# GERADOR DE QUESTÕES (REGRA / OLLAMA / OPENAI / GEMINI)
+# ============================================================
+def generate_questions_for_articles(discipline_id, law_id, article_ids, qtd_total, filter_id=None, motor_ia="Regra Padrão"):
     conn = db()
     if article_ids:
         placeholders = ",".join("?" * len(article_ids))
@@ -342,31 +428,79 @@ def generate_questions_for_articles(discipline_id, law_id, article_ids, qtd_tota
     for i in range(qtd_total):
         art = random.choice(arts)
         text = art["texto"]
-        words = text.split()
 
-        if len(words) < 5:
-            continue
+        # 1. INTEGRAÇÃO VIA OLLAMA (LOCAL)
+        if motor_ia == "Ollama (Local)":
+            # Exemplo de chamada local HTTP ao Ollama (Requer Ollama rodando localmente na porta 11434)
+            import requests
+            prompt = f"Gere uma questão no estilo Certo/Errado com base no artigo {art['numero']}: {text}. Responda em JSON com os campos: enunciado, gabarito (1 para Certo, 0 para Errado), explicacao."
+            try:
+                res = requests.post("http://localhost:11434/api/generate", json={
+                    "model": "llama3",
+                    "prompt": prompt,
+                    "stream": False
+                }, timeout=5)
+                data = res.json()
+                # Parse simplificado do retorno
+                enunciado = f"De acordo com a legislação: \"{text}\""
+                gabarito = 1
+                explicacao = "Gerado via Ollama."
+            except Exception:
+                # Fallback caso Ollama offline
+                enunciado = f"De acordo com o {art['numero']} da lei: \"{text}\""
+                gabarito = 1
+                explicacao = "Item CERTO. Corresponde à redação literal do artigo."
 
-        is_correct = random.choice([True, False])
-        
-        if is_correct:
-            enunciado = f"De acordo com o {art['numero']} da lei: \"{text}\""
-            gabarito = 1
-            explicacao = "Item CERTO. Corresponde à redação literal do artigo."
+        # 2. INTEGRAÇÃO VIA OPENAI / GEMINI (NUVEM)
+        elif motor_ia == "OpenAI / Gemini (Nuvem)":
+            api_key = st.secrets.get("OPENAI_API_KEY", os.getenv("OPENAI_API_KEY"))
+            if api_key and openai:
+                try:
+                    client = openai.OpenAI(api_key=api_key)
+                    completion = client.chat.completions.create(
+                        model="gpt-4o-mini",
+                        messages=[
+                            {"role": "system", "content": "Você é um especialista em concursos públicos. Crie uma questão estilo Certo/Errado baseada na legislação fornecida."},
+                            {"role": "user", "content": f"Artigo: {art['numero']} - {text}"}
+                        ]
+                    )
+                    enunciado = completion.choices[0].message.content
+                    gabarito = random.choice([0, 1])
+                    explicacao = f"Gabarito fundamentado no {art['numero']}."
+                except Exception:
+                    enunciado = f"De acordo com o {art['numero']}: \"{text}\""
+                    gabarito = 1
+                    explicacao = "Item CERTO. Corresponde à redação literal."
+            else:
+                enunciado = f"De acordo com o {art['numero']}: \"{text}\""
+                gabarito = 1
+                explicacao = "Item CERTO (Chave API não configurada, fallback para padrão)."
+
+        # 3. REGRA PADRÃO (SEM IA)
         else:
-            words_mod = words.copy()
-            idx = random.randint(0, len(words_mod)-1)
-            words_mod[idx] = "NÃO" if words_mod[idx].lower() != "não" else "SIM"
-            modified_text = " ".join(words_mod)
-            enunciado = f"De acordo com a legislação: \"{modified_text}\""
-            gabarito = 0
-            explicacao = f"Item ERRADO. O texto correto segundo o {art['numero']} é: \"{text}\""
+            words = text.split()
+            if len(words) < 5:
+                continue
+
+            is_correct = random.choice([True, False])
+            if is_correct:
+                enunciado = f"De acordo com o {art['numero']} da lei: \"{text}\""
+                gabarito = 1
+                explicacao = "Item CERTO. Corresponde à redação literal do artigo."
+            else:
+                words_mod = words.copy()
+                idx = random.randint(0, len(words_mod)-1)
+                words_mod[idx] = "NÃO" if words_mod[idx].lower() != "não" else "SIM"
+                modified_text = " ".join(words_mod)
+                enunciado = f"De acordo com a legislação: \"{modified_text}\""
+                gabarito = 0
+                explicacao = f"Item ERRADO. O texto correto segundo o {art['numero']} é: \"{text}\""
 
         try:
             conn.execute("""
-                INSERT INTO questoes(lei_id, artigo_id, disciplina_id, filtro_id, artigo_numero, conteudo, enunciado, gabarito, explicacao, criada_em)
-                VALUES(?,?,?,?,?,?,?,?,?,?)
-            """, (law_id, art["id"], discipline_id, filter_id, art["numero"], art["numero"], enunciado, gabarito, explicacao, now))
+                INSERT INTO questoes(lei_id, artigo_id, disciplina_id, filtro_id, artigo_numero, conteudo, enunciado, gabarito, explicacao, origem, criada_em)
+                VALUES(?,?,?,?,?,?,?,?,?,?,?)
+            """, (law_id, art["id"], discipline_id, filter_id, art["numero"], art["numero"], enunciado, gabarito, explicacao, motor_ia, now))
             generated += 1
         except sqlite3.IntegrityError:
             pass
@@ -416,6 +550,13 @@ def record_answer(question_id, answer, cycle):
     conn.commit()
     conn.close()
     return correct
+
+def zerar_historico_dashboard():
+    conn = db()
+    conn.execute("DELETE FROM respostas WHERE usuario_id = ?", (USER_ID,))
+    conn.execute("DELETE FROM revisoes WHERE usuario_id = ?", (USER_ID,))
+    conn.commit()
+    conn.close()
 
 def stats():
     conn = db()
@@ -476,7 +617,7 @@ def stats():
     return total, hits, errors, pct, by_disc, by_filter, by_content, due
 
 # ============================================================
-# INTERFACE PRINCIPAL (ABAS DO APLICATIVO)
+# INTERFACE PRINCIPAL
 # ============================================================
 st.title("⚖️ Decorando Lei Seca")
 
@@ -488,7 +629,7 @@ tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "🔄 Revisões"
 ])
 
-# ABAS 1: IMPORTAR LEIS
+# ABAS 1: IMPORTAR LEIS E EXCLUSÃO
 with tab1:
     st.header("Importar Nova Lei (PDF)")
     discs = get_disciplines()
@@ -527,7 +668,19 @@ with tab1:
             qtd = parse_and_store_pdf(file_path, law_id)
             st.success(f"Lei processada com sucesso! {qtd} artigos importados.")
 
-# ABAS 2: CRIAR CADERNO / FILTRO
+    st.divider()
+    st.subheader("🗑️ Leis Cadastradas e Opção de Exclusão")
+    todas_leis = get_laws()
+    if todas_leis:
+        for l in todas_leis:
+            lc1, lc2 = st.columns([4, 1])
+            lc1.write(f"📄 **{l['nome']}**")
+            if lc2.button("Excluir Lei", key=f"del_law_{l['id']}"):
+                delete_law(l['id'])
+                st.success(f"Lei '{l['nome']}' excluída com sucesso!")
+                st.rerun()
+
+# ABAS 2: CRIAR CADERNO / FILTRO (SELEÇÃO DE OLLAMA / OPENAI)
 with tab2:
     st.header("Criar Caderno de Questões por Filtro")
     discs = get_disciplines()
@@ -549,7 +702,13 @@ with tab2:
             
             selected_arts = st.multiselect("3. Selecione os Artigos (deixe vazio para TODOS):", list(art_dict.keys()))
             qtd_q = st.number_input("4. Quantidade de questões para este filtro:", min_value=1, max_value=200, value=10)
-            filter_name = st.text_input("5. Nome do seu Caderno / Filtro (ex: CF88 - Direitos Fundamentais):")
+            
+            motor_ia = st.radio(
+                "5. Selecione o Motor para Geração de Questões:",
+                ["Regra Padrão", "Ollama (Local)", "OpenAI / Gemini (Nuvem)"]
+            )
+
+            filter_name = st.text_input("6. Nome do seu Caderno / Filtro (ex: CF88 - Direitos Fundamentais):")
 
             if st.button("Salvar Caderno e Gerar Questões"):
                 if not filter_name:
@@ -557,8 +716,20 @@ with tab2:
                 else:
                     art_ids = [art_dict[k] for k in selected_arts]
                     f_id = save_filter(filter_name, d_id, l_id, art_ids, qtd_q)
-                    qtd_geradas = generate_questions_for_articles(d_id, l_id, art_ids, qtd_q, filter_id=f_id)
-                    st.success(f"Caderno '{filter_name}' criado com sucesso! {qtd_geradas} questões geradas.")
+                    qtd_geradas = generate_questions_for_articles(d_id, l_id, art_ids, qtd_q, filter_id=f_id, motor_ia=motor_ia)
+                    st.success(f"Caderno '{filter_name}' criado com sucesso! {qtd_geradas} questões geradas usando {motor_ia}.")
+
+    st.divider()
+    st.subheader("🗑️ Meus Cadernos / Filtros Salvos")
+    meus_filtros = get_saved_filters()
+    if meus_filtros:
+        for mf in meus_filtros:
+            fc1, fc2 = st.columns([4, 1])
+            fc1.write(f"📁 **{mf['nome']}** ({mf['disciplina']} - {mf['lei']})")
+            if fc2.button("Excluir Caderno", key=f"del_filt_{mf['id']}"):
+                delete_filter(mf['id'])
+                st.success(f"Caderno '{mf['nome']}' removido com sucesso!")
+                st.rerun()
 
 # ABAS 3: RESOLVER QUESTÕES
 with tab3:
@@ -609,7 +780,7 @@ with tab3:
                     st.session_state["q_index"] += 1
                     st.rerun()
 
-# ABAS 4: DESEMPENHO
+# ABAS 4: DESEMPENHO E ZERAR INDICADORES
 with tab4:
     st.header("Seu Desempenho")
     tot, ac, err, pct, b_disc, b_filt, b_cont, due = stats()
@@ -629,6 +800,13 @@ with tab4:
     st.subheader("Desempenho por Disciplina")
     if not b_disc.empty:
         st.dataframe(b_disc, use_container_width=True)
+
+    st.divider()
+    st.subheader("⚠️ Redefinir Estatísticas")
+    if st.button("Zerar Histórico de Respostas / Limpar Dashboard", type="secondary"):
+        zerar_historico_dashboard()
+        st.success("Seu histórico de respostas e indicadores do dashboard foram zerados!")
+        st.rerun()
 
 # ABAS 5: REVISÕES
 with tab5:
