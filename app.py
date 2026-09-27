@@ -11,7 +11,6 @@ import fitz  # PyMuPDF
 import pandas as pd
 import streamlit as st
 
-# Opcional: integração com OpenAI/Gemini se a biblioteca estiver instalada
 try:
     import openai
 except ImportError:
@@ -24,17 +23,11 @@ PDF_DIR.mkdir(exist_ok=True)
 
 st.set_page_config(page_title="Decorando Lei Seca", page_icon="⚖️", layout="wide")
 
-# ============================================================
-# ESTILIZAÇÃO CSS (OCULTAR ELEMENTOS DA INTERFACE STREAMLIT)
-# ============================================================
 st.markdown("""
     <style>
-    /* Oculta o menu principal e cabeçalho do Streamlit */
     #MainMenu {visibility: hidden;}
     header {visibility: hidden;}
     footer {visibility: hidden;}
-    
-    /* Oculta o botão 'Gerenciar aplicativo' / Manage App */
     [data-testid="stAppDeployButton"] {display: none !important;}
     .viewerBadge_container__1S-xd {display: none !important;}
     button[title="Manage app"] {display: none !important;}
@@ -42,10 +35,6 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-
-# ============================================================
-# BANCO DE DADOS & AUTENTICAÇÃO
-# ============================================================
 def db():
     conn = sqlite3.connect(DB_FILE)
     conn.row_factory = sqlite3.Row
@@ -143,28 +132,6 @@ def init_db():
         UNIQUE(usuario_id, questao_id)
     );
     """)
-
-    cursor = conn.cursor()
-    cursor.execute("PRAGMA table_info(questoes)")
-    cols_q = [row[1] for row in cursor.fetchall()]
-    if "filtro_id" not in cols_q:
-        cursor.execute("ALTER TABLE questoes ADD COLUMN filtro_id INTEGER")
-
-    cursor.execute("PRAGMA table_info(filtros_salvos)")
-    cols_f = [row[1] for row in cursor.fetchall()]
-    if "usuario_id" not in cols_f:
-        cursor.execute("ALTER TABLE filtros_salvos ADD COLUMN usuario_id INTEGER")
-
-    cursor.execute("PRAGMA table_info(respostas)")
-    cols_r = [row[1] for row in cursor.fetchall()]
-    if "usuario_id" not in cols_r:
-        cursor.execute("ALTER TABLE respostas ADD COLUMN usuario_id INTEGER")
-
-    cursor.execute("PRAGMA table_info(revisoes)")
-    cols_rev = [row[1] for row in cursor.fetchall()]
-    if "usuario_id" not in cols_rev:
-        cursor.execute("ALTER TABLE revisoes ADD COLUMN usuario_id INTEGER")
-
     conn.commit()
     conn.close()
 
@@ -245,9 +212,6 @@ if not st.session_state["logged_in"]:
 USER_ID = st.session_state["user_id"]
 USERNAME = st.session_state["username"]
 
-# ============================================================
-# MENU LATERAL & PAINEL ADMINISTRATIVO
-# ============================================================
 with st.sidebar:
     st.markdown(f"👤 Usuário: **{USERNAME}**")
     if st.button("🚪 Sair / Logout"):
@@ -257,7 +221,6 @@ with st.sidebar:
         st.rerun()
     st.divider()
 
-    # PAINEL ADMINISTRATIVO RESTRITO AO USUÁRIO ESPECÍFICO
     if USERNAME.lower() == "fabiolucio277@gmail.com":
         st.subheader("⚙️ Painel do Administrador")
         with st.expander("👥 Gerenciar Usuários", expanded=False):
@@ -289,9 +252,6 @@ with st.sidebar:
                     st.warning("Preencha todos os campos.")
         st.divider()
 
-# ============================================================
-# FUNÇÕES DE BANCO E LEI
-# ============================================================
 def add_discipline(name):
     conn = db()
     conn.execute("INSERT OR IGNORE INTO disciplinas(nome) VALUES(?)", (name.strip(),))
@@ -407,10 +367,7 @@ def get_saved_filters():
     conn.close()
     return rows
 
-# ============================================================
-# GERADOR DE QUESTÕES (REGRA / OLLAMA / OPENAI / GEMINI)
-# ============================================================
-def generate_questions_for_articles(discipline_id, law_id, article_ids, qtd_total, filter_id=None, motor_ia="Regra Padrão"):
+def generate_questions_for_articles(discipline_id, law_id, article_ids, qtd_total, filter_id=None, motor_ia="⚙️ Regra Padrão"):
     conn = db()
     if article_ids:
         placeholders = ",".join("?" * len(article_ids))
@@ -428,31 +385,37 @@ def generate_questions_for_articles(discipline_id, law_id, article_ids, qtd_tota
     for i in range(qtd_total):
         art = random.choice(arts)
         text = art["texto"]
+        is_correct = random.choice([True, False])
 
-        # 1. INTEGRAÇÃO VIA OLLAMA (LOCAL)
-        if motor_ia == "Ollama (Local)":
-            # Exemplo de chamada local HTTP ao Ollama (Requer Ollama rodando localmente na porta 11434)
+        if "Ollama" in motor_ia:
             import requests
-            prompt = f"Gere uma questão no estilo Certo/Errado com base no artigo {art['numero']}: {text}. Responda em JSON com os campos: enunciado, gabarito (1 para Certo, 0 para Errado), explicacao."
             try:
+                prompt = f"Crie uma questão Certo/Errado baseada no artigo {art['numero']}: {text}."
                 res = requests.post("http://localhost:11434/api/generate", json={
                     "model": "llama3",
                     "prompt": prompt,
                     "stream": False
-                }, timeout=5)
+                }, timeout=3)
                 data = res.json()
-                # Parse simplificado do retorno
-                enunciado = f"De acordo com a legislação: \"{text}\""
-                gabarito = 1
-                explicacao = "Gerado via Ollama."
+                enunciado = data.get("response", f"De acordo com o {art['numero']}: {text}")
+                gabarito = 1 if is_correct else 0
+                explicacao = f"Item {'CERTO' if is_correct else 'ERRADO'} fundamentado no {art['numero']}."
             except Exception:
-                # Fallback caso Ollama offline
-                enunciado = f"De acordo com o {art['numero']} da lei: \"{text}\""
-                gabarito = 1
-                explicacao = "Item CERTO. Corresponde à redação literal do artigo."
+                if is_correct:
+                    enunciado = f"De acordo com o {art['numero']} da lei: \"{text}\""
+                    gabarito = 1
+                    explicacao = f"Item CERTO. Corresponde à redação literal do {art['numero']}."
+                else:
+                    words = text.split()
+                    if len(words) > 3:
+                        idx = random.randint(0, len(words)-1)
+                        words[idx] = "NÃO" if words[idx].lower() != "não" else "SIM"
+                    modified_text = " ".join(words)
+                    enunciado = f"De acordo com a legislação: \"{modified_text}\""
+                    gabarito = 0
+                    explicacao = f"Item ERRADO. Texto original do {art['numero']}: \"{text}\""
 
-        # 2. INTEGRAÇÃO VIA OPENAI / GEMINI (NUVEM)
-        elif motor_ia == "OpenAI / Gemini (Nuvem)":
+        elif "OpenAI" in motor_ia or "Gemini" in motor_ia:
             api_key = st.secrets.get("OPENAI_API_KEY", os.getenv("OPENAI_API_KEY"))
             if api_key and openai:
                 try:
@@ -460,33 +423,47 @@ def generate_questions_for_articles(discipline_id, law_id, article_ids, qtd_tota
                     completion = client.chat.completions.create(
                         model="gpt-4o-mini",
                         messages=[
-                            {"role": "system", "content": "Você é um especialista em concursos públicos. Crie uma questão estilo Certo/Errado baseada na legislação fornecida."},
+                            {"role": "system", "content": "Você é um banca examinadora de concursos. Crie uma afirmação Certo ou Errado baseada no texto do artigo enviado."},
                             {"role": "user", "content": f"Artigo: {art['numero']} - {text}"}
                         ]
                     )
                     enunciado = completion.choices[0].message.content
-                    gabarito = random.choice([0, 1])
+                    gabarito = 1 if is_correct else 0
                     explicacao = f"Gabarito fundamentado no {art['numero']}."
                 except Exception:
+                    if is_correct:
+                        enunciado = f"De acordo com o {art['numero']}: \"{text}\""
+                        gabarito = 1
+                        explicacao = f"Item CERTO. Texto literal do {art['numero']}."
+                    else:
+                        words = text.split()
+                        if len(words) > 3:
+                            idx = random.randint(0, len(words)-1)
+                            words[idx] = "NÃO" if words[idx].lower() != "não" else "SIM"
+                        enunciado = f"De acordo com a legislação: \"{' '.join(words)}\""
+                        gabarito = 0
+                        explicacao = f"Item ERRADO. Texto original do {art['numero']}: \"{text}\""
+            else:
+                if is_correct:
                     enunciado = f"De acordo com o {art['numero']}: \"{text}\""
                     gabarito = 1
-                    explicacao = "Item CERTO. Corresponde à redação literal."
-            else:
-                enunciado = f"De acordo com o {art['numero']}: \"{text}\""
-                gabarito = 1
-                explicacao = "Item CERTO (Chave API não configurada, fallback para padrão)."
+                    explicacao = f"Item CERTO. Corresponde à redação literal do {art['numero']}."
+                else:
+                    words = text.split()
+                    if len(words) > 3:
+                        idx = random.randint(0, len(words)-1)
+                        words[idx] = "NÃO" if words[idx].lower() != "não" else "SIM"
+                    enunciado = f"De acordo com a legislação: \"{' '.join(words)}\""
+                    gabarito = 0
+                    explicacao = f"Item ERRADO. Texto original do {art['numero']}: \"{text}\""
 
-        # 3. REGRA PADRÃO (SEM IA)
         else:
+            # REGRA PADRÃO
             words = text.split()
-            if len(words) < 5:
-                continue
-
-            is_correct = random.choice([True, False])
-            if is_correct:
+            if is_correct or len(words) < 5:
                 enunciado = f"De acordo com o {art['numero']} da lei: \"{text}\""
                 gabarito = 1
-                explicacao = "Item CERTO. Corresponde à redação literal do artigo."
+                explicacao = f"Item CERTO. Corresponde à redação literal do {art['numero']}."
             else:
                 words_mod = words.copy()
                 idx = random.randint(0, len(words_mod)-1)
@@ -529,7 +506,7 @@ def record_answer(question_id, answer, cycle):
 
     if not correct:
         priority = min(10, (old["prioridade"] if old else 1) + 2)
-        next_date = now + timedelta(days=1)
+        next_date = now
     else:
         priority = max(0, (old["prioridade"] if old else 1) - 1)
         intervals = [1, 3, 7, 15, 30]
@@ -616,9 +593,6 @@ def stats():
     conn.close()
     return total, hits, errors, pct, by_disc, by_filter, by_content, due
 
-# ============================================================
-# INTERFACE PRINCIPAL
-# ============================================================
 st.title("⚖️ Decorando Lei Seca")
 
 tab1, tab2, tab3, tab4, tab5 = st.tabs([
@@ -629,7 +603,6 @@ tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "🔄 Revisões"
 ])
 
-# ABAS 1: IMPORTAR LEIS E EXCLUSÃO
 with tab1:
     st.header("Importar Nova Lei (PDF)")
     discs = get_disciplines()
@@ -680,7 +653,6 @@ with tab1:
                 st.success(f"Lei '{l['nome']}' excluída com sucesso!")
                 st.rerun()
 
-# ABAS 2: CRIAR CADERNO / FILTRO (SELEÇÃO DE OLLAMA / OPENAI)
 with tab2:
     st.header("Criar Caderno de Questões por Filtro")
     discs = get_disciplines()
@@ -705,7 +677,7 @@ with tab2:
             
             motor_ia = st.radio(
                 "5. Selecione o Motor para Geração de Questões:",
-                ["Regra Padrão", "Ollama (Local)", "OpenAI / Gemini (Nuvem)"]
+                ["⚙️ Regra Padrão", "🦙 Ollama (Local)", "🤖 OpenAI / Gemini (Nuvem)"]
             )
 
             filter_name = st.text_input("6. Nome do seu Caderno / Filtro (ex: CF88 - Direitos Fundamentais):")
@@ -731,7 +703,6 @@ with tab2:
                 st.success(f"Caderno '{mf['nome']}' removido com sucesso!")
                 st.rerun()
 
-# ABAS 3: RESOLVER QUESTÕES
 with tab3:
     st.header("Resolver Questões")
     saved_filters = get_saved_filters()
@@ -780,7 +751,6 @@ with tab3:
                     st.session_state["q_index"] += 1
                     st.rerun()
 
-# ABAS 4: DESEMPENHO E ZERAR INDICADORES
 with tab4:
     st.header("Seu Desempenho")
     tot, ac, err, pct, b_disc, b_filt, b_cont, due = stats()
@@ -808,7 +778,6 @@ with tab4:
         st.success("Seu histórico de respostas e indicadores do dashboard foram zerados!")
         st.rerun()
 
-# ABAS 5: REVISÕES
 with tab5:
     st.header("Revisão Espaçada")
     tot, ac, err, pct, b_disc, b_filt, b_cont, due = stats()
@@ -834,7 +803,7 @@ with tab5:
                 if acertou:
                     st.success("✨ Excelente! Próxima revisão agendada.")
                 else:
-                    st.error("❌ Errou! Ela voltará amanhã.")
+                    st.error("❌ Errou! Ela voltará para revisão.")
                 st.info(f"**Gabarito:** {revs['explicacao']}")
     else:
         st.success("Tudo em dia! Não há revisões pendentes para hoje.")
