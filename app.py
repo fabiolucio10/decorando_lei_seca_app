@@ -50,6 +50,7 @@ def init_db():
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         username TEXT UNIQUE NOT NULL,
         senha TEXT NOT NULL,
+        autorizado INTEGER DEFAULT 0,
         criado_em TEXT NOT NULL
     );
 
@@ -132,24 +133,43 @@ def init_db():
         UNIQUE(usuario_id, questao_id)
     );
     """)
+    
+    # Atualização de esquema (Garante coluna 'autorizado' em bancos legados)
+    try:
+        conn.execute("ALTER TABLE usuarios ADD COLUMN autorizado INTEGER DEFAULT 0")
+    except sqlite3.OperationalError:
+        pass
+
+    # Garante que o administrador principal esteja autorizado por padrão
+    conn.execute("UPDATE usuarios SET autorizado = 1 WHERE LOWER(username) = 'fabiolucio277@gmail.com'")
+    
     conn.commit()
     conn.close()
 
 init_db()
 
-def cadastrar_usuario(username, senha):
+def cadastrar_usuario(username, senha, autorizado=0):
     conn = db()
+    u_clean = username.strip().lower()
+    if u_clean == "fabiolucio277@gmail.com":
+        autorizado = 1
     try:
         conn.execute(
-            "INSERT INTO usuarios (username, senha, criado_em) VALUES (?, ?, ?)",
-            (username.strip().lower(), hash_password(senha), datetime.now().isoformat())
+            "INSERT INTO usuarios (username, senha, autorizado, criado_em) VALUES (?, ?, ?, ?)",
+            (u_clean, hash_password(senha), autorizado, datetime.now().isoformat())
         )
         conn.commit()
         conn.close()
-        return True, "Usuário cadastrado com sucesso!"
+        return True, "Cadastro realizado! Aguarde a liberação do administrador para acessar o sistema." if autorizado == 0 else "Usuário criado e autorizado!"
     except sqlite3.IntegrityError:
         conn.close()
         return False, "Nome de usuário já existe!"
+
+def alterar_status_autorizacao(user_id, status):
+    conn = db()
+    conn.execute("UPDATE usuarios SET autorizado = ? WHERE id = ?", (status, user_id))
+    conn.commit()
+    conn.close()
 
 def excluir_usuario(user_id):
     conn = db()
@@ -159,7 +179,7 @@ def excluir_usuario(user_id):
 
 def listar_usuarios():
     conn = db()
-    users = conn.execute("SELECT id, username, criado_em FROM usuarios ORDER BY id").fetchall()
+    users = conn.execute("SELECT id, username, autorizado, criado_em FROM usuarios ORDER BY id").fetchall()
     conn.close()
     return users
 
@@ -187,11 +207,14 @@ if not st.session_state["logged_in"]:
         if st.button("Entrar", type="primary"):
             user = autenticar_usuario(u, p)
             if user:
-                st.session_state["logged_in"] = True
-                st.session_state["user_id"] = user["id"]
-                st.session_state["username"] = user["username"]
-                st.success(f"Bem-vindo, {user['username']}!")
-                st.rerun()
+                if user["autorizado"] == 1:
+                    st.session_state["logged_in"] = True
+                    st.session_state["user_id"] = user["id"]
+                    st.session_state["username"] = user["username"]
+                    st.success(f"Bem-vindo, {user['username']}!")
+                    st.rerun()
+                else:
+                    st.warning("⚠️ Sua conta aguarda aprovação do administrador. Entre em contato para liberação.")
             else:
                 st.error("Usuário ou senha incorretos.")
 
@@ -200,9 +223,9 @@ if not st.session_state["logged_in"]:
         new_p = st.text_input("Escolha uma Senha", type="password", key="cad_pass")
         if st.button("Cadastrar Conta"):
             if new_u and new_p:
-                ok, msg = cadastrar_usuario(new_u, new_p)
+                ok, msg = cadastrar_usuario(new_u, new_p, autorizado=0)
                 if ok:
-                    st.success(msg)
+                    st.info(msg)
                 else:
                     st.error(msg)
             else:
@@ -223,26 +246,39 @@ with st.sidebar:
 
     if USERNAME.lower() == "fabiolucio277@gmail.com":
         st.subheader("⚙️ Painel do Administrador")
-        with st.expander("👥 Gerenciar Usuários", expanded=False):
+        with st.expander("👥 Gerenciar e Autorizar Usuários", expanded=False):
             usuarios_cadastrados = listar_usuarios()
             st.write(f"**Total de usuários:** {len(usuarios_cadastrados)}")
             
             for u in usuarios_cadastrados:
-                c1, c2 = st.columns([3, 1])
-                c1.text(f"{u['username']}")
-                if u['username'].lower() != "fabiolucio277@gmail.com":
-                    if c2.button("❌", key=f"del_user_{u['id']}"):
+                st.markdown(f"**{u['username']}**")
+                c_status, c_del = st.columns([3, 1])
+                
+                is_admin = u['username'].lower() == "fabiolucio277@gmail.com"
+                
+                if is_admin:
+                    c_status.caption("👑 Administrador Principal")
+                else:
+                    status_atual = bool(u['autorizado'])
+                    novo_status = c_status.toggle("Autorizado", value=status_atual, key=f"aut_{u['id']}")
+                    if novo_status != status_atual:
+                        alterar_status_autorizacao(u['id'], 1 if novo_status else 0)
+                        st.toast(f"Status de {u['username']} alterado!")
+                        st.rerun()
+
+                    if c_del.button("❌", key=f"del_user_{u['id']}", help="Excluir Usuário"):
                         excluir_usuario(u['id'])
                         st.success(f"Usuário {u['username']} removido!")
                         st.rerun()
 
-            st.divider()
-            st.write("**Criar Novo Usuário:**")
+                st.divider()
+
+            st.write("**Criar Novo Usuário Autorizado:**")
             adm_new_u = st.text_input("E-mail do Novo Usuário", key="adm_u")
             adm_new_p = st.text_input("Senha", type="password", key="adm_p")
             if st.button("Criar Usuário pelo Admin"):
                 if adm_new_u and adm_new_p:
-                    ok, msg = cadastrar_usuario(adm_new_u, adm_new_p)
+                    ok, msg = cadastrar_usuario(adm_new_u, adm_new_p, autorizado=1)
                     if ok:
                         st.success(msg)
                         st.rerun()
