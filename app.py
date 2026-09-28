@@ -21,8 +21,14 @@ DB_FILE = APP_DIR / "decorando_lei.db"
 PDF_DIR = APP_DIR / "leis_importadas"
 PDF_DIR.mkdir(exist_ok=True)
 
-st.set_page_config(page_title="Decorando Lei Seca", page_icon="⚖️", layout="wide")
+# Configuração da página
+st.set_page_config(
+    page_title="Decorando Lei Seca",
+    page_icon="⚖️",
+    layout="wide"
+)
 
+# Estilização CSS para ocultar menus, cabeçalhos, rodapés e o botão 'Gerenciar aplicativo'
 st.markdown("""
     <style>
     #MainMenu {visibility: hidden;}
@@ -32,6 +38,9 @@ st.markdown("""
     .viewerBadge_container__1S-xd {display: none !important;}
     button[title="Manage app"] {display: none !important;}
     div[class^="stActionButton"] {display: none !important;}
+    .stAppToolbar, [data-testid="stStatusWidget"], [data-testid="stToolbar"] {
+        display: none !important;
+    }
     </style>
 """, unsafe_allow_html=True)
 
@@ -134,15 +143,12 @@ def init_db():
     );
     """)
     
-    # Atualização de esquema (Garante coluna 'autorizado' em bancos legados)
     try:
         conn.execute("ALTER TABLE usuarios ADD COLUMN autorizado INTEGER DEFAULT 0")
     except sqlite3.OperationalError:
         pass
 
-    # Garante que o administrador principal esteja autorizado por padrão
     conn.execute("UPDATE usuarios SET autorizado = 1 WHERE LOWER(username) = 'fabiolucio277@gmail.com'")
-    
     conn.commit()
     conn.close()
 
@@ -494,7 +500,6 @@ def generate_questions_for_articles(discipline_id, law_id, article_ids, qtd_tota
                     explicacao = f"Item ERRADO. Texto original do {art['numero']}: \"{text}\""
 
         else:
-            # REGRA PADRÃO
             words = text.split()
             if is_correct or len(words) < 5:
                 enunciado = f"De acordo com o {art['numero']} da lei: \"{text}\""
