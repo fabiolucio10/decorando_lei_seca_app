@@ -28,19 +28,32 @@ st.set_page_config(
     layout="wide"
 )
 
-# Estilização CSS para ocultar menus, cabeçalhos, rodapés e o botão 'Gerenciar aplicativo'
+# Estilização CSS reforçada para ocultar menus, cabeçalhos, rodapés e a barra flutuante do Streamlit Cloud
 st.markdown("""
     <style>
+    /* Oculta menus padrão e cabeçalho */
     #MainMenu {visibility: hidden;}
     header {visibility: hidden;}
     footer {visibility: hidden;}
+    
+    /* Esconde botão de deploy e badges */
     [data-testid="stAppDeployButton"] {display: none !important;}
     .viewerBadge_container__1S-xd {display: none !important;}
+    
+    /* Desativa a barra flutuante e widgets do Streamlit Cloud */
+    [data-testid="stStatusWidget"] {display: none !important;}
+    div[class*="stAppToolbar"] {display: none !important;}
+    div[class*="viewerBadge"] {display: none !important;}
+    div[class*="styles_viewerBadge"] {display: none !important;}
+    
+    /* Esconde botões de ação e gestão */
     button[title="Manage app"] {display: none !important;}
+    button[title="Gerenciar aplicativo"] {display: none !important;}
     div[class^="stActionButton"] {display: none !important;}
-    .stAppToolbar, [data-testid="stStatusWidget"], [data-testid="stToolbar"] {
-        display: none !important;
-    }
+    
+    /* Remove espaçamento residual do cabeçalho */
+    .stApp > header + div {padding-top: 0rem;}
+    section[data-testid="stSidebar"] + div {padding-top: 0rem;}
     </style>
 """, unsafe_allow_html=True)
 
