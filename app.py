@@ -24,7 +24,7 @@ PDF_DIR.mkdir(exist_ok=True)
 # Configuração da página
 st.set_page_config(
     page_title="Decorando Lei Seca",
-    page_icon="⚖️️",
+    page_icon="⚖",
     layout="wide"
 )
 
@@ -73,25 +73,22 @@ def limpar_e_formatar_texto_lei(texto):
     if not texto:
         return ""
 
-    # 1. Remover notas de alteração e inclusão do Planalto
     padroes_remover = [
         r'\((?:Redação|Incluído|Vigência|Regulamento|Vide)\s+dada?\s+pel[ao][^)]*\)',
         r'\((?:Incluído|Restabelecido|Acrescido)\s+pel[ao][^)]*\)',
-        r'https?://\S+',  # URLs do Planalto
-        r'\b\d{2}/\d{2}/\d{4},\s*\d{2}:\d{2}\b',  # Datas e horas de impressão
-        r'DEL\d+compilado',  # Marcadores de ficheiro compilado
-        r'\b\d+/\d+\b'  # Números de página como 2/87
+        r'https?://\S+',
+        r'\b\d{2}/\d{2}/\d{4},\s*\d{2}:\d{2}\b',
+        r'DEL\d+compilado',
+        r'\b\d+/\d+\b'
     ]
     
     for padrao in padroes_remover:
         texto = re.sub(padrao, '', texto, flags=re.IGNORECASE)
 
-    # 2. Formatar e organizar incisos, alíneas e parágrafos numa nova linha
     texto = re.sub(r'\s+([I|V|X]+ -)', r'\n\n\1', texto)
     texto = re.sub(r'\s+([a-z]\))', r'\n\n\1', texto)
     texto = re.sub(r'\s+(Parágrafo único|§\s*\d+º?)', r'\n\n\1', texto, flags=re.IGNORECASE)
 
-    # Clean up de espaços múltiplos e linhas vazias
     texto = re.sub(r' +', ' ', texto)
     texto = re.sub(r'\n\s*\n', '\n\n', texto)
 
@@ -468,58 +465,79 @@ def get_saved_filters(discipline_id=None):
 
 def alterar_texto_para_errado(texto):
     """
-    Modifica o texto da lei para criar um erro sutil e natural, 
-    sem usar 'NÃO' em maiúsculas ou destacar a alteração.
+    Modifica o texto da lei para criar um erro sutil e natural.
+    Retorna a frase modificada e qual foi o tipo de troca efetuada.
     """
     substituicoes = [
-        (r'\bpoderá\b', 'deverá'),
-        (r'\bdeverá\b', 'poderá'),
-        (r'\bpermitido\b', 'vedado'),
-        (r'\bvedado\b', 'permitido'),
-        (r'\bexigido\b', 'dispensado'),
-        (r'\bdispensado\b', 'exigido'),
-        (r'\bou\b', 'e'),
-        (r'\be\b', 'ou'),
-        (r'\bobrigatório\b', 'facultativo'),
-        (r'\bfacultativo\b', 'obrigatório'),
-        (r'\bantes\b', 'depois'),
-        (r'\bdepois\b', 'antes')
+        (r'\bdenúncia ou queixa\b', 'denúncia e queixa', 'troca de conjunção alternada por aditiva ("ou" por "e")'),
+        (r'\bpoderá\b', 'deverá', 'troca de faculdade ("poderá") por obrigação ("deverá")'),
+        (r'\bdeverá\b', 'poderá', 'troca de obrigação ("deverá") por faculdade ("poderá")'),
+        (r'\bpermitido\b', 'vedado', 'inversão de permissão para proibição'),
+        (r'\bvedado\b', 'permitido', 'inversão de proibição para permissão'),
+        (r'\bexigido\b', 'dispensado', 'troca de exigência por dispensa'),
+        (r'\bdispensado\b', 'exigido', 'troca de dispensa por exigência'),
+        (r'\bobrigatório\b', 'facultativo', 'troca de obrigatoriedade por faculdade'),
+        (r'\bfacultativo\b', 'obrigatório', 'troca de faculdade por obrigatoriedade'),
+        (r'\bantes\b', 'depois', 'inversão de ordem temporal ("antes" por "depois")'),
+        (r'\bdepois\b', 'antes', 'inversão de ordem temporal ("depois" por "antes")'),
+        (r'\bou\b', 'e', 'troca de "ou" por "e"'),
+        (r'\be\b', 'ou', 'troca de "e" por "ou"')
     ]
     
     texto_modificado = texto
-    alterado = False
+    tipo_troca = None
     
-    # Tenta trocar palavras-chave jurídicas
-    for padrao, sub in substituicoes:
+    for padrao, sub, descricao in substituicoes:
         if re.search(padrao, texto_modificado, re.IGNORECASE):
             texto_modificado = re.sub(padrao, sub, texto_modificado, count=1, flags=re.IGNORECASE)
-            alterado = True
+            tipo_troca = descricao
             break
             
-    # Se nenhuma palavra-chave for encontrada, altera o sentido retirando ou adicionando "não" de forma natural
-    if not alterado:
+    if not tipo_troca:
         if " não " in texto_modificado:
             texto_modificado = texto_modificado.replace(" não ", " ", 1)
+            tipo_troca = 'supressão da negação "não"'
         else:
             words = texto_modificado.split()
             if len(words) > 3:
                 words.insert(3, "não")
                 texto_modificado = " ".join(words)
+                tipo_troca = 'inserção indevida da negação "não"'
 
-    return texto_modificado
+    return texto_modificado, tipo_troca
 
-def gerar_explicacao_humana(art_num, texto_original, foi_correto=False):
+def gerar_explicacao_humana(art_num, texto_original, foi_correto=False, tipo_troca=None):
     """
-    Gera uma explicação objetiva, em linguagem humana, acompanhada de um exemplo prático do dia a dia.
+    Gera uma explicação objetiva e um exemplo prático inteiramente dinâmico conforme o tipo de alteração no artigo.
     """
     if foi_correto:
-        return f"💡 **Explicação Direta:**\nO item está **CORRETO**. Ele repete exatamente a regra prevista no **{art_num}** da lei.\n\n📌 **Exemplo Prático:**\nEm um caso concreto, a autoridade pública deve seguir esta regra à risca, agindo em total conformidade com o texto legal."
-    
-    return f"""💡 **Explicação Direta:**
-O item está **ERRADO**. A questão alterou o sentido da lei original. Segundo o **{art_num}**, a regra correta exige o cumprimento exato do texto legal sem as trocas feitas na afirmação.
+        return f"""💡 **Explicação Direta:**
+O item está **CORRETO**. Ele reproduz exatamente o texto previsto no **{art_num}** da legislação.
 
 📌 **Exemplo Prático:**
-Imagine um delegado investigando um caso sigiloso: ele **deve obrigatoriamente manter o segredo** para proteger o processo, a menos que o interesse público exija o contrário. Trocar um dever por uma faculdade (ou inverter proibições) muda completamente a regra do jogo!
+Na prática jurídica, a regra é aplicada conforme descrita no dispositivo, devendo a autoridade e as partes cumprirem estritamente as condições estabelecidas no texto legal.
+
+📜 **Texto Original da Lei:**
+> "{texto_original}"
+"""
+
+    exemplo_dinamico = "Na prática, trocar os termos altera radicalmente o direito aplicável. O descumprimento do texto exato da lei compromete a legalidade do ato."
+
+    if tipo_troca:
+        if 'troca de "ou" por "e"' in tipo_troca or 'denúncia e queixa' in tipo_troca:
+            exemplo_dinamico = "A ação penal pública inicia-se por denúncia e a privada por queixa. Elas nunca ocorrem ao mesmo tempo para o mesmo fato! Dizer 'denúncia e queixa' tornaria o procedimento juridicamente impossível."
+        elif 'faculdade' in tipo_troca or 'obrigação' in tipo_troca:
+            exemplo_dinamico = "Se a lei estabelece um dever, o agente público não tem escolha. Transformar isso em faculdade retira a obrigatoriedade imposta ao procedimento."
+        elif 'permissão' in tipo_troca or 'proibição' in tipo_troca:
+            exemplo_dinamico = "Inverter a regra de vedada/permitida altera completamente o limite do que a autoridade ou a parte pode realizar validamente."
+        elif 'negação' in tipo_troca:
+            exemplo_dinamico = "Retirar ou inserir a palavra 'não' inverte completamente o resultado prático esperado pela legislação."
+
+    return f"""💡 **Explicação Direta:**
+O item está **ERRADO**. A questão alterou o sentido do **{art_num}** mediante {tipo_troca or 'alteração de termos essenciais'}.
+
+📌 **Exemplo Prático:**
+{exemplo_dinamico}
 
 📜 **Texto Original da Lei:**
 > "{texto_original}"
@@ -540,12 +558,10 @@ def generate_questions_for_articles(discipline_id, law_id, article_ids, qtd_tota
     generated = 0
     now = datetime.now().isoformat()
     
-    # Garante que passamos por TODOS os artigos na sequência antes de repetir
     artigos_pool = list(arts)
     random.shuffle(artigos_pool)
 
     for i in range(qtd_total):
-        # Seleciona artigo de forma circular para cobrir todos
         art = artigos_pool[i % len(artigos_pool)]
         text = limpar_e_formatar_texto_lei(art["texto"])
         is_correct = random.choice([True, False])
@@ -560,7 +576,7 @@ def generate_questions_for_articles(discipline_id, law_id, article_ids, qtd_tota
                     "stream": False
                 }, timeout=3)
                 data = res.json()
-                enunciado = data.get("response", f"De acordo com o {art['numero']}:\n\n\"{text}\"")
+                enunciado = data.get("response", f"De acordo com a legislação:\n\n\"{text}\"")
                 gabarito = 1 if is_correct else 0
                 explicacao = gerar_explicacao_humana(art['numero'], text, is_correct)
             except Exception:
@@ -569,10 +585,10 @@ def generate_questions_for_articles(discipline_id, law_id, article_ids, qtd_tota
                     gabarito = 1
                     explicacao = gerar_explicacao_humana(art['numero'], text, True)
                 else:
-                    modified_text = alterar_texto_para_errado(text)
+                    modified_text, tipo_troca = alterar_texto_para_errado(text)
                     enunciado = f"De acordo com a legislação:\n\n\"{modified_text}\""
                     gabarito = 0
-                    explicacao = gerar_explicacao_humana(art['numero'], text, False)
+                    explicacao = gerar_explicacao_humana(art['numero'], text, False, tipo_troca)
 
         elif "OpenAI" in motor_ia or "Gemini" in motor_ia:
             api_key = st.secrets.get("OPENAI_API_KEY", os.getenv("OPENAI_API_KEY"))
@@ -584,7 +600,7 @@ def generate_questions_for_articles(discipline_id, law_id, article_ids, qtd_tota
                         "Crie uma afirmação de Certo ou Errado baseada no artigo fornecido. "
                         "Se for para criar uma questão incorreta, altere trocando termos como 'deverá/poderá', 'e/ou', "
                         "'permitido/vedado' ou invertendo o sentido de forma sutil e natural. "
-                        "NÃO use palavras em CAIXA ALTA (como 'NÃO' ou 'NUNCA') para destacar os erros."
+                        "NÃO use palavras em CAIXA ALTA para destacar os erros."
                     )
                     completion = client.chat.completions.create(
                         model="gpt-4o-mini",
@@ -602,20 +618,20 @@ def generate_questions_for_articles(discipline_id, law_id, article_ids, qtd_tota
                         gabarito = 1
                         explicacao = gerar_explicacao_humana(art['numero'], text, True)
                     else:
-                        modified_text = alterar_texto_para_errado(text)
+                        modified_text, tipo_troca = alterar_texto_para_errado(text)
                         enunciado = f"De acordo com a legislação:\n\n\"{modified_text}\""
                         gabarito = 0
-                        explicacao = gerar_explicacao_humana(art['numero'], text, False)
+                        explicacao = gerar_explicacao_humana(art['numero'], text, False, tipo_troca)
             else:
                 if is_correct:
                     enunciado = f"De acordo com o {art['numero']}:\n\n\"{text}\""
                     gabarito = 1
                     explicacao = gerar_explicacao_humana(art['numero'], text, True)
                 else:
-                    modified_text = alterar_texto_para_errado(text)
+                    modified_text, tipo_troca = alterar_texto_para_errado(text)
                     enunciado = f"De acordo com a legislação:\n\n\"{modified_text}\""
                     gabarito = 0
-                    explicacao = gerar_explicacao_humana(art['numero'], text, False)
+                    explicacao = gerar_explicacao_humana(art['numero'], text, False, tipo_troca)
 
         else:
             if is_correct:
@@ -623,10 +639,10 @@ def generate_questions_for_articles(discipline_id, law_id, article_ids, qtd_tota
                 gabarito = 1
                 explicacao = gerar_explicacao_humana(art['numero'], text, True)
             else:
-                modified_text = alterar_texto_para_errado(text)
+                modified_text, tipo_troca = alterar_texto_para_errado(text)
                 enunciado = f"De acordo com a legislação:\n\n\"{modified_text}\""
                 gabarito = 0
-                explicacao = gerar_explicacao_humana(art['numero'], text, False)
+                explicacao = gerar_explicacao_humana(art['numero'], text, False, tipo_troca)
 
         try:
             conn.execute("""
@@ -797,7 +813,7 @@ with tab1:
             st.success(f"Lei processada com sucesso! {qtd} artigos importados.")
 
     st.divider()
-    st.subheader("🗑️ Leis Cadastradas e Opção de Exclusão")
+    st.subheader("🗑️️ Leis Cadastradas e Opção de Exclusão")
     todas_leis = get_laws()
     if todas_leis:
         for l in todas_leis:
@@ -829,7 +845,6 @@ with tab2:
             
             selected_arts = st.multiselect("3. Selecione os Artigos (deixe vazio para TODOS):", list(art_dict.keys()))
             
-            # Sugestão de quantidade ideal para passar por TODOS os artigos
             total_arts_selecionados = len(selected_arts) if selected_arts else len(articles)
             sugestao_qtd = max(total_arts_selecionados * 2, 10)
             
