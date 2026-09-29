@@ -409,16 +409,26 @@ def delete_filter(filter_id):
     conn.commit()
     conn.close()
 
-def get_saved_filters():
+def get_saved_filters(discipline_id=None):
     conn = db()
-    rows = conn.execute("""
-        SELECT f.*, d.nome disciplina, l.nome lei
-        FROM filtros_salvos f
-        JOIN disciplinas d ON d.id = f.disciplina_id
-        JOIN leis l ON l.id = f.lei_id
-        WHERE f.usuario_id = ?
-        ORDER BY f.id DESC
-    """, (USER_ID,)).fetchall()
+    if discipline_id:
+        rows = conn.execute("""
+            SELECT f.*, d.nome disciplina, l.nome lei
+            FROM filtros_salvos f
+            JOIN disciplinas d ON d.id = f.disciplina_id
+            JOIN leis l ON l.id = f.lei_id
+            WHERE f.usuario_id = ? AND f.disciplina_id = ?
+            ORDER BY f.id DESC
+        """, (USER_ID, discipline_id)).fetchall()
+    else:
+        rows = conn.execute("""
+            SELECT f.*, d.nome disciplina, l.nome lei
+            FROM filtros_salvos f
+            JOIN disciplinas d ON d.id = f.disciplina_id
+            JOIN leis l ON l.id = f.lei_id
+            WHERE f.usuario_id = ?
+            ORDER BY f.id DESC
+        """, (USER_ID,)).fetchall()
     conn.close()
     return rows
 
@@ -645,7 +655,7 @@ def stats():
     """, (USER_ID, datetime.now().isoformat())).fetchone()["n"]
 
     conn.close()
-    return total, hits, errors, pct, by_disc, by_filter, by_content, due
+    return total, hits, errors, pct, by_disc, b_filt, b_cont, due
 
 st.title("⚖️ Decorando Lei Seca")
 
@@ -759,14 +769,31 @@ with tab2:
 
 with tab3:
     st.header("Resolver Questões")
-    saved_filters = get_saved_filters()
+    
+    # 1. Filtro por Disciplina
+    discs = get_disciplines()
+    disc_options = {"Todas as Disciplinas": None}
+    for d in discs:
+        disc_options[d["nome"]] = d["id"]
+
+    selected_disc_label = st.selectbox("Selecione a Disciplina:", list(disc_options.keys()), key="res_disc_filter")
+    selected_disc_id = disc_options[selected_disc_label]
+
+    # Obter filtros salvos de acordo com a disciplina escolhida
+    saved_filters = get_saved_filters(selected_disc_id)
     
     if not saved_filters:
-        st.info("Você ainda não criou nenhum caderno de questões. Vá na aba 'Criar Caderno / Filtro'.")
+        st.info("Nenhum caderno de questões encontrado para a disciplina selecionada.")
     else:
+        # 2. Seleção do Caderno pertencente à Disciplina
         f_options = {f"{f['nome']} ({f['disciplina']} - {f['lei']})": f["id"] for f in saved_filters}
-        sel_filter_label = st.selectbox("Selecione o Caderno para Treinar:", list(f_options.keys()))
+        sel_filter_label = st.selectbox("Selecione o Caderno para Treinar:", list(f_options.keys()), key="res_caderno_filter")
         sel_filter_id = f_options[sel_filter_label]
+
+        # Resetar índice da questão caso altere de caderno
+        if "last_filter_id" not in st.session_state or st.session_state["last_filter_id"] != sel_filter_id:
+            st.session_state["last_filter_id"] = sel_filter_id
+            st.session_state["q_index"] = 0
 
         conn = db()
         questoes = conn.execute("SELECT * FROM questoes WHERE filtro_id=? ORDER BY id", (sel_filter_id,)).fetchall()
