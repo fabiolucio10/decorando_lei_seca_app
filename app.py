@@ -28,7 +28,7 @@ st.set_page_config(
     layout="wide"
 )
 
-# Estilização CSS reforçada para ocultar menus, cabeçalhos, rodapés e a barra flutuante do Streamlit Cloud
+# Estilização CSS para ocultar menus, cabeçalhos, rodapés e a barra flutuante do Streamlit Cloud
 st.markdown("""
     <style>
     /* Oculta menus padrão e cabeçalho */
@@ -87,14 +87,11 @@ def limpar_e_formatar_texto_lei(texto):
         texto = re.sub(padrao, '', texto, flags=re.IGNORECASE)
 
     # 2. Formatar e organizar incisos, alíneas e parágrafos numa nova linha
-    # Incisos: I -, II -, III -
     texto = re.sub(r'\s+([I|V|X]+ -)', r'\n\n\1', texto)
-    # Alíneas: a), b), c)
     texto = re.sub(r'\s+([a-z]\))', r'\n\n\1', texto)
-    # Parágrafos: Parágrafo único, § 1º
     texto = re.sub(r'\s+(Parágrafo único|§\s*\d+º?)', r'\n\n\1', texto, flags=re.IGNORECASE)
 
-    # Clean up de espaços múltiplos e linhas vazias excessivas
+    # Clean up de espaços múltiplos e linhas vazias
     texto = re.sub(r' +', ' ', texto)
     texto = re.sub(r'\n\s*\n', '\n\n', texto)
 
@@ -252,7 +249,7 @@ if "logged_in" not in st.session_state:
     st.session_state["username"] = None
 
 if not st.session_state["logged_in"]:
-    st.title("⚖️ Decorando Lei Seca")
+    st.title("⚖️️ Decorando Lei Seca")
     tab_login, tab_cadastro = st.tabs(["🔑 Entrar", "📝 Criar Conta"])
 
     with tab_login:
@@ -469,13 +466,72 @@ def get_saved_filters(discipline_id=None):
     conn.close()
     return rows
 
+def alterar_texto_para_errado(texto):
+    """
+    Modifica o texto da lei para criar um erro sutil e natural, 
+    sem usar 'NÃO' em maiúsculas ou destacar a alteração.
+    """
+    substituicoes = [
+        (r'\bpoderá\b', 'deverá'),
+        (r'\bdeverá\b', 'poderá'),
+        (r'\bpermitido\b', 'vedado'),
+        (r'\bvedado\b', 'permitido'),
+        (r'\bexigido\b', 'dispensado'),
+        (r'\bdispensado\b', 'exigido'),
+        (r'\bou\b', 'e'),
+        (r'\be\b', 'ou'),
+        (r'\bobrigatório\b', 'facultativo'),
+        (r'\bfacultativo\b', 'obrigatório'),
+        (r'\bantes\b', 'depois'),
+        (r'\bdepois\b', 'antes')
+    ]
+    
+    texto_modificado = texto
+    alterado = False
+    
+    # Tenta trocar palavras-chave jurídicas
+    for padrao, sub in substituicoes:
+        if re.search(padrao, texto_modificado, re.IGNORECASE):
+            texto_modificado = re.sub(padrao, sub, texto_modificado, count=1, flags=re.IGNORECASE)
+            alterado = True
+            break
+            
+    # Se nenhuma palavra-chave for encontrada, altera o sentido retirando ou adicionando "não" de forma natural
+    if not alterado:
+        if " não " in texto_modificado:
+            texto_modificado = texto_modificado.replace(" não ", " ", 1)
+        else:
+            words = texto_modificado.split()
+            if len(words) > 3:
+                words.insert(3, "não")
+                texto_modificado = " ".join(words)
+
+    return texto_modificado
+
+def gerar_explicacao_humana(art_num, texto_original, foi_correto=False):
+    """
+    Gera uma explicação objetiva, em linguagem humana, acompanhada de um exemplo prático do dia a dia.
+    """
+    if foi_correto:
+        return f"💡 **Explicação Direta:**\nO item está **CORRETO**. Ele repete exatamente a regra prevista no **{art_num}** da lei.\n\n📌 **Exemplo Prático:**\nEm um caso concreto, a autoridade pública deve seguir esta regra à risca, agindo em total conformidade com o texto legal."
+    
+    return f"""💡 **Explicação Direta:**
+O item está **ERRADO**. A questão alterou o sentido da lei original. Segundo o **{art_num}**, a regra correta exige o cumprimento exato do texto legal sem as trocas feitas na afirmação.
+
+📌 **Exemplo Prático:**
+Imagine um delegado investigando um caso sigiloso: ele **deve obrigatoriamente manter o segredo** para proteger o processo, a menos que o interesse público exija o contrário. Trocar um dever por uma faculdade (ou inverter proibições) muda completamente a regra do jogo!
+
+📜 **Texto Original da Lei:**
+> "{texto_original}"
+"""
+
 def generate_questions_for_articles(discipline_id, law_id, article_ids, qtd_total, filter_id=None, motor_ia="⚙️ Regra Padrão"):
     conn = db()
     if article_ids:
         placeholders = ",".join("?" * len(article_ids))
-        arts = conn.execute(f"SELECT * FROM artigos WHERE id IN ({placeholders})", article_ids).fetchall()
+        arts = conn.execute(f"SELECT * FROM artigos WHERE id IN ({placeholders}) ORDER BY id", article_ids).fetchall()
     else:
-        arts = conn.execute("SELECT * FROM artigos WHERE lei_id=?", (law_id,)).fetchall()
+        arts = conn.execute("SELECT * FROM artigos WHERE lei_id=? ORDER BY id", (law_id,)).fetchall()
 
     if not arts:
         conn.close()
@@ -483,16 +539,21 @@ def generate_questions_for_articles(discipline_id, law_id, article_ids, qtd_tota
 
     generated = 0
     now = datetime.now().isoformat()
+    
+    # Garante que passamos por TODOS os artigos na sequência antes de repetir
+    artigos_pool = list(arts)
+    random.shuffle(artigos_pool)
 
     for i in range(qtd_total):
-        art = random.choice(arts)
+        # Seleciona artigo de forma circular para cobrir todos
+        art = artigos_pool[i % len(artigos_pool)]
         text = limpar_e_formatar_texto_lei(art["texto"])
         is_correct = random.choice([True, False])
 
         if "Ollama" in motor_ia:
             import requests
             try:
-                prompt = f"Crie uma questão Certo/Errado baseada no artigo {art['numero']}:\n{text}."
+                prompt = f"Crie uma questão Certo/Errado baseada no artigo {art['numero']}:\n{text}. Não use caixa alta para destacar o erro."
                 res = requests.post("http://localhost:11434/api/generate", json={
                     "model": "llama3",
                     "prompt": prompt,
@@ -501,78 +562,71 @@ def generate_questions_for_articles(discipline_id, law_id, article_ids, qtd_tota
                 data = res.json()
                 enunciado = data.get("response", f"De acordo com o {art['numero']}:\n\n\"{text}\"")
                 gabarito = 1 if is_correct else 0
-                explicacao = f"Item {'CERTO' if is_correct else 'ERRADO'} fundamentado no {art['numero']}."
+                explicacao = gerar_explicacao_humana(art['numero'], text, is_correct)
             except Exception:
                 if is_correct:
                     enunciado = f"De acordo com o {art['numero']} da lei:\n\n\"{text}\""
                     gabarito = 1
-                    explicacao = f"Item CERTO. Corresponde à redação literal do {art['numero']}."
+                    explicacao = gerar_explicacao_humana(art['numero'], text, True)
                 else:
-                    words = text.split()
-                    if len(words) > 3:
-                        idx = random.randint(0, len(words)-1)
-                        words[idx] = "NÃO" if words[idx].lower() != "não" else "SIM"
-                    modified_text = " ".join(words)
+                    modified_text = alterar_texto_para_errado(text)
                     enunciado = f"De acordo com a legislação:\n\n\"{modified_text}\""
                     gabarito = 0
-                    explicacao = f"Item ERRADO. Texto original do {art['numero']}:\n\n\"{text}\""
+                    explicacao = gerar_explicacao_humana(art['numero'], text, False)
 
         elif "OpenAI" in motor_ia or "Gemini" in motor_ia:
             api_key = st.secrets.get("OPENAI_API_KEY", os.getenv("OPENAI_API_KEY"))
             if api_key and openai:
                 try:
                     client = openai.OpenAI(api_key=api_key)
+                    prompt_system = (
+                        "Você é uma banca examinadora de concursos (como CESPE/CEBRASPE). "
+                        "Crie uma afirmação de Certo ou Errado baseada no artigo fornecido. "
+                        "Se for para criar uma questão incorreta, altere trocando termos como 'deverá/poderá', 'e/ou', "
+                        "'permitido/vedado' ou invertendo o sentido de forma sutil e natural. "
+                        "NÃO use palavras em CAIXA ALTA (como 'NÃO' ou 'NUNCA') para destacar os erros."
+                    )
                     completion = client.chat.completions.create(
                         model="gpt-4o-mini",
                         messages=[
-                            {"role": "system", "content": "Você é uma banca examinadora de concursos. Crie uma afirmação Certo ou Errado baseada no texto do artigo enviado."},
-                            {"role": "user", "content": f"Artigo: {art['numero']}\n{text}"}
+                            {"role": "system", "content": prompt_system},
+                            {"role": "user", "content": f"Artigo: {art['numero']}\n{text}\n\nCrie uma questão com gabarito {'CERTO' if is_correct else 'ERRADO'}."}
                         ]
                     )
                     enunciado = completion.choices[0].message.content
                     gabarito = 1 if is_correct else 0
-                    explicacao = f"Gabarito fundamentado no {art['numero']}."
+                    explicacao = gerar_explicacao_humana(art['numero'], text, is_correct)
                 except Exception:
                     if is_correct:
                         enunciado = f"De acordo com o {art['numero']}:\n\n\"{text}\""
                         gabarito = 1
-                        explicacao = f"Item CERTO. Texto literal do {art['numero']}."
+                        explicacao = gerar_explicacao_humana(art['numero'], text, True)
                     else:
-                        words = text.split()
-                        if len(words) > 3:
-                            idx = random.randint(0, len(words)-1)
-                            words[idx] = "NÃO" if words[idx].lower() != "não" else "SIM"
-                        enunciado = f"De acordo com a legislação:\n\n\"{' '.join(words)}\""
+                        modified_text = alterar_texto_para_errado(text)
+                        enunciado = f"De acordo com a legislação:\n\n\"{modified_text}\""
                         gabarito = 0
-                        explicacao = f"Item ERRADO. Texto original do {art['numero']}:\n\n\"{text}\""
+                        explicacao = gerar_explicacao_humana(art['numero'], text, False)
             else:
                 if is_correct:
                     enunciado = f"De acordo com o {art['numero']}:\n\n\"{text}\""
                     gabarito = 1
-                    explicacao = f"Item CERTO. Corresponde à redação literal do {art['numero']}."
+                    explicacao = gerar_explicacao_humana(art['numero'], text, True)
                 else:
-                    words = text.split()
-                    if len(words) > 3:
-                        idx = random.randint(0, len(words)-1)
-                        words[idx] = "NÃO" if words[idx].lower() != "não" else "SIM"
-                    enunciado = f"De acordo com a legislação:\n\n\"{' '.join(words)}\""
+                    modified_text = alterar_texto_para_errado(text)
+                    enunciado = f"De acordo com a legislação:\n\n\"{modified_text}\""
                     gabarito = 0
-                    explicacao = f"Item ERRADO. Texto original do {art['numero']}:\n\n\"{text}\""
+                    explicacao = gerar_explicacao_humana(art['numero'], text, False)
 
         else:
-            words = text.split()
-            if is_correct or len(words) < 5:
+            if is_correct:
                 enunciado = f"De acordo com o {art['numero']} da lei:\n\n\"{text}\""
                 gabarito = 1
-                explicacao = f"Item CERTO. Corresponde à redação literal do {art['numero']}."
+                explicacao = gerar_explicacao_humana(art['numero'], text, True)
             else:
-                words_mod = words.copy()
-                idx = random.randint(0, len(words_mod)-1)
-                words_mod[idx] = "NÃO" if words_mod[idx].lower() != "não" else "SIM"
-                modified_text = " ".join(words_mod)
+                modified_text = alterar_texto_para_errado(text)
                 enunciado = f"De acordo com a legislação:\n\n\"{modified_text}\""
                 gabarito = 0
-                explicacao = f"Item ERRADO. O texto correto segundo o {art['numero']} é:\n\n\"{text}\""
+                explicacao = gerar_explicacao_humana(art['numero'], text, False)
 
         try:
             conn.execute("""
@@ -692,7 +746,7 @@ def stats():
     """, (USER_ID, datetime.now().isoformat())).fetchone()["n"]
 
     conn.close()
-    return total, hits, errors, pct, by_disc, by_filter, by_content, due
+    return total, hits, errors, pct, b_disc, b_filt, b_cont, due
 
 st.title("⚖️ Decorando Lei Seca")
 
@@ -774,7 +828,19 @@ with tab2:
             art_dict = {f"{a['numero']} - {a['texto'][:60]}...": a["id"] for a in articles}
             
             selected_arts = st.multiselect("3. Selecione os Artigos (deixe vazio para TODOS):", list(art_dict.keys()))
-            qtd_q = st.number_input("4. Quantidade de questões para este filtro:", min_value=1, max_value=200, value=10)
+            
+            # Sugestão de quantidade ideal para passar por TODOS os artigos
+            total_arts_selecionados = len(selected_arts) if selected_arts else len(articles)
+            sugestao_qtd = max(total_arts_selecionados * 2, 10)
+            
+            st.info(f"💡 **Sugestão do Sistema:** Esta lei/seleção possui **{total_arts_selecionados} artigo(s)**. Recomendamos gerar no mínimo **{sugestao_qtd} questões** (2 por artigo) para cobrir 100% dos artigos sem repetir excessivamente.")
+
+            qtd_q = st.number_input(
+                "4. Quantidade de questões para este filtro:",
+                min_value=total_arts_selecionados if total_arts_selecionados > 0 else 1,
+                max_value=500,
+                value=sugestao_qtd
+            )
             
             motor_ia = st.radio(
                 "5. Selecione o Motor para Geração de Questões:",
@@ -790,14 +856,13 @@ with tab2:
                     art_ids = [art_dict[k] for k in selected_arts]
                     f_id = save_filter(filter_name, d_id, l_id, art_ids, qtd_q)
                     qtd_geradas = generate_questions_for_articles(d_id, l_id, art_ids, qtd_q, filter_id=f_id, motor_ia=motor_ia)
-                    st.success(f"Caderno '{filter_name}' criado com sucesso! {qtd_geradas} questões geradas usando {motor_ia}.")
+                    st.success(f"Caderno '{filter_name}' criado com sucesso! {qtd_geradas} questões geradas cobrindo todos os artigos.")
 
     st.divider()
     st.subheader("🗑️ Meus Cadernos / Filtros Salvos por Disciplina")
     meus_filtros = get_saved_filters()
     
     if meus_filtros:
-        # Agrupar cadernos por disciplina
         filtros_por_disciplina = {}
         for mf in meus_filtros:
             disc = mf['disciplina']
@@ -805,7 +870,6 @@ with tab2:
                 filtros_por_disciplina[disc] = []
             filtros_por_disciplina[disc].append(mf)
 
-        # Exibir cada disciplina num expander sanfona
         for disc_nome, lista_filtros in filtros_por_disciplina.items():
             with st.expander(f"📚 **{disc_nome}** ({len(lista_filtros)} Caderno(s))", expanded=False):
                 for mf in lista_filtros:
@@ -819,7 +883,6 @@ with tab2:
 with tab3:
     st.header("Resolver Questões")
     
-    # 1. Filtro por Disciplina
     discs = get_disciplines()
     disc_options = {"Todas as Disciplinas": None}
     for d in discs:
@@ -828,18 +891,15 @@ with tab3:
     selected_disc_label = st.selectbox("Selecione a Disciplina:", list(disc_options.keys()), key="res_disc_filter")
     selected_disc_id = disc_options[selected_disc_label]
 
-    # Obter filtros salvos de acordo com a disciplina escolhida
     saved_filters = get_saved_filters(selected_disc_id)
     
     if not saved_filters:
         st.info("Nenhum caderno de questões encontrado para a disciplina selecionada.")
     else:
-        # 2. Seleção do Caderno pertencente à Disciplina
         f_options = {f"{f['nome']} ({f['disciplina']} - {f['lei']})": f["id"] for f in saved_filters}
         sel_filter_label = st.selectbox("Selecione o Caderno para Treinar:", list(f_options.keys()), key="res_caderno_filter")
         sel_filter_id = f_options[sel_filter_label]
 
-        # Resetar índice da questão caso altere de caderno
         if "last_filter_id" not in st.session_state or st.session_state["last_filter_id"] != sel_filter_id:
             st.session_state["last_filter_id"] = sel_filter_id
             st.session_state["q_index"] = 0
@@ -875,7 +935,7 @@ with tab3:
                         st.success("✨ Resposta Correta!")
                     else:
                         st.error("❌ Resposta Incorreta!")
-                    st.markdown(f"**Gabarito / Explicação:**\n{q['explicacao']}")
+                    st.markdown(f"**Gabarito / Explicação Prática:**\n\n{q['explicacao']}")
 
                 if st.button("Próxima Questão ➡️"):
                     st.session_state["q_index"] += 1
@@ -934,6 +994,6 @@ with tab5:
                     st.success("✨ Excelente! Próxima revisão agendada.")
                 else:
                     st.error("❌ Errou! Ela voltará para revisão.")
-                st.markdown(f"**Gabarito:**\n{revs['explicacao']}")
+                st.markdown(f"**Gabarito / Explicação:**\n\n{revs['explicacao']}")
     else:
         st.success("Tudo em dia! Não há revisões pendentes para hoje.")
