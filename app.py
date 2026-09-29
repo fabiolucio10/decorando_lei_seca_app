@@ -655,7 +655,7 @@ def stats():
     """, (USER_ID, datetime.now().isoformat())).fetchone()["n"]
 
     conn.close()
-    return total, hits, errors, pct, by_disc, b_filt, b_cont, due
+    return total, hits, errors, pct, by_disc, by_filter, by_content, due
 
 st.title("⚖️ Decorando Lei Seca")
 
