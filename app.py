@@ -65,6 +65,41 @@ def db():
 def hash_password(password):
     return hashlib.sha256(password.encode("utf-8")).hexdigest()
 
+def limpar_e_formatar_texto_lei(texto):
+    """
+    Remove notas de alteração/inclusão legislativa, URLs, datas do Planalto
+    e organiza a estrutura de incisos, alíneas e parágrafos com quebras de linha.
+    """
+    if not texto:
+        return ""
+
+    # 1. Remover notas de alteração e inclusão do Planalto
+    padroes_remover = [
+        r'\((?:Redação|Incluído|Vigência|Regulamento|Vide)\s+dada?\s+pel[ao][^)]*\)',
+        r'\((?:Incluído|Restabelecido|Acrescido)\s+pel[ao][^)]*\)',
+        r'https?://\S+',  # URLs do Planalto
+        r'\b\d{2}/\d{2}/\d{4},\s*\d{2}:\d{2}\b',  # Datas e horas de impressão
+        r'DEL\d+compilado',  # Marcadores de ficheiro compilado
+        r'\b\d+/\d+\b'  # Números de página como 2/87
+    ]
+    
+    for padrao in padroes_remover:
+        texto = re.sub(padrao, '', texto, flags=re.IGNORECASE)
+
+    # 2. Formatar e organizar incisos, alíneas e parágrafos numa nova linha
+    # Incisos: I -, II -, III -
+    texto = re.sub(r'\s+([I|V|X]+ -)', r'\n\n\1', texto)
+    # Alíneas: a), b), c)
+    texto = re.sub(r'\s+([a-z]\))', r'\n\n\1', texto)
+    # Parágrafos: Parágrafo único, § 1º
+    texto = re.sub(r'\s+(Parágrafo único|§\s*\d+º?)', r'\n\n\1', texto, flags=re.IGNORECASE)
+
+    # Clean up de espaços múltiplos e linhas vazias excessivas
+    texto = re.sub(r' +', ' ', texto)
+    texto = re.sub(r'\n\s*\n', '\n\n', texto)
+
+    return texto.strip()
+
 def init_db():
     conn = db()
     conn.executescript("""
@@ -363,7 +398,8 @@ def parse_and_store_pdf(pdf_path, law_id):
         m = pattern.match(line_s)
         if m and ("Art." in line_s or "art." in line_s):
             if curr_num and curr_lines:
-                artigos.append((curr_num, "\n".join(curr_lines)))
+                art_limpo = limpar_e_formatar_texto_lei("\n".join(curr_lines))
+                artigos.append((curr_num, art_limpo))
             curr_num = m.group(1)
             curr_lines = [m.group(2)]
         else:
@@ -371,7 +407,8 @@ def parse_and_store_pdf(pdf_path, law_id):
                 curr_lines.append(line_s)
 
     if curr_num and curr_lines:
-        artigos.append((curr_num, "\n".join(curr_lines)))
+        art_limpo = limpar_e_formatar_texto_lei("\n".join(curr_lines))
+        artigos.append((curr_num, art_limpo))
 
     conn = db()
     for num, txt in artigos:
@@ -449,25 +486,25 @@ def generate_questions_for_articles(discipline_id, law_id, article_ids, qtd_tota
 
     for i in range(qtd_total):
         art = random.choice(arts)
-        text = art["texto"]
+        text = limpar_e_formatar_texto_lei(art["texto"])
         is_correct = random.choice([True, False])
 
         if "Ollama" in motor_ia:
             import requests
             try:
-                prompt = f"Crie uma questão Certo/Errado baseada no artigo {art['numero']}: {text}."
+                prompt = f"Crie uma questão Certo/Errado baseada no artigo {art['numero']}:\n{text}."
                 res = requests.post("http://localhost:11434/api/generate", json={
                     "model": "llama3",
                     "prompt": prompt,
                     "stream": False
                 }, timeout=3)
                 data = res.json()
-                enunciado = data.get("response", f"De acordo com o {art['numero']}: {text}")
+                enunciado = data.get("response", f"De acordo com o {art['numero']}:\n\n\"{text}\"")
                 gabarito = 1 if is_correct else 0
                 explicacao = f"Item {'CERTO' if is_correct else 'ERRADO'} fundamentado no {art['numero']}."
             except Exception:
                 if is_correct:
-                    enunciado = f"De acordo com o {art['numero']} da lei: \"{text}\""
+                    enunciado = f"De acordo com o {art['numero']} da lei:\n\n\"{text}\""
                     gabarito = 1
                     explicacao = f"Item CERTO. Corresponde à redação literal do {art['numero']}."
                 else:
@@ -476,9 +513,9 @@ def generate_questions_for_articles(discipline_id, law_id, article_ids, qtd_tota
                         idx = random.randint(0, len(words)-1)
                         words[idx] = "NÃO" if words[idx].lower() != "não" else "SIM"
                     modified_text = " ".join(words)
-                    enunciado = f"De acordo com a legislação: \"{modified_text}\""
+                    enunciado = f"De acordo com a legislação:\n\n\"{modified_text}\""
                     gabarito = 0
-                    explicacao = f"Item ERRADO. Texto original do {art['numero']}: \"{text}\""
+                    explicacao = f"Item ERRADO. Texto original do {art['numero']}:\n\n\"{text}\""
 
         elif "OpenAI" in motor_ia or "Gemini" in motor_ia:
             api_key = st.secrets.get("OPENAI_API_KEY", os.getenv("OPENAI_API_KEY"))
@@ -488,8 +525,8 @@ def generate_questions_for_articles(discipline_id, law_id, article_ids, qtd_tota
                     completion = client.chat.completions.create(
                         model="gpt-4o-mini",
                         messages=[
-                            {"role": "system", "content": "Você é um banca examinadora de concursos. Crie uma afirmação Certo ou Errado baseada no texto do artigo enviado."},
-                            {"role": "user", "content": f"Artigo: {art['numero']} - {text}"}
+                            {"role": "system", "content": "Você é uma banca examinadora de concursos. Crie uma afirmação Certo ou Errado baseada no texto do artigo enviado."},
+                            {"role": "user", "content": f"Artigo: {art['numero']}\n{text}"}
                         ]
                     )
                     enunciado = completion.choices[0].message.content
@@ -497,7 +534,7 @@ def generate_questions_for_articles(discipline_id, law_id, article_ids, qtd_tota
                     explicacao = f"Gabarito fundamentado no {art['numero']}."
                 except Exception:
                     if is_correct:
-                        enunciado = f"De acordo com o {art['numero']}: \"{text}\""
+                        enunciado = f"De acordo com o {art['numero']}:\n\n\"{text}\""
                         gabarito = 1
                         explicacao = f"Item CERTO. Texto literal do {art['numero']}."
                     else:
@@ -505,12 +542,12 @@ def generate_questions_for_articles(discipline_id, law_id, article_ids, qtd_tota
                         if len(words) > 3:
                             idx = random.randint(0, len(words)-1)
                             words[idx] = "NÃO" if words[idx].lower() != "não" else "SIM"
-                        enunciado = f"De acordo com a legislação: \"{' '.join(words)}\""
+                        enunciado = f"De acordo com a legislação:\n\n\"{' '.join(words)}\""
                         gabarito = 0
-                        explicacao = f"Item ERRADO. Texto original do {art['numero']}: \"{text}\""
+                        explicacao = f"Item ERRADO. Texto original do {art['numero']}:\n\n\"{text}\""
             else:
                 if is_correct:
-                    enunciado = f"De acordo com o {art['numero']}: \"{text}\""
+                    enunciado = f"De acordo com o {art['numero']}:\n\n\"{text}\""
                     gabarito = 1
                     explicacao = f"Item CERTO. Corresponde à redação literal do {art['numero']}."
                 else:
@@ -518,14 +555,14 @@ def generate_questions_for_articles(discipline_id, law_id, article_ids, qtd_tota
                     if len(words) > 3:
                         idx = random.randint(0, len(words)-1)
                         words[idx] = "NÃO" if words[idx].lower() != "não" else "SIM"
-                    enunciado = f"De acordo com a legislação: \"{' '.join(words)}\""
+                    enunciado = f"De acordo com a legislação:\n\n\"{' '.join(words)}\""
                     gabarito = 0
-                    explicacao = f"Item ERRADO. Texto original do {art['numero']}: \"{text}\""
+                    explicacao = f"Item ERRADO. Texto original do {art['numero']}:\n\n\"{text}\""
 
         else:
             words = text.split()
             if is_correct or len(words) < 5:
-                enunciado = f"De acordo com o {art['numero']} da lei: \"{text}\""
+                enunciado = f"De acordo com o {art['numero']} da lei:\n\n\"{text}\""
                 gabarito = 1
                 explicacao = f"Item CERTO. Corresponde à redação literal do {art['numero']}."
             else:
@@ -533,9 +570,9 @@ def generate_questions_for_articles(discipline_id, law_id, article_ids, qtd_tota
                 idx = random.randint(0, len(words_mod)-1)
                 words_mod[idx] = "NÃO" if words_mod[idx].lower() != "não" else "SIM"
                 modified_text = " ".join(words_mod)
-                enunciado = f"De acordo com a legislação: \"{modified_text}\""
+                enunciado = f"De acordo com a legislação:\n\n\"{modified_text}\""
                 gabarito = 0
-                explicacao = f"Item ERRADO. O texto correto segundo o {art['numero']} é: \"{text}\""
+                explicacao = f"Item ERRADO. O texto correto segundo o {art['numero']} é:\n\n\"{text}\""
 
         try:
             conn.execute("""
@@ -815,7 +852,7 @@ with tab3:
                 q = questoes[idx]
                 st.subheader(f"Questão {idx + 1} de {len(questoes)}")
                 st.markdown(f"**Artigo:** {q['artigo_numero']}")
-                st.write(q["enunciado"])
+                st.markdown(q["enunciado"])
 
                 resp = st.radio("Sua resposta:", ["Certo", "Errado"], key=f"q_{q['id']}")
                 
@@ -826,7 +863,7 @@ with tab3:
                         st.success("✨ Resposta Correta!")
                     else:
                         st.error("❌ Resposta Incorreta!")
-                    st.info(f"**Gabarito / Explicação:** {q['explicacao']}")
+                    st.markdown(f"**Gabarito / Explicação:**\n{q['explicacao']}")
 
                 if st.button("Próxima Questão ➡️"):
                     st.session_state["q_index"] += 1
@@ -876,7 +913,7 @@ with tab5:
 
         if revs:
             st.subheader("Questão para Revisão")
-            st.write(revs["enunciado"])
+            st.markdown(revs["enunciado"])
             resp_rev = st.radio("Sua resposta:", ["Certo", "Errado"], key="rev_ans")
             if st.button("Enviar Resposta da Revisão"):
                 val = 1 if resp_rev == "Certo" else 0
@@ -885,6 +922,6 @@ with tab5:
                     st.success("✨ Excelente! Próxima revisão agendada.")
                 else:
                     st.error("❌ Errou! Ela voltará para revisão.")
-                st.info(f"**Gabarito:** {revs['explicacao']}")
+                st.markdown(f"**Gabarito:**\n{revs['explicacao']}")
     else:
         st.success("Tudo em dia! Não há revisões pendentes para hoje.")
