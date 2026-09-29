@@ -24,7 +24,7 @@ PDF_DIR.mkdir(exist_ok=True)
 # Configuração da página
 st.set_page_config(
     page_title="Decorando Lei Seca",
-    page_icon="⚖️",
+    page_icon="⚖️️",
     layout="wide"
 )
 
@@ -249,7 +249,7 @@ if "logged_in" not in st.session_state:
     st.session_state["username"] = None
 
 if not st.session_state["logged_in"]:
-    st.title("⚖️️ Decorando Lei Seca")
+    st.title("⚖ Decorando Lei Seca")
     tab_login, tab_cadastro = st.tabs(["🔑 Entrar", "📝 Criar Conta"])
 
     with tab_login:
@@ -697,7 +697,7 @@ def stats():
     errors = total - hits
     pct = (hits / total * 100) if total else 0
     
-    by_disc = pd.read_sql_query("""
+    b_disc = pd.read_sql_query("""
         SELECT d.nome disciplina,
                COUNT(r.id) respondidas,
                COALESCE(SUM(r.acertou),0) acertos,
@@ -710,7 +710,7 @@ def stats():
         GROUP BY d.id ORDER BY percentual
     """, conn, params=(USER_ID,))
 
-    by_filter = pd.read_sql_query("""
+    b_filt = pd.read_sql_query("""
         SELECT f.nome filtro,
                d.nome disciplina,
                l.nome lei,
@@ -727,7 +727,7 @@ def stats():
         GROUP BY f.id ORDER BY r.id DESC
     """, conn, params=(USER_ID,))
 
-    by_content = pd.read_sql_query("""
+    b_cont = pd.read_sql_query("""
         SELECT d.nome disciplina, q.conteudo,
                COUNT(r.id) respondidas,
                COALESCE(SUM(r.acertou),0) acertos,
