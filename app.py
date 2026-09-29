@@ -506,75 +506,49 @@ def alterar_texto_para_errado(texto):
 
     return texto_modificado, tipo_troca
 
-def gerar_explicacao_humana(art_num, texto_original, foi_correto=False, tipo_troca=None):
+def gerar_explicacao_humana(art_num, texto_original, foi_correto=False, tipo_troca=None, texto_modificado=None):
     """
-    Gera explicações práticas e objetivas do dia a dia, adaptando o cenário
-    conforme o contexto da lei (Penal, Civil, Trabalhista, Constitucional, etc.).
+    Gera explicações didáticas e detalhadas com caso prático real da aplicação do artigo.
     """
     txt_lower = texto_original.lower()
 
-    # Identificação dinâmica do cenário prático
-    if any(p in txt_lower for p in ["inquérito", "delegado", "prisão", "crime", "polícia", "flagrante", "ação penal"]):
-        cenario = (
-            "📌 **Exemplo Prático (Direito Penal/Processual Penal):**\n"
-            "• **Situação:** No plantão da delegacia ou em uma abordagem policial diante de uma infração.\n"
-            "• **Aplicação:** A autoridade deve agir nos exatos termos da lei: se exige provocação da vítima, a polícia "
-            "não pode agir de ofício; se é um dever legal, a atuação é obrigatória e sem margem para escolha."
-        )
-    elif any(p in txt_lower for p in ["empregado", "empregador", "trabalho", "salário", "férias", "rescisão", "jornada"]):
-        cenario = (
-            "📌 **Exemplo Prático (Direito do Trabalho):**\n"
-            "• **Situação:** Na rotina da empresa, durante a gestão de horários, pagamentos ou desligamentos.\n"
-            "• **Aplicação:** As partes devem cumprir exatamente o texto legal. Tratar uma obrigação do empregador "
-            "como mera faculdade (opção) invalida a medida trabalhista e gera passivo."
-        )
-    elif any(p in txt_lower for p in ["consumidor", "fornecedor", "produto", "serviço", "vício", "garantia", "oferta"]):
-        cenario = (
-            "📌 **Exemplo Prático (Direito do Consumidor):**\n"
-            "• **Situação:** No balcão de um estabelecimento comercial durante a troca ou reparo de um produto defeituoso.\n"
-            "• **Aplicação:** O artigo fixa a responsabilidade do fornecedor. Se o dispositivo impõe um dever, o comerciante "
-            "não pode negar a solução nem impor condições não previstas na lei."
-        )
-    elif any(p in txt_lower for p in ["tributo", "imposto", "taxa", "fisco", "contribuinte", "receita", "lançamento"]):
-        cenario = (
-            "📌 **Exemplo Prático (Direito Tributário):**\n"
-            "• **Situação:** Na apuração fiscal ou na emissão de notificação de cobrança pelo Estado.\n"
-            "• **Aplicação:** A cobrança vincula-se estritamente à lei. O Fisco não pode criar exigências nem conceder "
-            "dispensas que não estejam expressamente autorizadas na legislação."
-        )
-    elif any(p in txt_lower for p in ["servidor", "administração pública", "licitação", "ato administrativo", "agente público"]):
-        cenario = (
-            "📌 **Exemplo Prático (Direito Administrativo):**\n"
-            "• **Situação:** Na tomada de decisão de um gestor ou servidor em um procedimento administrativo.\n"
-            "• **Aplicação:** A Administração só atua segundo a estrita legalidade. Confundir um dever regimental com uma "
-            "decisão discricionária (faculdade) anula totalmente o ato praticado."
-        )
+    # Construção da história do caso real dinâmica conforme o conteúdo do artigo
+    if "flagrante" in txt_lower or "prisão" in txt_lower:
+        situacao_real = "Um suspeito é apanhado logo após cometer um assalto na rua e trazido pelos agentes para a esquadra."
+        regra_aplicada = f"O **{art_num}** estipula expressamente os procedimentos legais que a autoridade deve adotar quando ocorre este tipo de detenção em flagrante."
+    elif "inquérito" in txt_lower or "polícia" in txt_lower:
+        situacao_real = "A polícia toma conhecimento de uma infração penal e inicia as investigações no plantão policial."
+        regra_aplicada = f"O **{art_num}** define exatamente como o procedimento investigador deve ser instaurado e conduzido."
+    elif "empregado" in txt_lower or "trabalho" in txt_lower or "salário" in txt_lower:
+        situacao_real = "Ocorre uma divergência na empresa entre o colaborador e o setor de Recursos Humanos sobre direitos ou prazos."
+        regra_aplicada = f"O **{art_num}** impõe a regra laboral exata que deve ser seguida na relação de trabalho."
+    elif "consumidor" in txt_lower or "produto" in txt_lower:
+        situacao_real = "Um cliente dirige-se ao estabelecimento para resolver uma avaria detetada no produto que comprou."
+        regra_aplicada = f"O **{art_num}** estabelece os deveres legais do fornecedor diante da reclamação do cliente."
     else:
-        cenario = (
-            "📌 **Exemplo Prático (Dia a Dia):**\n"
-            "• **Situação:** Em uma relação jurídica do cotidiano entre as partes envolvidas.\n"
-            "• **Aplicação:** O cumprimento do dispositivo exige a observância exata de seus termos. "
-            "Substituir exigências por permissões altera completamente os direitos e deveres das partes."
-        )
+        situacao_real = "Diante de um conflito legal do quotidiano entre as partes envolvidas."
+        regra_aplicada = f"O **{art_num}** dita exatamente a conduta legalmente exigida para regular essa situação."
 
     if foi_correto:
-        return f"""💡 **Explicação Direta:**
-O item está **CORRETO**. Ele reflete com exatidão o texto do **{art_num}**.
+        status_txt = "O item está **CORRETO**."
+        detalhe_erro = f"O enunciado mantém total fidelidade ao texto e sentido exato do **{art_num}**."
+    else:
+        status_txt = "O item está **ERRADO**."
+        detalhe_erro = f"A questão alterou o sentido do artigo mediante **{tipo_troca or 'modificação de termos essenciais'}**."
 
-{cenario}
+    explicacao_formatada = f"""💡 **Explicação Direta:**
+{status_txt} {detalhe_erro}
+
+📌 **Exemplo Prático da Vida Real (Como funciona o {art_num}):**
+Imagine a seguinte situação:
+• **A Situação Concreta:** {situacao_real}
+• **A Regra do {art_num}:** {regra_aplicada}
+• **Na Prática:** As regras descritas na lei devem ser cumpridas exatamente como constam no diploma legal.
 
 📜 **Texto Original da Lei:**
 > "{texto_original}"
 """
-
-    return f"""💡 **Explicação Direta:**
-O item está **ERRADO**. A questão alterou o sentido do **{art_num}** mediante {tipo_troca or 'modificação de termos essenciais'}.
-
-{cenario}
-
-📜 **Texto Original da Lei:**
-> "{texto_original}"
-"""
+    return explicacao_formatada
 
 def generate_questions_for_articles(discipline_id, law_id, article_ids, qtd_total, filter_id=None, motor_ia="⚙️ Regra Padrão"):
     conn = db()
@@ -621,7 +595,7 @@ def generate_questions_for_articles(discipline_id, law_id, article_ids, qtd_tota
                     modified_text, tipo_troca = alterar_texto_para_errado(text)
                     enunciado = f"De acordo com a legislação:\n\n\"{modified_text}\""
                     gabarito = 0
-                    explicacao = gerar_explicacao_humana(art['numero'], text, False, tipo_troca)
+                    explicacao = gerar_explicacao_humana(art['numero'], text, False, tipo_troca, modified_text)
 
         elif "OpenAI" in motor_ia or "Gemini" in motor_ia:
             api_key = st.secrets.get("OPENAI_API_KEY", os.getenv("OPENAI_API_KEY"))
@@ -629,17 +603,21 @@ def generate_questions_for_articles(discipline_id, law_id, article_ids, qtd_tota
                 try:
                     client = openai.OpenAI(api_key=api_key)
                     prompt_system = (
-                        "Você é uma banca examinadora de concursos (como CESPE/CEBRASPE). "
+                        "Você é uma banca examinadora de concursos públicos. "
                         "Crie uma afirmação de Certo ou Errado baseada no artigo fornecido. "
-                        "Se for para criar uma questão incorreta, altere trocando termos como 'deverá/poderá', 'e/ou', "
-                        "'permitido/vedado' ou invertendo o sentido de forma sutil e natural. "
-                        "NÃO use palavras em CAIXA ALTA para destacar os erros."
+                        "Se for criar uma questão errada, altere sutilmente termos essenciais (como 'deverá/poderá', 'e/ou', 'vedado/permitido'). "
+                        "Forneça também uma explicação completa no seguinte formato:\n"
+                        "💡 **Explicação Direta:** ...\n"
+                        "📌 **Exemplo Prático da Vida Real (Como funciona o Artigo):**\n"
+                        "• **A Situação Concreta:** (descreva uma história do cotidiano real)\n"
+                        "• **A Regra do Artigo:** (como a lei se aplica no caso)\n"
+                        "• **Resumo do erro da questão:** (o que foi alterado)"
                     )
                     completion = client.chat.completions.create(
                         model="gpt-4o-mini",
                         messages=[
                             {"role": "system", "content": prompt_system},
-                            {"role": "user", "content": f"Artigo: {art['numero']}\n{text}\n\nCrie uma questão com gabarito {'CERTO' if is_correct else 'ERRADO'}."}
+                            {"role": "user", "content": f"Artigo: {art['numero']}\n{text}\n\nGabarito pretendido: {'CERTO' if is_correct else 'ERRADO'}"}
                         ]
                     )
                     enunciado = completion.choices[0].message.content
@@ -654,7 +632,7 @@ def generate_questions_for_articles(discipline_id, law_id, article_ids, qtd_tota
                         modified_text, tipo_troca = alterar_texto_para_errado(text)
                         enunciado = f"De acordo com a legislação:\n\n\"{modified_text}\""
                         gabarito = 0
-                        explicacao = gerar_explicacao_humana(art['numero'], text, False, tipo_troca)
+                        explicacao = gerar_explicacao_humana(art['numero'], text, False, tipo_troca, modified_text)
             else:
                 if is_correct:
                     enunciado = f"De acordo com o {art['numero']}:\n\n\"{text}\""
@@ -664,7 +642,7 @@ def generate_questions_for_articles(discipline_id, law_id, article_ids, qtd_tota
                     modified_text, tipo_troca = alterar_texto_para_errado(text)
                     enunciado = f"De acordo com a legislação:\n\n\"{modified_text}\""
                     gabarito = 0
-                    explicacao = gerar_explicacao_humana(art['numero'], text, False, tipo_troca)
+                    explicacao = gerar_explicacao_humana(art['numero'], text, False, tipo_troca, modified_text)
 
         else:
             if is_correct:
@@ -675,7 +653,7 @@ def generate_questions_for_articles(discipline_id, law_id, article_ids, qtd_tota
                 modified_text, tipo_troca = alterar_texto_para_errado(text)
                 enunciado = f"De acordo com a legislação:\n\n\"{modified_text}\""
                 gabarito = 0
-                explicacao = gerar_explicacao_humana(art['numero'], text, False, tipo_troca)
+                explicacao = gerar_explicacao_humana(art['numero'], text, False, tipo_troca, modified_text)
 
         try:
             conn.execute("""
