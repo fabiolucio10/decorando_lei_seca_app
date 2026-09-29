@@ -455,7 +455,7 @@ def get_saved_filters(discipline_id=None):
             JOIN disciplinas d ON d.id = f.disciplina_id
             JOIN leis l ON l.id = f.lei_id
             WHERE f.usuario_id = ? AND f.disciplina_id = ?
-            ORDER BY f.id DESC
+            ORDER BY d.nome, f.id DESC
         """, (USER_ID, discipline_id)).fetchall()
     else:
         rows = conn.execute("""
@@ -464,7 +464,7 @@ def get_saved_filters(discipline_id=None):
             JOIN disciplinas d ON d.id = f.disciplina_id
             JOIN leis l ON l.id = f.lei_id
             WHERE f.usuario_id = ?
-            ORDER BY f.id DESC
+            ORDER BY d.nome, f.id DESC
         """, (USER_ID,)).fetchall()
     conn.close()
     return rows
@@ -793,16 +793,28 @@ with tab2:
                     st.success(f"Caderno '{filter_name}' criado com sucesso! {qtd_geradas} questões geradas usando {motor_ia}.")
 
     st.divider()
-    st.subheader("🗑️ Meus Cadernos / Filtros Salvos")
+    st.subheader("🗑️ Meus Cadernos / Filtros Salvos por Disciplina")
     meus_filtros = get_saved_filters()
+    
     if meus_filtros:
+        # Agrupar cadernos por disciplina
+        filtros_por_disciplina = {}
         for mf in meus_filtros:
-            fc1, fc2 = st.columns([4, 1])
-            fc1.write(f"📁 **{mf['nome']}** ({mf['disciplina']} - {mf['lei']})")
-            if fc2.button("Excluir Caderno", key=f"del_filt_{mf['id']}"):
-                delete_filter(mf['id'])
-                st.success(f"Caderno '{mf['nome']}' removido com sucesso!")
-                st.rerun()
+            disc = mf['disciplina']
+            if disc not in filtros_por_disciplina:
+                filtros_por_disciplina[disc] = []
+            filtros_por_disciplina[disc].append(mf)
+
+        # Exibir cada disciplina num expander sanfona
+        for disc_nome, lista_filtros in filtros_por_disciplina.items():
+            with st.expander(f"📚 **{disc_nome}** ({len(lista_filtros)} Caderno(s))", expanded=False):
+                for mf in lista_filtros:
+                    fc1, fc2 = st.columns([4, 1])
+                    fc1.write(f"📁 **{mf['nome']}** _(Lei: {mf['lei']})_")
+                    if fc2.button("Excluir Caderno", key=f"del_filt_{mf['id']}"):
+                        delete_filter(mf['id'])
+                        st.success(f"Caderno '{mf['nome']}' removido com sucesso!")
+                        st.rerun()
 
 with tab3:
     st.header("Resolver Questões")
