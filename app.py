@@ -469,9 +469,9 @@ def alterar_texto_para_errado(texto):
     Retorna a frase modificada e qual foi o tipo de troca efetuada.
     """
     substituicoes = [
-        (r'\bdenúncia ou queixa\b', 'denúncia e queixa', 'troca de conjunção alternada por aditiva ("ou" por "e")'),
-        (r'\bpoderá\b', 'deverá', 'troca de faculdade ("poderá") por obrigação ("deverá")'),
-        (r'\bdeverá\b', 'poderá', 'troca de obrigação ("deverá") por faculdade ("poderá")'),
+        (r'\bdeverá\b', 'poderá', 'troca do dever obrigatório ("deverá") por mera faculdade ("poderá")'),
+        (r'\bpoderá\b', 'deverá', 'troca da faculdade ("poderá") por uma obrigação rígida ("deverá")'),
+        (r'\bdenúncia ou queixa\b', 'denúncia e queixa', 'troca de conjunção alternativa ("ou") por aditiva ("e")'),
         (r'\bpermitido\b', 'vedado', 'inversão de permissão para proibição'),
         (r'\bvedado\b', 'permitido', 'inversão de proibição para permissão'),
         (r'\bexigido\b', 'dispensado', 'troca de exigência por dispensa'),
@@ -508,36 +508,69 @@ def alterar_texto_para_errado(texto):
 
 def gerar_explicacao_humana(art_num, texto_original, foi_correto=False, tipo_troca=None):
     """
-    Gera uma explicação objetiva e um exemplo prático inteiramente dinâmico conforme o tipo de alteração no artigo.
+    Gera explicações práticas e objetivas do dia a dia, adaptando o cenário
+    conforme o contexto da lei (Penal, Civil, Trabalhista, Constitucional, etc.).
     """
+    txt_lower = texto_original.lower()
+
+    # Identificação dinâmica do cenário prático
+    if any(p in txt_lower for p in ["inquérito", "delegado", "prisão", "crime", "polícia", "flagrante", "ação penal"]):
+        cenario = (
+            "📌 **Exemplo Prático (Direito Penal/Processual Penal):**\n"
+            "• **Situação:** No plantão da delegacia ou em uma abordagem policial diante de uma infração.\n"
+            "• **Aplicação:** A autoridade deve agir nos exatos termos da lei: se exige provocação da vítima, a polícia "
+            "não pode agir de ofício; se é um dever legal, a atuação é obrigatória e sem margem para escolha."
+        )
+    elif any(p in txt_lower for p in ["empregado", "empregador", "trabalho", "salário", "férias", "rescisão", "jornada"]):
+        cenario = (
+            "📌 **Exemplo Prático (Direito do Trabalho):**\n"
+            "• **Situação:** Na rotina da empresa, durante a gestão de horários, pagamentos ou desligamentos.\n"
+            "• **Aplicação:** As partes devem cumprir exatamente o texto legal. Tratar uma obrigação do empregador "
+            "como mera faculdade (opção) invalida a medida trabalhista e gera passivo."
+        )
+    elif any(p in txt_lower for p in ["consumidor", "fornecedor", "produto", "serviço", "vício", "garantia", "oferta"]):
+        cenario = (
+            "📌 **Exemplo Prático (Direito do Consumidor):**\n"
+            "• **Situação:** No balcão de um estabelecimento comercial durante a troca ou reparo de um produto defeituoso.\n"
+            "• **Aplicação:** O artigo fixa a responsabilidade do fornecedor. Se o dispositivo impõe um dever, o comerciante "
+            "não pode negar a solução nem impor condições não previstas na lei."
+        )
+    elif any(p in txt_lower for p in ["tributo", "imposto", "taxa", "fisco", "contribuinte", "receita", "lançamento"]):
+        cenario = (
+            "📌 **Exemplo Prático (Direito Tributário):**\n"
+            "• **Situação:** Na apuração fiscal ou na emissão de notificação de cobrança pelo Estado.\n"
+            "• **Aplicação:** A cobrança vincula-se estritamente à lei. O Fisco não pode criar exigências nem conceder "
+            "dispensas que não estejam expressamente autorizadas na legislação."
+        )
+    elif any(p in txt_lower for p in ["servidor", "administração pública", "licitação", "ato administrativo", "agente público"]):
+        cenario = (
+            "📌 **Exemplo Prático (Direito Administrativo):**\n"
+            "• **Situação:** Na tomada de decisão de um gestor ou servidor em um procedimento administrativo.\n"
+            "• **Aplicação:** A Administração só atua segundo a estrita legalidade. Confundir um dever regimental com uma "
+            "decisão discricionária (faculdade) anula totalmente o ato praticado."
+        )
+    else:
+        cenario = (
+            "📌 **Exemplo Prático (Dia a Dia):**\n"
+            "• **Situação:** Em uma relação jurídica do cotidiano entre as partes envolvidas.\n"
+            "• **Aplicação:** O cumprimento do dispositivo exige a observância exata de seus termos. "
+            "Substituir exigências por permissões altera completamente os direitos e deveres das partes."
+        )
+
     if foi_correto:
         return f"""💡 **Explicação Direta:**
-O item está **CORRETO**. Ele reproduz exatamente o texto previsto no **{art_num}** da legislação.
+O item está **CORRETO**. Ele reflete com exatidão o texto do **{art_num}**.
 
-📌 **Exemplo Prático:**
-Na prática jurídica, a regra é aplicada conforme descrita no dispositivo, devendo a autoridade e as partes cumprirem estritamente as condições estabelecidas no texto legal.
+{cenario}
 
 📜 **Texto Original da Lei:**
 > "{texto_original}"
 """
 
-    exemplo_dinamico = "Na prática, trocar os termos altera radicalmente o direito aplicável. O descumprimento do texto exato da lei compromete a legalidade do ato."
-
-    if tipo_troca:
-        if 'troca de "ou" por "e"' in tipo_troca or 'denúncia e queixa' in tipo_troca:
-            exemplo_dinamico = "A ação penal pública inicia-se por denúncia e a privada por queixa. Elas nunca ocorrem ao mesmo tempo para o mesmo fato! Dizer 'denúncia e queixa' tornaria o procedimento juridicamente impossível."
-        elif 'faculdade' in tipo_troca or 'obrigação' in tipo_troca:
-            exemplo_dinamico = "Se a lei estabelece um dever, o agente público não tem escolha. Transformar isso em faculdade retira a obrigatoriedade imposta ao procedimento."
-        elif 'permissão' in tipo_troca or 'proibição' in tipo_troca:
-            exemplo_dinamico = "Inverter a regra de vedada/permitida altera completamente o limite do que a autoridade ou a parte pode realizar validamente."
-        elif 'negação' in tipo_troca:
-            exemplo_dinamico = "Retirar ou inserir a palavra 'não' inverte completamente o resultado prático esperado pela legislação."
-
     return f"""💡 **Explicação Direta:**
-O item está **ERRADO**. A questão alterou o sentido do **{art_num}** mediante {tipo_troca or 'alteração de termos essenciais'}.
+O item está **ERRADO**. A questão alterou o sentido do **{art_num}** mediante {tipo_troca or 'modificação de termos essenciais'}.
 
-📌 **Exemplo Prático:**
-{exemplo_dinamico}
+{cenario}
 
 📜 **Texto Original da Lei:**
 > "{texto_original}"
@@ -813,7 +846,7 @@ with tab1:
             st.success(f"Lei processada com sucesso! {qtd} artigos importados.")
 
     st.divider()
-    st.subheader("🗑️️ Leis Cadastradas e Opção de Exclusão")
+    st.subheader("🗑 Leis Cadastradas e Opção de Exclusão")
     todas_leis = get_laws()
     if todas_leis:
         for l in todas_leis:
