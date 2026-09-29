@@ -67,8 +67,7 @@ def hash_password(password):
 
 def limpar_e_formatar_texto_lei(texto):
     """
-    Remove notas de alteração/inclusão legislativa, URLs, datas do Planalto
-    e organiza a estrutura de incisos, alíneas e parágrafos com quebras de linha.
+    Remove notas de alteração/inclusão legislativa, URLs, datas do Planalto.
     """
     if not texto:
         return ""
@@ -85,12 +84,8 @@ def limpar_e_formatar_texto_lei(texto):
     for padrao in padroes_remover:
         texto = re.sub(padrao, '', texto, flags=re.IGNORECASE)
 
-    texto = re.sub(r'\s+([I|V|X]+ -)', r'\n\n\1', texto)
-    texto = re.sub(r'\s+([a-z]\))', r'\n\n\1', texto)
-    texto = re.sub(r'\s+(Parágrafo único|§\s*\d+º?)', r'\n\n\1', texto, flags=re.IGNORECASE)
-
     texto = re.sub(r' +', ' ', texto)
-    texto = re.sub(r'\n\s*\n', '\n\n', texto)
+    texto = re.sub(r'\n\s*\n', '\n', texto)
 
     return texto.strip()
 
@@ -376,36 +371,54 @@ def get_laws(discipline_id=None):
     return rows
 
 def parse_and_store_pdf(pdf_path, law_id):
+    """
+    Lê o PDF e fraciona o conteúdo por Artigo e por subdivisiones (Parágrafos/Incisos)
+    quando o artigo for extenso, garantindo enunciados curtos e focados.
+    """
     doc = fitz.open(pdf_path)
     full_text = "\n".join([page.get_text() for page in doc])
     doc.close()
 
-    pattern = re.compile(r'(Art\.\s*\d+[\w\d\-\.]*)\s*[\.-]?\s*(.*)', re.IGNORECASE)
-    lines = full_text.split('\n')
+    artigo_regex = re.compile(r'(Art\.\s*\d+[\w\d\-\.]*)', re.IGNORECASE)
     
-    artigos = []
-    curr_num = None
-    curr_lines = []
+    # Divide primeiro por "Art."
+    partes = artigo_regex.split(full_text)
+    artigos_brutos = []
+    
+    for i in range(1, len(partes), 2):
+        num_art = partes[i].strip()
+        corpo_art = partes[i+1] if (i+1) < len(partes) else ""
+        artigos_brutos.append((num_art, corpo_art))
 
-    for line in lines:
-        line_s = line.strip()
-        m = pattern.match(line_s)
-        if m and ("Art." in line_s or "art." in line_s):
-            if curr_num and curr_lines:
-                art_limpo = limpar_e_formatar_texto_lei("\n".join(curr_lines))
-                artigos.append((curr_num, art_limpo))
-            curr_num = m.group(1)
-            curr_lines = [m.group(2)]
+    unidades_finais = []
+
+    for num_art, corpo in artigos_brutos:
+        corpo_limpo = limpar_e_formatar_texto_lei(corpo)
+        
+        # Se o artigo for longo (mais de 300 caracteres), quebra por Parágrafo ou Inciso
+        if len(corpo_limpo) > 300:
+            subblocos = re.split(r'(\n\s*(?:§\s*\d+º?|Parágrafo único|[I|V|X]+\s*-))', corpo_limpo, flags=re.IGNORECASE)
+            
+            if len(subblocos) > 1:
+                caput = subblocos[0].strip()
+                if caput:
+                    unidades_finais.append((f"{num_art} (caput)", caput))
+                
+                idx_sub = 1
+                while idx_sub < len(subblocos):
+                    rotulo = subblocos[idx_sub].strip()
+                    texto_sub = subblocos[idx_sub+1].strip() if (idx_sub+1) < len(subblocos) else ""
+                    bloco_completo = f"{rotulo} {texto_sub}".strip()
+                    if bloco_completo:
+                        unidades_finais.append((f"{num_art} - {rotulo}", bloco_completo))
+                    idx_sub += 2
+            else:
+                unidades_finais.append((num_art, corpo_limpo))
         else:
-            if curr_num:
-                curr_lines.append(line_s)
-
-    if curr_num and curr_lines:
-        art_limpo = limpar_e_formatar_texto_lei("\n".join(curr_lines))
-        artigos.append((curr_num, art_limpo))
+            unidades_finais.append((num_art, corpo_limpo))
 
     conn = db()
-    for num, txt in artigos:
+    for num, txt in unidades_finais:
         if txt.strip():
             conn.execute(
                 "INSERT INTO artigos(lei_id, numero, titulo, texto) VALUES(?,?,?,?)",
@@ -413,7 +426,7 @@ def parse_and_store_pdf(pdf_path, law_id):
             )
     conn.commit()
     conn.close()
-    return len(artigos)
+    return len(unidades_finais)
 
 def get_articles(law_id):
     conn = db()
@@ -465,23 +478,23 @@ def get_saved_filters(discipline_id=None):
 
 def alterar_texto_para_errado(texto):
     """
-    Modifica o texto da lei para criar um erro sutil e natural.
-    Retorna a frase modificada e qual foi o tipo de troca efetuada.
+    Modifica o texto para criar um erro sutil e natural.
     """
     substituicoes = [
-        (r'\bdeverá\b', 'poderá', 'troca do dever obrigatório ("deverá") por mera faculdade ("poderá")'),
-        (r'\bpoderá\b', 'deverá', 'troca da faculdade ("poderá") por uma obrigação rígida ("deverá")'),
-        (r'\bdenúncia ou queixa\b', 'denúncia e queixa', 'troca de conjunção alternativa ("ou") por aditiva ("e")'),
-        (r'\bpermitido\b', 'vedado', 'inversão de permissão para proibição'),
+        (r'\bdeverá\b', 'poderá', 'troca de obrigação ("deverá") por faculdade ("poderá")'),
+        (r'\bpoderá\b', 'deverá', 'troca de faculdade ("poderá") por obrigação ("deverá")'),
+        (r'\b24 \(vinte e quatro\) horas\b', '48 (quarenta e oito) horas', 'alteração de prazo legal de 24h para 48h'),
+        (r'\b72 \(setenta e duas\) horas\b', '24 (vinte e quatro) horas', 'alteração de prazo legal de 72h para 24h'),
+        (r'\b12 \(doze\) horas\b', '24 (vinte e quatro) horas', 'alteração do prazo de manifestação de 12h para 24h'),
+        (r'\b30 \(trinta\) dias\b', '15 (quinze) dias', 'alteração do prazo de fornecimento de dados'),
+        (r'\bpermitido\b', 'vedado', 'inversão depermissão para proibição'),
         (r'\bvedado\b', 'permitido', 'inversão de proibição para permissão'),
         (r'\bexigido\b', 'dispensado', 'troca de exigência por dispensa'),
         (r'\bdispensado\b', 'exigido', 'troca de dispensa por exigência'),
-        (r'\bobrigatório\b', 'facultativo', 'troca de obrigatoriedade por faculdade'),
-        (r'\bfacultativo\b', 'obrigatório', 'troca de faculdade por obrigatoriedade'),
-        (r'\bantes\b', 'depois', 'inversão de ordem temporal ("antes" por "depois")'),
-        (r'\bdepois\b', 'antes', 'inversão de ordem temporal ("depois" por "antes")'),
-        (r'\bou\b', 'e', 'troca de "ou" por "e"'),
-        (r'\be\b', 'ou', 'troca de "e" por "ou"')
+        (r'\bobrigatório\b', 'facultativo', 'troca de obrigação por faculdade'),
+        (r'\bfacultativo\b', 'obrigatório', 'troca de faculdade por obrigação'),
+        (r'\bindependentemente de autorização judicial\b', 'mediante autorização judicial', 'exigência indevida de autorização judicial'),
+        (r'\bmediante autorização judicial\b', 'independente de autorização judicial', 'supressão da necessidade de autorização judicial')
     ]
     
     texto_modificado = texto
@@ -508,42 +521,44 @@ def alterar_texto_para_errado(texto):
 
 def gerar_explicacao_humana(art_num, texto_original, foi_correto=False, tipo_troca=None, texto_modificado=None):
     """
-    Gera explicações didáticas e detalhadas com caso prático real da aplicação do artigo.
+    Gera explicações didáticas focadas na historinha prática do caso concreto.
     """
     txt_lower = texto_original.lower()
 
-    # Construção da história do caso real dinâmica conforme o conteúdo do artigo
-    if "flagrante" in txt_lower or "prisão" in txt_lower:
-        situacao_real = "Um suspeito é apanhado logo após cometer um assalto na rua e trazido pelos agentes para a esquadra."
-        regra_aplicada = f"O **{art_num}** estipula expressamente os procedimentos legais que a autoridade deve adotar quando ocorre este tipo de detenção em flagrante."
-    elif "inquérito" in txt_lower or "polícia" in txt_lower:
-        situacao_real = "A polícia toma conhecimento de uma infração penal e inicia as investigações no plantão policial."
-        regra_aplicada = f"O **{art_num}** define exatamente como o procedimento investigador deve ser instaurado e conduzido."
-    elif "empregado" in txt_lower or "trabalho" in txt_lower or "salário" in txt_lower:
-        situacao_real = "Ocorre uma divergência na empresa entre o colaborador e o setor de Recursos Humanos sobre direitos ou prazos."
-        regra_aplicada = f"O **{art_num}** impõe a regra laboral exata que deve ser seguida na relação de trabalho."
-    elif "consumidor" in txt_lower or "produto" in txt_lower:
-        situacao_real = "Um cliente dirige-se ao estabelecimento para resolver uma avaria detetada no produto que comprou."
-        regra_aplicada = f"O **{art_num}** estabelece os deveres legais do fornecedor diante da reclamação do cliente."
+    # Construção contextualizada da história do caso real
+    if "dados" in txt_lower or "informações cadastrais" in txt_lower or "requisitar" in txt_lower:
+        situacao_real = "Ocorre um sequestro ou tráfico de pessoas e a polícia precisa identificar rapidamente a vítima ou os suspeitos obtendo dados de cadastro (nome, CPF, endereço)."
+        regra_aplicada = f"O **{art_num}** permite que o Delegado ou Promotor requisite esses dados diretamente a órgãos públicos ou empresas privadas sem precisar aguardar autorização judicial prévia."
+    elif "sinal" in txt_lower or "telecomunicações" in txt_lower or "localização" in txt_lower:
+        situacao_real = "Um crime grave está em andamento e a polícia precisa rastrear a localização do telemóvel do suspeito através das antenas de telefonia."
+        regra_aplicada = f"O **{art_num}** autoriza a requisição do sinal (estação de cobertura), mas exige **autorização judicial** e estabelece prazos rigorosos para o procedimento."
+    elif "flagrante" in txt_lower or "prisão" in txt_lower:
+        situacao_real = "Um suspeito rouba uma pessoa na rua e é apanhado logo em seguida pela polícia ainda em posse do bem."
+        regra_aplicada = f"O **{art_num}** determina que a prisão em flagrante exige a lavratura do auto e o envio imediato da documentação ao juiz e família no prazo legal."
+    elif "inquérito" in txt_lower or "instaurado" in txt_lower:
+        situacao_real = "A polícia toma conhecimento da prática de uma infração penal e precisa dar início oficial às investigações formalizadas."
+        regra_aplicada = f"O **{art_num}** fixa o prazo máximo obrigatório para a abertura oficial do inquérito policial a contar do registo da ocorrência."
     else:
-        situacao_real = "Diante de um conflito legal do quotidiano entre as partes envolvidas."
-        regra_aplicada = f"O **{art_num}** dita exatamente a conduta legalmente exigida para regular essa situação."
+        situacao_real = "Diante de um caso prático no dia a dia policial ou jurídico envolvendo a aplicação desta norma."
+        regra_aplicada = f"O **{art_num}** determina exatamente a conduta e os prazos que as autoridades devem respeitar."
 
     if foi_correto:
         status_txt = "O item está **CORRETO**."
-        detalhe_erro = f"O enunciado mantém total fidelidade ao texto e sentido exato do **{art_num}**."
+        detalhe_erro = f"O enunciado reproduz com exatidão o disposto no **{art_num}**."
+        resumo_erro_bloco = ""
     else:
         status_txt = "O item está **ERRADO**."
-        detalhe_erro = f"A questão alterou o sentido do artigo mediante **{tipo_troca or 'modificação de termos essenciais'}**."
+        detalhe_erro = f"A banca alterou a regra original do artigo."
+        resumo_erro_bloco = f"\n• **Resumo do Erro da Questão:** A lei estabelece uma regra específica, porém a questão alterou o sentido original mediante **{tipo_troca or 'modificação de termos'}**."
 
     explicacao_formatada = f"""💡 **Explicação Direta:**
 {status_txt} {detalhe_erro}
 
 📌 **Exemplo Prático da Vida Real (Como funciona o {art_num}):**
 Imagine a seguinte situação:
+
 • **A Situação Concreta:** {situacao_real}
-• **A Regra do {art_num}:** {regra_aplicada}
-• **Na Prática:** As regras descritas na lei devem ser cumpridas exatamente como constam no diploma legal.
+• **A Regra do {art_num}:** {regra_aplicada}{resumo_erro_bloco}
 
 📜 **Texto Original da Lei:**
 > "{texto_original}"
@@ -576,7 +591,7 @@ def generate_questions_for_articles(discipline_id, law_id, article_ids, qtd_tota
         if "Ollama" in motor_ia:
             import requests
             try:
-                prompt = f"Crie uma questão Certo/Errado baseada no artigo {art['numero']}:\n{text}. Não use caixa alta para destacar o erro."
+                prompt = f"Crie uma questão Certo/Errado curta baseada neste trecho do {art['numero']}:\n{text}"
                 res = requests.post("http://localhost:11434/api/generate", json={
                     "model": "llama3",
                     "prompt": prompt,
@@ -588,7 +603,7 @@ def generate_questions_for_articles(discipline_id, law_id, article_ids, qtd_tota
                 explicacao = gerar_explicacao_humana(art['numero'], text, is_correct)
             except Exception:
                 if is_correct:
-                    enunciado = f"De acordo com o {art['numero']} da lei:\n\n\"{text}\""
+                    enunciado = f"De acordo com o {art['numero']}:\n\n\"{text}\""
                     gabarito = 1
                     explicacao = gerar_explicacao_humana(art['numero'], text, True)
                 else:
@@ -604,20 +619,14 @@ def generate_questions_for_articles(discipline_id, law_id, article_ids, qtd_tota
                     client = openai.OpenAI(api_key=api_key)
                     prompt_system = (
                         "Você é uma banca examinadora de concursos públicos. "
-                        "Crie uma afirmação de Certo ou Errado baseada no artigo fornecido. "
-                        "Se for criar uma questão errada, altere sutilmente termos essenciais (como 'deverá/poderá', 'e/ou', 'vedado/permitido'). "
-                        "Forneça também uma explicação completa no seguinte formato:\n"
-                        "💡 **Explicação Direta:** ...\n"
-                        "📌 **Exemplo Prático da Vida Real (Como funciona o Artigo):**\n"
-                        "• **A Situação Concreta:** (descreva uma história do cotidiano real)\n"
-                        "• **A Regra do Artigo:** (como a lei se aplica no caso)\n"
-                        "• **Resumo do erro da questão:** (o que foi alterado)"
+                        "Crie uma afirmação de Certo ou Errado focada estritamente no trecho da lei fornecido. "
+                        "Mantenha o enunciado conciso e direto."
                     )
                     completion = client.chat.completions.create(
                         model="gpt-4o-mini",
                         messages=[
                             {"role": "system", "content": prompt_system},
-                            {"role": "user", "content": f"Artigo: {art['numero']}\n{text}\n\nGabarito pretendido: {'CERTO' if is_correct else 'ERRADO'}"}
+                            {"role": "user", "content": f"Artigo/Dispositivo: {art['numero']}\n{text}\n\nGabarito pretendido: {'CERTO' if is_correct else 'ERRADO'}"}
                         ]
                     )
                     enunciado = completion.choices[0].message.content
@@ -646,7 +655,7 @@ def generate_questions_for_articles(discipline_id, law_id, article_ids, qtd_tota
 
         else:
             if is_correct:
-                enunciado = f"De acordo com o {art['numero']} da lei:\n\n\"{text}\""
+                enunciado = f"De acordo com o {art['numero']}:\n\n\"{text}\""
                 gabarito = 1
                 explicacao = gerar_explicacao_humana(art['numero'], text, True)
             else:
@@ -803,7 +812,7 @@ with tab1:
         disc_sel = st.selectbox("Selecione a Disciplina:", [""] + disc_names)
 
     st.subheader("Upload do PDF da Lei")
-    law_title = st.text_input("Nome da Lei (ex: CF/88 - Artigos 1 a 14, Código Penal, etc.):")
+    law_title = st.text_input("Nome da Lei (ex: CF/88, Código Penal, etc.):")
     uploaded_file = st.file_uploader("Escolha o arquivo PDF da lei", type=["pdf"])
 
     if st.button("Processar e Salvar Lei"):
@@ -821,7 +830,7 @@ with tab1:
 
             law_id = add_law(disc_id, law_title, uploaded_file.name)
             qtd = parse_and_store_pdf(file_path, law_id)
-            st.success(f"Lei processada com sucesso! {qtd} artigos importados.")
+            st.success(f"Lei processada com sucesso! {qtd} dispositivos/trechos importados de forma fracionada.")
 
     st.divider()
     st.subheader("🗑 Leis Cadastradas e Opção de Exclusão")
@@ -854,12 +863,12 @@ with tab2:
             articles = get_articles(l_id)
             art_dict = {f"{a['numero']} - {a['texto'][:60]}...": a["id"] for a in articles}
             
-            selected_arts = st.multiselect("3. Selecione os Artigos (deixe vazio para TODOS):", list(art_dict.keys()))
+            selected_arts = st.multiselect("3. Selecione os Artigos/Trechos (deixe vazio para TODOS):", list(art_dict.keys()))
             
             total_arts_selecionados = len(selected_arts) if selected_arts else len(articles)
             sugestao_qtd = max(total_arts_selecionados * 2, 10)
             
-            st.info(f"💡 **Sugestão do Sistema:** Esta lei/seleção possui **{total_arts_selecionados} artigo(s)**. Recomendamos gerar no mínimo **{sugestao_qtd} questões** (2 por artigo) para cobrir 100% dos artigos sem repetir excessivamente.")
+            st.info(f"💡 **Sugestão do Sistema:** Esta lei/seleção possui **{total_arts_selecionados} trecho(s) fracionado(s)**. Recomendamos gerar no mínimo **{sugestao_qtd} questões** para cobrir todos os pontos.")
 
             qtd_q = st.number_input(
                 "4. Quantidade de questões para este filtro:",
@@ -873,7 +882,7 @@ with tab2:
                 ["⚙️ Regra Padrão", "🦙 Ollama (Local)", "🤖 OpenAI / Gemini (Nuvem)"]
             )
 
-            filter_name = st.text_input("6. Nome do seu Caderno / Filtro (ex: CF88 - Direitos Fundamentais):")
+            filter_name = st.text_input("6. Nome do seu Caderno / Filtro:")
 
             if st.button("Salvar Caderno e Gerar Questões"):
                 if not filter_name:
@@ -882,7 +891,7 @@ with tab2:
                     art_ids = [art_dict[k] for k in selected_arts]
                     f_id = save_filter(filter_name, d_id, l_id, art_ids, qtd_q)
                     qtd_geradas = generate_questions_for_articles(d_id, l_id, art_ids, qtd_q, filter_id=f_id, motor_ia=motor_ia)
-                    st.success(f"Caderno '{filter_name}' criado com sucesso! {qtd_geradas} questões geradas cobrindo todos os artigos.")
+                    st.success(f"Caderno '{filter_name}' criado com sucesso! {qtd_geradas} questões geradas de forma fracionada.")
 
     st.divider()
     st.subheader("🗑️ Meus Cadernos / Filtros Salvos por Disciplina")
@@ -949,7 +958,7 @@ with tab3:
             else:
                 q = questoes[idx]
                 st.subheader(f"Questão {idx + 1} de {len(questoes)}")
-                st.markdown(f"**Artigo:** {q['artigo_numero']}")
+                st.markdown(f"**Dispositivo:** {q['artigo_numero']}")
                 st.markdown(q["enunciado"])
 
                 resp = st.radio("Sua resposta:", ["Certo", "Errado"], key=f"q_{q['id']}")
@@ -988,7 +997,7 @@ with tab4:
         st.dataframe(b_disc, use_container_width=True)
 
     st.divider()
-    st.subheader("⚠️ Redefinir Estatísticas")
+    st.subheader("⚠️️ Redefinir Estatísticas")
     if st.button("Zerar Histórico de Respostas / Limpar Dashboard", type="secondary"):
         zerar_historico_dashboard()
         st.success("Seu histórico de respostas e indicadores do dashboard foram zerados!")
