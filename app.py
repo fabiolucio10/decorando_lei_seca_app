@@ -381,63 +381,252 @@ def get_laws(discipline_id=None):
     conn.close()
     return rows
 
+def normalizar_estrutura_dispositivo(texto):
+    """
+    Normaliza a extração do PDF sem alterar o conteúdo jurídico.
+
+    Alguns PDFs colocam vários incisos/alíneas na mesma linha, por exemplo:
+    "I - ...; II - ...; III - ...".
+    Aqui apenas criamos separadores internos para o parser conseguir identificar
+    a estrutura. O texto jurídico continua sendo preservado.
+    """
+    if not texto:
+        return ""
+
+    texto = texto.replace("\r", "\n")
+    texto = re.sub(r'[ \t]+', ' ', texto)
+
+    # Quebra antes de parágrafos e "Parágrafo único".
+    texto = re.sub(r'\s+(§\s*\d+º?|Parágrafo único)\s+', r'\n\1 ', texto, flags=re.IGNORECASE)
+
+    # Quebra antes de incisos romanos. Exige hífen e início de item para evitar
+    # confundir números romanos que apareçam no meio de uma frase.
+    texto = re.sub(
+        r'\s+(?=(?:I|II|III|IV|V|VI|VII|VIII|IX|X|XI|XII|XIII|XIV|XV|XVI|XVII|XVIII|XIX|XX)\s*-)',
+        '\n',
+        texto,
+        flags=re.IGNORECASE
+    )
+
+    # Quebra antes de alíneas. Aceita "a)" e "a -".
+    texto = re.sub(r'\s+(?=[a-z]\s*[\)\-])', '\n', texto, flags=re.IGNORECASE)
+
+    # Quebra antes de itens numerados (1., 2., 3. etc.) somente quando vierem
+    # após uma quebra/; para não alterar números comuns dentro do texto.
+    texto = re.sub(r'(?<=[;])\s+(?=\d+[\)\.-]\s)', '\n', texto)
+
+    texto = re.sub(r'\n{2,}', '\n', texto)
+    return texto.strip()
+
+
+def eh_marcador_paragrafo(linha):
+    return bool(re.match(r'^(§\s*\d+º?|Parágrafo único)\b', linha.strip(), re.IGNORECASE))
+
+
+def eh_marcador_inciso(linha):
+    return bool(re.match(
+        r'^(?:I|II|III|IV|V|VI|VII|VIII|IX|X|XI|XII|XIII|XIV|XV|XVI|XVII|XVIII|XIX|XX)\s*-',
+        linha.strip(), re.IGNORECASE
+    ))
+
+
+def eh_marcador_alinea(linha):
+    return bool(re.match(r'^[a-z]\s*[\)\-]\s*', linha.strip(), re.IGNORECASE))
+
+
+def extrair_blocos_por_marcador(texto, tipo):
+    """Retorna [(marcador, texto_do_bloco)] mantendo o texto original."""
+    linhas = [l.strip() for l in texto.split('\n') if l.strip()]
+    if not linhas:
+        return []
+
+    if tipo == 'paragrafo':
+        matcher = eh_marcador_paragrafo
+    elif tipo == 'inciso':
+        matcher = eh_marcador_inciso
+    else:
+        matcher = eh_marcador_alinea
+
+    blocos = []
+    atual_marcador = None
+    atual_texto = []
+
+    for linha in linhas:
+        if matcher(linha):
+            if atual_marcador is not None:
+                blocos.append((atual_marcador, ' '.join(atual_texto).strip()))
+            # Primeiro token/expressão identificadora do dispositivo.
+            if tipo == 'paragrafo':
+                m = re.match(r'^(§\s*\d+º?|Parágrafo único)', linha, re.IGNORECASE)
+            elif tipo == 'inciso':
+                m = re.match(r'^((?:I|II|III|IV|V|VI|VII|VIII|IX|X|XI|XII|XIII|XIV|XV|XVI|XVII|XVIII|XIX|XX)\s*-)', linha, re.IGNORECASE)
+            else:
+                m = re.match(r'^([a-z]\s*[\)\-])', linha, re.IGNORECASE)
+            atual_marcador = m.group(1).strip() if m else linha.split()[0]
+            atual_texto = [linha[m.end():].strip() if m else linha]
+        else:
+            if atual_marcador is not None:
+                atual_texto.append(linha)
+            else:
+                # Conteúdo anterior ao primeiro marcador.
+                blocos.append((None, linha))
+
+    if atual_marcador is not None:
+        blocos.append((atual_marcador, ' '.join(atual_texto).strip()))
+
+    return [(m, t) for m, t in blocos if t.strip()]
+
+
+def fracionar_artigo_extenso(num_art, corpo_limpo):
+    """
+    Divide SOMENTE artigos extensos, mantendo a essência do sistema atual.
+
+    O artigo original continua sendo armazenado integralmente na tabela artigos.
+    Esta função é usada apenas durante a geração das questões.
+
+    Retorna uma lista de alvos:
+        {
+            'numero': 'Art. 5º, inciso II',
+            'texto': 'II - ...'
+        }
+    """
+    texto = normalizar_estrutura_dispositivo(corpo_limpo)
+    linhas = [l.strip() for l in texto.split('\n') if l.strip()]
+
+    # Mantém artigos curtos exatamente como o sistema sempre fez.
+    if len(corpo_limpo) <= 700:
+        return [{'numero': num_art, 'texto': corpo_limpo.strip()}]
+
+    paragrafos = extrair_blocos_por_marcador(texto, 'paragrafo')
+    incisos = extrair_blocos_por_marcador(texto, 'inciso')
+
+    # Se o artigo for longo, mas não tiver estrutura reconhecível, não fazemos
+    # uma quebra arbitrária. Isso preserva a segurança do texto legal.
+    if len(paragrafos) == 0 and len(incisos) == 0:
+        return [{'numero': num_art, 'texto': corpo_limpo.strip()}]
+
+    alvos = []
+
+    # Caput: tudo que aparece antes do primeiro § ou inciso.
+    inicio = texto
+    marcadores = []
+    for padrao in [
+        r'(?m)^§\s*\d+º?',
+        r'(?m)^Parágrafo único\b',
+        r'(?m)^(?:I|II|III|IV|V|VI|VII|VIII|IX|X|XI|XII|XIII|XIV|XV|XVI|XVII|XVIII|XIX|XX)\s*-'
+    ]:
+        m = re.search(padrao, texto, re.IGNORECASE)
+        if m:
+            marcadores.append(m.start())
+    if marcadores:
+        inicio = texto[:min(marcadores)].strip()
+    else:
+        inicio = texto.strip()
+
+    if inicio:
+        alvos.append({'numero': f'{num_art} (caput)', 'texto': inicio})
+
+    # Primeiro tratamos parágrafos, porque alíneas pertencem a eles.
+    paragrafos = extrair_blocos_por_marcador(texto, 'paragrafo')
+    posicao_primeiro_paragrafo = None
+    if paragrafos:
+        # Localiza a posição do primeiro parágrafo para separar incisos que
+        # estejam antes dele.
+        m = re.search(r'(?m)^(?:§\s*\d+º?|Parágrafo único)\b', texto, re.IGNORECASE)
+        if m:
+            posicao_primeiro_paragrafo = m.start()
+
+    # Incisos que ficam antes do primeiro parágrafo.
+    trecho_inicial = texto[:posicao_primeiro_paragrafo].strip() if posicao_primeiro_paragrafo is not None else texto
+    incisos_iniciais = extrair_blocos_por_marcador(trecho_inicial, 'inciso')
+    for marcador, texto_inciso in incisos_iniciais:
+        if marcador and texto_inciso:
+            alvos.append({'numero': f'{num_art}, inciso {marcador.rstrip("-").strip()}', 'texto': f'{marcador} {texto_inciso}'.strip()})
+
+    # Parágrafos e, quando existirem, suas alíneas.
+    for marcador_par, texto_par in paragrafos:
+        if not marcador_par or not texto_par:
+            continue
+
+        # O bloco do § foi unido em uma linha para preservar o texto.
+        # Normalizamos novamente apenas aqui para recuperar as alíneas internas.
+        texto_par_estruturado = normalizar_estrutura_dispositivo(texto_par)
+        alíneas = [(m, t) for m, t in extrair_blocos_por_marcador(texto_par_estruturado, 'alinea') if m]
+        if alíneas:
+
+            for idx, (marcador_al, texto_al) in enumerate(alíneas):
+                if not marcador_al or not texto_al:
+                    continue
+                prefixo = f'{marcador_par} '
+                # A alínea recebe somente seu próprio texto. A hierarquia
+                # completa fica no campo "numero_dispositivo", por exemplo:
+                # Art. 5º, § 1º, alínea a. Assim evitamos repetir um § inteiro
+                # dentro de cada alínea e mantemos as questões curtas.
+                texto_alvo = f'{marcador_al} {texto_al}'.strip()
+                alvos.append({
+                    'numero': f'{num_art}, {marcador_par}, alínea {marcador_al[0].lower()}',
+                    'texto': texto_alvo
+                })
+        else:
+            alvos.append({
+                'numero': f'{num_art}, {marcador_par}',
+                'texto': f'{marcador_par} {texto_par}'.strip()
+            })
+
+    # Caso existam incisos depois de um parágrafo, ou estruturas que o PDF
+    # colocou em posição diferente, acrescentamos os que ainda não entraram.
+    todos_incisos = extrair_blocos_por_marcador(texto, 'inciso')
+    numeros_existentes = {a['numero'] for a in alvos}
+    for marcador, texto_inciso in todos_incisos:
+        if marcador and texto_inciso:
+            numero = f'{num_art}, inciso {marcador.rstrip("-").strip()}'
+            if numero not in numeros_existentes:
+                alvos.append({'numero': numero, 'texto': f'{marcador} {texto_inciso}'.strip()})
+                numeros_existentes.add(numero)
+
+    # Segurança: se o parser produziu algo estranho, volta ao artigo integral.
+    if not alvos:
+        return [{'numero': num_art, 'texto': corpo_limpo.strip()}]
+
+    return alvos
+
+
 def parse_and_store_pdf(pdf_path, law_id):
     """
-    Lê o PDF e fraciona o conteúdo por Artigo e por subdivisiones (Parágrafos/Incisos)
-    quando o artigo for extenso, garantindo enunciados curtos e focados.
+    Lê o PDF e armazena cada artigo INTEGRALMENTE, preservando o comportamento
+    original do sistema.
+
+    A fragmentação de artigos extensos NÃO acontece no banco. Ela acontece
+    somente durante a geração das questões, evitando duplicação dos artigos,
+    alteração dos filtros e perda do texto original.
     """
     doc = fitz.open(pdf_path)
     full_text = "\n".join([page.get_text() for page in doc])
     doc.close()
 
-    artigo_regex = re.compile(r'(Art\.\s*\d+[\w\d\-\.]*)', re.IGNORECASE)
-    
-    # Divide primeiro por "Art."
+    artigo_regex = re.compile(r'(Art\.\s*\d+[\w\d\-\.ºº]*)', re.IGNORECASE)
     partes = artigo_regex.split(full_text)
     artigos_brutos = []
-    
+
     for i in range(1, len(partes), 2):
         num_art = partes[i].strip()
-        corpo_art = partes[i+1] if (i+1) < len(partes) else ""
-        artigos_brutos.append((num_art, corpo_art))
-
-    unidades_finais = []
-
-    for num_art, corpo in artigos_brutos:
-        corpo_limpo = limpar_e_formatar_texto_lei(corpo)
-        
-        # Se o artigo for longo (mais de 300 caracteres), quebra por Parágrafo ou Inciso
-        if len(corpo_limpo) > 300:
-            subblocos = re.split(r'(\n\s*(?:§\s*\d+º?|Parágrafo único|[I|V|X]+\s*-))', corpo_limpo, flags=re.IGNORECASE)
-            
-            if len(subblocos) > 1:
-                caput = subblocos[0].strip()
-                if caput:
-                    unidades_finais.append((f"{num_art} (caput)", caput))
-                
-                idx_sub = 1
-                while idx_sub < len(subblocos):
-                    rotulo = subblocos[idx_sub].strip()
-                    texto_sub = subblocos[idx_sub+1].strip() if (idx_sub+1) < len(subblocos) else ""
-                    bloco_completo = f"{rotulo} {texto_sub}".strip()
-                    if bloco_completo:
-                        unidades_finais.append((f"{num_art} - {rotulo}", bloco_completo))
-                    idx_sub += 2
-            else:
-                unidades_finais.append((num_art, corpo_limpo))
-        else:
-            unidades_finais.append((num_art, corpo_limpo))
+        corpo_art = partes[i + 1] if (i + 1) < len(partes) else ""
+        corpo_limpo = limpar_e_formatar_texto_lei(corpo_art)
+        if corpo_limpo:
+            artigos_brutos.append((num_art, corpo_limpo))
 
     conn = db()
-    for num, txt in unidades_finais:
-        if txt.strip():
-            conn.execute(
-                "INSERT INTO artigos(lei_id, numero, titulo, texto) VALUES(?,?,?,?)",
-                (law_id, num, num, txt.strip())
-            )
+    quantidade = 0
+    for num_art, corpo_limpo in artigos_brutos:
+        conn.execute(
+            "INSERT INTO artigos(lei_id, numero, titulo, texto) VALUES(?,?,?,?)",
+            (law_id, num_art, num_art, corpo_limpo)
+        )
+        quantidade += 1
+
     conn.commit()
     conn.close()
-    return len(unidades_finais)
+    return quantidade
 
 def get_articles(law_id):
     conn = db()
@@ -588,40 +777,61 @@ def generate_questions_for_articles(discipline_id, law_id, article_ids, qtd_tota
         conn.close()
         return 0
 
+    # Mantém artigos curtos exatamente como eram. Somente artigos extensos
+    # ganham alvos internos (caput/incisos/§/alíneas).
+    alvos = []
+    for art in arts:
+        texto_artigo = limpar_e_formatar_texto_lei(art["texto"])
+        alvos_artigo = fracionar_artigo_extenso(art["numero"], texto_artigo)
+        for alvo in alvos_artigo:
+            alvos.append({
+                "art": art,
+                "numero": alvo["numero"],
+                "texto": alvo["texto"]
+            })
+
+    if not alvos:
+        conn.close()
+        return 0
+
+    random.shuffle(alvos)
     generated = 0
     now = datetime.now().isoformat()
-    
-    artigos_pool = list(arts)
-    random.shuffle(artigos_pool)
 
     for i in range(qtd_total):
-        art = artigos_pool[i % len(artigos_pool)]
-        text = limpar_e_formatar_texto_lei(art["texto"])
+        alvo = alvos[i % len(alvos)]
+        art = alvo["art"]
+        numero_dispositivo = alvo["numero"]
+        text = limpar_e_formatar_texto_lei(alvo["texto"])
         is_correct = random.choice([True, False])
 
         if "Ollama" in motor_ia:
             import requests
             try:
-                prompt = f"Crie uma questão Certo/Errado curta baseada neste trecho do {art['numero']}:\n{text}"
+                prompt = (
+                    "Crie uma questão Certo/Errado curta baseada EXCLUSIVAMENTE no trecho literal "
+                    f"do {numero_dispositivo}. Preserve o sentido jurídico e não invente informações.\n\n"
+                    f"{text}"
+                )
                 res = requests.post("http://localhost:11434/api/generate", json={
                     "model": "llama3",
                     "prompt": prompt,
                     "stream": False
                 }, timeout=3)
                 data = res.json()
-                enunciado = data.get("response", f"De acordo com a legislação:\n\n\"{text}\"")
+                enunciado = data.get("response", f"De acordo com o {numero_dispositivo}:\n\n\"{text}\"")
                 gabarito = 1 if is_correct else 0
-                explicacao = gerar_explicacao_humana(art['numero'], text, is_correct)
+                explicacao = gerar_explicacao_humana(numero_dispositivo, text, is_correct)
             except Exception:
                 if is_correct:
-                    enunciado = f"De acordo com o {art['numero']}:\n\n\"{text}\""
+                    enunciado = f"De acordo com o {numero_dispositivo}:\n\n\"{text}\""
                     gabarito = 1
-                    explicacao = gerar_explicacao_humana(art['numero'], text, True)
+                    explicacao = gerar_explicacao_humana(numero_dispositivo, text, True)
                 else:
                     modified_text, tipo_troca = alterar_texto_para_errado(text)
                     enunciado = f"De acordo com a legislação:\n\n\"{modified_text}\""
                     gabarito = 0
-                    explicacao = gerar_explicacao_humana(art['numero'], text, False, tipo_troca, modified_text)
+                    explicacao = gerar_explicacao_humana(numero_dispositivo, text, False, tipo_troca, modified_text)
 
         elif "OpenAI" in motor_ia or "Gemini" in motor_ia:
             api_key = st.secrets.get("OPENAI_API_KEY", os.getenv("OPENAI_API_KEY"))
@@ -631,55 +841,72 @@ def generate_questions_for_articles(discipline_id, law_id, article_ids, qtd_tota
                     prompt_system = (
                         "Você é uma banca examinadora de concursos públicos. "
                         "Crie uma afirmação de Certo ou Errado focada estritamente no trecho da lei fornecido. "
-                        "Mantenha o enunciado conciso e direto."
+                        "Mantenha o enunciado conciso e direto. Não invente informações e preserve a localização "
+                        "do dispositivo informada pelo sistema."
                     )
                     completion = client.chat.completions.create(
                         model="gpt-4o-mini",
                         messages=[
                             {"role": "system", "content": prompt_system},
-                            {"role": "user", "content": f"Artigo/Dispositivo: {art['numero']}\n{text}\n\nGabarito pretendido: {'CERTO' if is_correct else 'ERRADO'}"}
+                            {"role": "user", "content": (
+                                f"Dispositivo: {numero_dispositivo}\n"
+                                f"Texto legal: {text}\n\n"
+                                f"Gabarito pretendido: {'CERTO' if is_correct else 'ERRADO'}"
+                            )}
                         ]
                     )
                     enunciado = completion.choices[0].message.content
                     gabarito = 1 if is_correct else 0
-                    explicacao = gerar_explicacao_humana(art['numero'], text, is_correct)
+                    explicacao = gerar_explicacao_humana(numero_dispositivo, text, is_correct)
                 except Exception:
                     if is_correct:
-                        enunciado = f"De acordo com o {art['numero']}:\n\n\"{text}\""
+                        enunciado = f"De acordo com o {numero_dispositivo}:\n\n\"{text}\""
                         gabarito = 1
-                        explicacao = gerar_explicacao_humana(art['numero'], text, True)
+                        explicacao = gerar_explicacao_humana(numero_dispositivo, text, True)
                     else:
                         modified_text, tipo_troca = alterar_texto_para_errado(text)
                         enunciado = f"De acordo com a legislação:\n\n\"{modified_text}\""
                         gabarito = 0
-                        explicacao = gerar_explicacao_humana(art['numero'], text, False, tipo_troca, modified_text)
+                        explicacao = gerar_explicacao_humana(numero_dispositivo, text, False, tipo_troca, modified_text)
             else:
                 if is_correct:
-                    enunciado = f"De acordo com o {art['numero']}:\n\n\"{text}\""
+                    enunciado = f"De acordo com o {numero_dispositivo}:\n\n\"{text}\""
                     gabarito = 1
-                    explicacao = gerar_explicacao_humana(art['numero'], text, True)
+                    explicacao = gerar_explicacao_humana(numero_dispositivo, text, True)
                 else:
                     modified_text, tipo_troca = alterar_texto_para_errado(text)
                     enunciado = f"De acordo com a legislação:\n\n\"{modified_text}\""
                     gabarito = 0
-                    explicacao = gerar_explicacao_humana(art['numero'], text, False, tipo_troca, modified_text)
+                    explicacao = gerar_explicacao_humana(numero_dispositivo, text, False, tipo_troca, modified_text)
 
         else:
             if is_correct:
-                enunciado = f"De acordo com o {art['numero']}:\n\n\"{text}\""
+                enunciado = f"De acordo com o {numero_dispositivo}:\n\n\"{text}\""
                 gabarito = 1
-                explicacao = gerar_explicacao_humana(art['numero'], text, True)
+                explicacao = gerar_explicacao_humana(numero_dispositivo, text, True)
             else:
                 modified_text, tipo_troca = alterar_texto_para_errado(text)
                 enunciado = f"De acordo com a legislação:\n\n\"{modified_text}\""
                 gabarito = 0
-                explicacao = gerar_explicacao_humana(art['numero'], text, False, tipo_troca, modified_text)
+                explicacao = gerar_explicacao_humana(numero_dispositivo, text, False, tipo_troca, modified_text)
 
         try:
             conn.execute("""
                 INSERT INTO questoes(lei_id, artigo_id, disciplina_id, filtro_id, artigo_numero, conteudo, enunciado, gabarito, explicacao, origem, criada_em)
                 VALUES(?,?,?,?,?,?,?,?,?,?,?)
-            """, (law_id, art["id"], discipline_id, filter_id, art["numero"], art["numero"], enunciado, gabarito, explicacao, motor_ia, now))
+            """, (
+                law_id,
+                art["id"],
+                discipline_id,
+                filter_id,
+                numero_dispositivo,
+                numero_dispositivo,
+                enunciado,
+                gabarito,
+                explicacao,
+                motor_ia,
+                now
+            ))
             generated += 1
         except sqlite3.IntegrityError:
             pass
@@ -841,7 +1068,7 @@ with tab1:
 
             law_id = add_law(disc_id, law_title, uploaded_file.name)
             qtd = parse_and_store_pdf(file_path, law_id)
-            st.success(f"Lei processada com sucesso! {qtd} dispositivos/trechos importados de forma fracionada.")
+            st.success(f"Lei processada com sucesso! {qtd} artigos importados. Artigos extensos serão fracionados automaticamente apenas na geração das questões.")
 
     st.divider()
     st.subheader("🗑️ Leis Cadastradas por Disciplina")
@@ -890,7 +1117,7 @@ with tab2:
             total_arts_selecionados = len(selected_arts) if selected_arts else len(articles)
             sugestao_qtd = max(total_arts_selecionados * 2, 10)
             
-            st.info(f"💡 **Sugestão do Sistema:** Esta lei/seleção possui **{total_arts_selecionados} trecho(s) fracionado(s)**. Recomendamos gerar no mínimo **{sugestao_qtd} questões** para cobrir todos os pontos.")
+            st.info(f"💡 **Sugestão do Sistema:** Esta lei/seleção possui **{total_arts_selecionados} artigo(s)/dispositivo(s)**. Artigos extensos serão divididos automaticamente em caput, incisos, parágrafos e alíneas quando necessário.")
 
             qtd_q = st.number_input(
                 "4. Quantidade de questões para este filtro:",
@@ -913,7 +1140,7 @@ with tab2:
                     art_ids = [art_dict[k] for k in selected_arts]
                     f_id = save_filter(filter_name, d_id, l_id, art_ids, qtd_q)
                     qtd_geradas = generate_questions_for_articles(d_id, l_id, art_ids, qtd_q, filter_id=f_id, motor_ia=motor_ia)
-                    st.success(f"Caderno '{filter_name}' criado com sucesso! {qtd_geradas} questões geradas de forma fracionada.")
+                    st.success(f"Caderno '{filter_name}' criado com sucesso! {qtd_geradas} questões geradas. Artigos extensos foram cobrados por partes, mantendo o texto legal.")
 
     st.divider()
     st.subheader("🗑️ Meus Cadernos / Filtros Salvos por Disciplina")
