@@ -364,9 +364,20 @@ def delete_law(law_id):
 def get_laws(discipline_id=None):
     conn = db()
     if discipline_id:
-        rows = conn.execute("SELECT * FROM leis WHERE disciplina_id=? ORDER BY nome", (discipline_id,)).fetchall()
+        rows = conn.execute("""
+            SELECT l.*, d.nome as disciplina_nome 
+            FROM leis l 
+            JOIN disciplinas d ON d.id = l.disciplina_id 
+            WHERE l.disciplina_id=? 
+            ORDER BY d.nome, l.nome
+        """, (discipline_id,)).fetchall()
     else:
-        rows = conn.execute("SELECT * FROM leis ORDER BY nome").fetchall()
+        rows = conn.execute("""
+            SELECT l.*, d.nome as disciplina_nome 
+            FROM leis l 
+            JOIN disciplinas d ON d.id = l.disciplina_id 
+            ORDER BY d.nome, l.nome
+        """).fetchall()
     conn.close()
     return rows
 
@@ -487,7 +498,7 @@ def alterar_texto_para_errado(texto):
         (r'\b72 \(setenta e duas\) horas\b', '24 (vinte e quatro) horas', 'alteração de prazo legal de 72h para 24h'),
         (r'\b12 \(doze\) horas\b', '24 (vinte e quatro) horas', 'alteração do prazo de manifestação de 12h para 24h'),
         (r'\b30 \(trinta\) dias\b', '15 (quinze) dias', 'alteração do prazo de fornecimento de dados'),
-        (r'\bpermitido\b', 'vedado', 'inversão depermissão para proibição'),
+        (r'\bpermitido\b', 'vedado', 'inversão de permissão para proibição'),
         (r'\bvedado\b', 'permitido', 'inversão de proibição para permissão'),
         (r'\bexigido\b', 'dispensado', 'troca de exigência por dispensa'),
         (r'\bdispensado\b', 'exigido', 'troca de dispensa por exigência'),
@@ -833,16 +844,27 @@ with tab1:
             st.success(f"Lei processada com sucesso! {qtd} dispositivos/trechos importados de forma fracionada.")
 
     st.divider()
-    st.subheader("🗑 Leis Cadastradas e Opção de Exclusão")
+    st.subheader("🗑️ Leis Cadastradas por Disciplina")
     todas_leis = get_laws()
     if todas_leis:
+        leis_por_disciplina = {}
         for l in todas_leis:
-            lc1, lc2 = st.columns([4, 1])
-            lc1.write(f"📄 **{l['nome']}**")
-            if lc2.button("Excluir Lei", key=f"del_law_{l['id']}"):
-                delete_law(l['id'])
-                st.success(f"Lei '{l['nome']}' excluída com sucesso!")
-                st.rerun()
+            disc_nome = l['disciplina_nome']
+            if disc_nome not in leis_por_disciplina:
+                leis_por_disciplina[disc_nome] = []
+            leis_por_disciplina[disc_nome].append(l)
+
+        for disc_nome, lista_leis in leis_por_disciplina.items():
+            with st.expander(f"📚 **{disc_nome}** ({len(lista_leis)} Lei(s))", expanded=False):
+                for l in lista_leis:
+                    lc1, lc2 = st.columns([4, 1])
+                    lc1.write(f"📄 **{l['nome']}**")
+                    if lc2.button("Excluir Lei", key=f"del_law_{l['id']}"):
+                        delete_law(l['id'])
+                        st.success(f"Lei '{l['nome']}' excluída com sucesso!")
+                        st.rerun()
+    else:
+        st.info("Nenhuma lei cadastrada ainda.")
 
 with tab2:
     st.header("Criar Caderno de Questões por Filtro")
@@ -997,7 +1019,7 @@ with tab4:
         st.dataframe(b_disc, use_container_width=True)
 
     st.divider()
-    st.subheader("⚠️️ Redefinir Estatísticas")
+    st.subheader("⚠ Redefinir Estatísticas")
     if st.button("Zerar Histórico de Respostas / Limpar Dashboard", type="secondary"):
         zerar_historico_dashboard()
         st.success("Seu histórico de respostas e indicadores do dashboard foram zerados!")
