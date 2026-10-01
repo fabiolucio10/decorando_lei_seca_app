@@ -724,25 +724,23 @@ def chamar_gemini_com_retry(prompt, max_tentativas=2):
     return None, "Limite de tentativas excedido no servidor do Gemini."
 
 def gerar_exemplo_pratico_gemini(dispositivo, texto_lei):
+    # Prompt idêntico ao modelo manual aprovado pelo utilizador para evitar respostas genéricas
     prompt = (
-        "Você é um assistente especializado em direito e concursos públicos. "
-        "Com base estritamente no dispositivo legal abaixo, crie um exemplo prático, "
-        "curto e direto do dia a dia (semelhante a um cenário policial ou administrativo real) "
-        "que ilustre a sua aplicação de forma simples e didática.\n\n"
+        "Crie um exemplo bem curto e direto (baseado estritamente no dispositivo legal abaixo). "
+        "Apresente estritamente no formato exato:\n"
+        "- O Cenário: [exemplo prático contextualizado]\n"
+        "- Na Prática: [explicação direta de como o direito se aplica na situação]\n\n"
         f"Dispositivo: {dispositivo}\n"
-        f"Texto da Lei: {texto_lei}\n\n"
-        "Estruture a resposta em duas linhas curtas:\n"
-        "- O Cenário: [exemplo prático]\n"
-        "- Na Prática: [como a lei se aplica nesta situação]"
+        f"Texto da Lei: {texto_lei}"
     )
     
     resposta, erro = chamar_gemini_com_retry(prompt)
     if resposta:
-        return resposta
+        return resposta.strip()
     
     return (
-        f"**O Cenário:** A autoridade competente atua na aplicação das normas do {dispositivo}.\n"
-        f"**Na Prática:** O procedimento deve seguir rigorosamente os ditames legais para garantir a validade dos atos."
+        f"**O Cenário:** Situação prática envolvendo a aplicação do {dispositivo}.\n"
+        f"**Na Prática:** O ato deve obedecer rigorosamente ao texto legal para produzir efeitos jurídicos válidos."
     )
 
 def gerar_explicacao_humana(art_num, texto_original, foi_correto=False, tipo_troca=None, texto_modificado=None):
