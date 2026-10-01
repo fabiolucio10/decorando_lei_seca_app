@@ -30,11 +30,12 @@ DB_FILE = APP_DIR / "decorando_lei.db"
 PDF_DIR = APP_DIR / "leis_importadas"
 PDF_DIR.mkdir(exist_ok=True)
 
-# Configuração da página
+# Configuração da página - Mantém a barra lateral sempre expandida por padrão
 st.set_page_config(
     page_title="Decorando Lei Seca",
     page_icon="⚖",
-    layout="wide"
+    layout="wide",
+    initial_sidebar_state="expanded"
 )
 
 # Estilização CSS para ocultar menus, cabeçalhos e rodapés
@@ -182,7 +183,7 @@ def init_db():
     except sqlite3.OperationalError:
         pass
 
-    conn.execute("UPDATE usuarios SET autorizado = 1 WHERE LOWER(username) = 'fabiolucio277@gmail.com'")
+    conn.execute("UPDATE usuarios SET autorizado = 1 WHERE LOWER(TRIM(username)) = 'fabiolucio277@gmail.com'")
     conn.commit()
     conn.close()
 
@@ -284,9 +285,10 @@ with st.sidebar:
         st.rerun()
     st.divider()
 
-    if USERNAME.lower() == "fabiolucio277@gmail.com":
+    # Tratamento reforçado com .strip() para evitar falhas por espaços em branco
+    if USERNAME and USERNAME.strip().lower() == "fabiolucio277@gmail.com":
         st.subheader("⚙ Painel do Administrador")
-        with st.expander("👥 Gerenciar e Autorizar Usuários", expanded=False):
+        with st.expander("👥 Gerenciar e Autorizar Usuários", expanded=True):
             usuarios_cadastrados = listar_usuarios()
             st.write(f"**Total de usuários:** {len(usuarios_cadastrados)}")
             
@@ -294,7 +296,7 @@ with st.sidebar:
                 st.markdown(f"**{u['username']}**")
                 c_status, c_del = st.columns([3, 1])
                 
-                is_admin = u['username'].lower() == "fabiolucio277@gmail.com"
+                is_admin = u['username'].strip().lower() == "fabiolucio277@gmail.com"
                 
                 if is_admin:
                     c_status.caption("👑 Administrador Principal")
@@ -616,10 +618,6 @@ def get_saved_filters(discipline_id=None):
     return rows
 
 def obter_texto_caput(artigo_id):
-    """
-    Retorna o texto integral do caput até a primeira ocorrência de inciso,
-    parágrafo ou alínea, sem truncar frases intermediárias.
-    """
     if not artigo_id:
         return None
     conn = db()
@@ -629,7 +627,6 @@ def obter_texto_caput(artigo_id):
         texto_limpo = limpar_e_formatar_texto_lei(artigo["texto"])
         texto_normalizado = normalizar_estrutura_dispositivo(texto_limpo)
         
-        # Procura o primeiro divisor estrutural
         m = re.search(
             r'(?m)^(?:§\s*\d+º?|Parágrafo único\b|(?:I|II|III|IV|V|VI|VII|VIII|IX|X|XI|XII|XIII|XIV|XV|XVI|XVII|XVIII|XIX|XX)\s*-)', 
             texto_normalizado, 
@@ -822,7 +819,6 @@ def generate_questions_for_articles(discipline_id, law_id, article_ids, qtd_tota
                         f"Gabarito pretendido: {'CERTO' if is_correct else 'ERRADO'}"
                     )
                     
-                    # Suporte para o novo SDK google.genai e o legado google.generativeai
                     if hasattr(genai, "Client"):
                         client = genai.Client(api_key=gemini_key)
                         response = client.models.generate_content(
@@ -1049,7 +1045,7 @@ def stats():
     conn.close()
     return total, hits, errors, pct, b_disc, b_filt, b_cont, due
 
-st.title("⚖️ Decorando Lei Seca")
+st.title("⚖️️ Decorando Lei Seca")
 
 tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "📚 Importar Leis",
@@ -1205,7 +1201,7 @@ with tab3:
     saved_filters = get_saved_filters(selected_disc_id)
     
     if not saved_filters:
-        st.info("Nenum caderno de questões encontrado para a disciplina selecionada.")
+        st.info("Nenhum caderno de questões encontrado para a disciplina selecionada.")
     else:
         f_options = {f"{f['nome']} ({f['disciplina']} - {f['lei']})": f["id"] for f in saved_filters}
         sel_filter_label = st.selectbox("Selecione o Caderno para Treinar:", list(f_options.keys()), key="res_caderno_filter")
