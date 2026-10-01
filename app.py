@@ -814,13 +814,13 @@ def generate_questions_for_articles(discipline_id, law_id, article_ids, qtd_tota
                     if hasattr(genai, "Client"):
                         client = genai.Client(api_key=gemini_key)
                         response = client.models.generate_content(
-                            model="models/gemini-3.8-flash",  # <--- ATUALIZADO AQUI
+                            model="gemini-2.5-flash",  # <--- ATUALIZADO AQUI
                             contents=prompt
                         )
                         enunciado = response.text
                     else:
                         genai.configure(api_key=gemini_key)
-                        model = genai.GenerativeModel("models/gemini-3.8-flash")  # <--- ATUALIZADO AQUI
+                        model = genai.GenerativeModel("models/gemini-2.5-flash")  # <--- ATUALIZADO AQUI
                         response = model.generate_content(prompt)
                         enunciado = response.text
                         
