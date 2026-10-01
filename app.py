@@ -572,7 +572,7 @@ def save_filter(name, discipline_id, law_id, article_ids, qtd_questoes):
     conn = db()
     art_str = ",".join(map(str, article_ids))
     cur = conn.execute("""
-        INSERT INTO filtros_salvos (usuario_id, nome, disciplina_id, lei_id, artigos_ids, qtd_questoes, criado_em)
+        INSERT INTO filtros_salvos (usuario_id, nome, discipline_id, lei_id, artigos_ids, qtd_questoes, criado_em)
         VALUES (?, ?, ?, ?, ?, ?, ?)
     """, (USER_ID, name, discipline_id, law_id, art_str, qtd_questoes, datetime.now().isoformat()))
     filter_id = cur.lastrowid
@@ -715,22 +715,29 @@ def chamar_gemini_com_retry(prompt, max_tentativas=2):
     return None, "Limite de tentativas excedido no servidor do Gemini."
 
 def gerar_exemplo_pratico_gemini(dispositivo, texto_lei):
+    gemini_key = st.secrets.get("GEMINI_API_KEY", os.getenv("GEMINI_API_KEY"))
+    if not gemini_key or not genai:
+        return (
+            f"**O Cenário:** Situação cotidiana em que se aplica o {dispositivo} da lei.\n"
+            f"**Na Prática:** A autoridade ou parte envolvida deve observar o comando legal: \"{texto_lei[:150]}...\" para garantir a validade do ato."
+        )
+
     prompt = (
-        "Crie um exemplo bem curto e direto (baseado estritamente no dispositivo legal abaixo). "
-        "Apresente estritamente no formato exato:\n"
-        "- O Cenário: [exemplo prático contextualizado]\n"
-        "- Na Prática: [explicação direta de como o direito se aplica na situação]\n\n"
+        "Com base estritamente no dispositivo legal abaixo, crie um exemplo prático do dia a dia curto e direto. "
+        "Utilize obrigatoriamente o seguinte formato exato, sem alterar os rótulos:\n"
+        "O Cenário: [Descreva em 1 ou 2 frases uma situação prática cotidiana que ilustre a aplicação da norma]\n"
+        "Na Prática: [Explique de forma direta como a lei resolve ou disciplina essa situação]\n\n"
         f"Dispositivo: {dispositivo}\n"
         f"Texto da Lei: {texto_lei}"
     )
     
     resposta, erro = chamar_gemini_com_retry(prompt)
-    if resposta:
+    if resposta and "O Cenário:" in resposta:
         return resposta.strip()
     
     return (
-        f"**O Cenário:** Situação prática envolvendo a aplicação do {dispositivo}.\n"
-        f"**Na Prática:** O ato deve obedecer rigorosamente ao texto legal para produzir efeitos jurídicos válidos."
+        f"**O Cenário:** Exemplo prático de incidência do {dispositivo}.\n"
+        f"**Na Prática:** Aplicação direta do mandamento legal: \"{texto_lei[:200]}...\""
     )
 
 def gerar_explicacao_humana(art_num, texto_original, foi_correto=False, tipo_troca=None, texto_modificado=None):
