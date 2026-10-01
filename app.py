@@ -28,7 +28,7 @@ st.set_page_config(
     layout="wide"
 )
 
-# Estilização CSS para ocultar menus, cabeçalhos, rodapés e a barra flutuante
+# Estilização CSS para ocultar menus, cabeçalhos e rodapés
 st.markdown("""
     <style>
     #MainMenu {visibility: hidden;}
@@ -469,7 +469,7 @@ def fracionar_artigo_extenso(num_art, corpo_limpo):
     else:
         inicio = texto.strip()
 
-    if inicio:
+    if inicio and len(inicio) > 10:
         alvos.append({'numero': f'{num_art} (caput)', 'texto': inicio})
 
     posicao_primeiro_paragrafo = None
@@ -481,18 +481,18 @@ def fracionar_artigo_extenso(num_art, corpo_limpo):
     trecho_inicial = texto[:posicao_primeiro_paragrafo].strip() if posicao_primeiro_paragrafo is not None else texto
     incisos_iniciais = extrair_blocos_por_marcador(trecho_inicial, 'inciso')
     for marcador, texto_inciso in incisos_iniciais:
-        if marcador and texto_inciso:
+        if marcador and texto_inciso and len(texto_inciso) > 5:
             alvos.append({'numero': f'{num_art}, inciso {marcador.rstrip("-").strip()}', 'texto': f'{marcador} {texto_inciso}'.strip()})
 
     for marcador_par, texto_par in paragrafos:
-        if not marcador_par or not texto_par:
+        if not marcador_par or not texto_par or len(texto_par) <= 5:
             continue
 
         texto_par_estruturado = normalizar_estrutura_dispositivo(texto_par)
         alíneas = [(m, t) for m, t in extrair_blocos_por_marcador(texto_par_estruturado, 'alinea') if m]
         if alíneas:
             for idx, (marcador_al, texto_al) in enumerate(alíneas):
-                if not marcador_al or not texto_al:
+                if not marcador_al or not texto_al or len(texto_al) <= 5:
                     continue
                 texto_alvo = f'{marcador_al} {texto_al}'.strip()
                 alvos.append({
@@ -508,7 +508,7 @@ def fracionar_artigo_extenso(num_art, corpo_limpo):
     todos_incisos = extrair_blocos_por_marcador(texto, 'inciso')
     numeros_existentes = {a['numero'] for a in alvos}
     for marcador, texto_inciso in todos_incisos:
-        if marcador and texto_inciso:
+        if marcador and texto_inciso and len(texto_inciso) > 5:
             numero = f'{num_art}, inciso {marcador.rstrip("-").strip()}'
             if numero not in numeros_existentes:
                 alvos.append({'numero': numero, 'texto': f'{marcador} {texto_inciso}'.strip()})
@@ -524,16 +524,28 @@ def parse_and_store_pdf(pdf_path, law_id):
     full_text = "\n".join([page.get_text() for page in doc])
     doc.close()
 
-    artigo_regex = re.compile(r'(Art\.\s*\d+[\w\d\-\.ºº]*)', re.IGNORECASE)
+    # Expressão ajustada para capturar artigos no início de linhas para evitar citações cruzadas
+    artigo_regex = re.compile(r'(?m)^(Art\.\s*\d+[\w\d\-\.º]*)\b', re.IGNORECASE)
     partes = artigo_regex.split(full_text)
     artigos_brutos = []
 
-    for i in range(1, len(partes), 2):
-        num_art = partes[i].strip()
-        corpo_art = partes[i + 1] if (i + 1) < len(partes) else ""
-        corpo_limpo = limpar_e_formatar_texto_lei(corpo_art)
-        if corpo_limpo:
-            artigos_brutos.append((num_art, corpo_limpo))
+    if len(partes) > 1:
+        for i in range(1, len(partes), 2):
+            num_art = partes[i].strip()
+            corpo_art = partes[i + 1] if (i + 1) < len(partes) else ""
+            corpo_limpo = limpar_e_formatar_texto_lei(corpo_art)
+            if corpo_limpo and len(corpo_limpo) > 10:
+                artigos_brutos.append((num_art, corpo_limpo))
+    else:
+        # Fallback caso não quebre em novas linhas
+        artigo_regex_alt = re.compile(r'(Art\.\s*\d+[\w\d\-\.º]*)', re.IGNORECASE)
+        partes = artigo_regex_alt.split(full_text)
+        for i in range(1, len(partes), 2):
+            num_art = partes[i].strip()
+            corpo_art = partes[i + 1] if (i + 1) < len(partes) else ""
+            corpo_limpo = limpar_e_formatar_texto_lei(corpo_art)
+            if corpo_limpo and len(corpo_limpo) > 10:
+                artigos_brutos.append((num_art, corpo_limpo))
 
     conn = db()
     quantidade = 0
@@ -680,7 +692,7 @@ def gerar_explicacao_humana(art_num, texto_original, foi_correto=False, tipo_tro
 
     if "sinal" in txt_lower or "estação de cobertura" in txt_lower or "radiofrequência" in txt_lower:
         situacao_real = "Em uma investigação de sequestro, a polícia requisita às operadoras de telefonia o sinal da antena de celular utilizada pelo suspeito para localizar a região onde a vítima está mantida em cativeiro."
-        aplicacao_regra = f"• **Aplicação do {art_num}:**\n  - O ofício enviado à operadora deve conter a identificação da unidade de polícia judiciária responsável.\n  - Fornece apenas a localização aproximada (antena/ERB), sem dar acesso ao conteúdo das conversas (o áudio exige autorização judicial)."
+        aplicacao_regra = f"• **Aplicação do {art_num}:**\n  - O ofício enviado à operadora deve conter a identificação da unidade de polícia judiciária responsável.\n  - Fornece apenas a localização aproximada (antena/ERB), sem dar acesso ao conteúdo das conversas."
         objetivo_regra = "Agilizar a localização geográfica de vítimas/suspeitos sem violar o sigilo do conteúdo das chamadas sem ordem do juiz."
     elif "remessa" in txt_lower or "instituto de identificação" in txt_lower:
         situacao_real = "Ao concluir o inquérito de um crime e enviá-lo para a Vara Criminal responsável, a autoridade policial envia um comunicado ao Instituto de Identificação e Estatística."
@@ -701,14 +713,17 @@ def gerar_explicacao_humana(art_num, texto_original, foi_correto=False, tipo_tro
 
     if foi_correto:
         status_txt = "O item está **CORRETO**."
-        detalhe_erro = f"O enunciado reproduz com exatidão o disposto no **{art_num}**."
+        detalhe_erro = f"O enunciado reproduz com exatidão o disposto na legislação."
         resumo_erro_bloco = ""
     else:
         status_txt = "O item está **ERRADO**."
-        detalhe_erro = f"A banca alterou a regra original do dispositivo."
-        resumo_erro_bloco = f"\n⚠️ **Erro da Questão:** Alteração mediante **{tipo_troca or 'modificação de termos'}**."
+        detalhe_erro = f"O enunciado alterou a regra legal."
+        resumo_erro_bloco = f"\n⚠️ **Pegadinha da Questão:** Alteração mediante **{tipo_troca or 'modificação de termos'}**."
 
-    explicacao_formatada = f"""💡 **Explicação Direta:** {status_txt} {detalhe_erro}{resumo_erro_bloco}
+    explicacao_formatada = f"""💡 **Gabarito e Justificativa:** {status_txt} {detalhe_erro}{resumo_erro_bloco}
+
+📖 **Texto Correto da Lei Seca:**
+> "{texto_original}"
 
 📌 **Exemplo Prático da Vida Real:**
 {situacao_real}
@@ -1093,7 +1108,7 @@ with tab2:
                     art_ids = [art_dict[k] for k in selected_arts]
                     f_id = save_filter(filter_name, d_id, l_id, art_ids, qtd_q)
                     qtd_geradas = generate_questions_for_articles(d_id, l_id, art_ids, qtd_q, filter_id=f_id, motor_ia=motor_ia)
-                    st.success(f"Caderno '{filter_name}' criado com sucesso! {qtd_geradas} questões geradas. Artigos extensos foram cobrados por partes, mantendo o texto legal.")
+                    st.success(f"Caderno '{filter_name}' criado com sucesso! {qtd_geradas} questões geradas.")
 
     st.divider()
     st.subheader("🗑️ Meus Cadernos / Filtros Salvos por Disciplina")
@@ -1197,7 +1212,7 @@ with tab3:
                         st.success("✨ Resposta Correta!")
                     else:
                         st.error("❌ Resposta Incorreta!")
-                    st.markdown(f"**Gabarito / Explicação Prática:**\n\n{q['explicacao']}")
+                    st.markdown(f"{q['explicacao']}")
 
                     if st.button("Próxima Questão ➡️", key=f"next_{q_id}"):
                         st.session_state["q_index"] += 1
@@ -1256,6 +1271,6 @@ with tab5:
                     st.success("✨ Excelente! Próxima revisão agendada.")
                 else:
                     st.error("❌ Errou! Ela voltará para revisão.")
-                st.markdown(f"**Gabarito / Explicação:**\n\n{revs['explicacao']}")
+                st.markdown(f"{revs['explicacao']}")
     else:
         st.success("Tudo em dia! Não há revisões pendentes para hoje.")
