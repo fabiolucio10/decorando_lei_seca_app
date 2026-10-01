@@ -384,11 +384,6 @@ def get_laws(discipline_id=None):
 def normalizar_estrutura_dispositivo(texto):
     """
     Normaliza a extração do PDF sem alterar o conteúdo jurídico.
-
-    Alguns PDFs colocam vários incisos/alíneas na mesma linha, por exemplo:
-    "I - ...; II - ...; III - ...".
-    Aqui apenas criamos separadores internos para o parser conseguir identificar
-    a estrutura. O texto jurídico continua sendo preservado.
     """
     if not texto:
         return ""
@@ -399,8 +394,7 @@ def normalizar_estrutura_dispositivo(texto):
     # Quebra antes de parágrafos e "Parágrafo único".
     texto = re.sub(r'\s+(§\s*\d+º?|Parágrafo único)\s+', r'\n\1 ', texto, flags=re.IGNORECASE)
 
-    # Quebra antes de incisos romanos. Exige hífen e início de item para evitar
-    # confundir números romanos que apareçam no meio de uma frase.
+    # Quebra antes de incisos romanos
     texto = re.sub(
         r'\s+(?=(?:I|II|III|IV|V|VI|VII|VIII|IX|X|XI|XII|XIII|XIV|XV|XVI|XVII|XVIII|XIX|XX)\s*-)',
         '\n',
@@ -408,20 +402,17 @@ def normalizar_estrutura_dispositivo(texto):
         flags=re.IGNORECASE
     )
 
-    # Quebra antes de alíneas. Aceita "a)" e "a -".
+    # Quebra antes de alíneas
     texto = re.sub(r'\s+(?=[a-z]\s*[\)\-])', '\n', texto, flags=re.IGNORECASE)
 
-    # Quebra antes de itens numerados (1., 2., 3. etc.) somente quando vierem
-    # após uma quebra/; para não alterar números comuns dentro do texto.
+    # Quebra antes de itens numerados
     texto = re.sub(r'(?<=[;])\s+(?=\d+[\)\.-]\s)', '\n', texto)
 
     texto = re.sub(r'\n{2,}', '\n', texto)
     return texto.strip()
 
-
 def eh_marcador_paragrafo(linha):
     return bool(re.match(r'^(§\s*\d+º?|Parágrafo único)\b', linha.strip(), re.IGNORECASE))
-
 
 def eh_marcador_inciso(linha):
     return bool(re.match(
@@ -429,10 +420,8 @@ def eh_marcador_inciso(linha):
         linha.strip(), re.IGNORECASE
     ))
 
-
 def eh_marcador_alinea(linha):
     return bool(re.match(r'^[a-z]\s*[\)\-]\s*', linha.strip(), re.IGNORECASE))
-
 
 def extrair_blocos_por_marcador(texto, tipo):
     """Retorna [(marcador, texto_do_bloco)] mantendo o texto original."""
@@ -455,7 +444,6 @@ def extrair_blocos_por_marcador(texto, tipo):
         if matcher(linha):
             if atual_marcador is not None:
                 blocos.append((atual_marcador, ' '.join(atual_texto).strip()))
-            # Primeiro token/expressão identificadora do dispositivo.
             if tipo == 'paragrafo':
                 m = re.match(r'^(§\s*\d+º?|Parágrafo único)', linha, re.IGNORECASE)
             elif tipo == 'inciso':
@@ -468,7 +456,6 @@ def extrair_blocos_por_marcador(texto, tipo):
             if atual_marcador is not None:
                 atual_texto.append(linha)
             else:
-                # Conteúdo anterior ao primeiro marcador.
                 blocos.append((None, linha))
 
     if atual_marcador is not None:
@@ -476,38 +463,23 @@ def extrair_blocos_por_marcador(texto, tipo):
 
     return [(m, t) for m, t in blocos if t.strip()]
 
-
 def fracionar_artigo_extenso(num_art, corpo_limpo):
     """
-    Divide SOMENTE artigos extensos, mantendo a essência do sistema atual.
-
-    O artigo original continua sendo armazenado integralmente na tabela artigos.
-    Esta função é usada apenas durante a geração das questões.
-
-    Retorna uma lista de alvos:
-        {
-            'numero': 'Art. 5º, inciso II',
-            'texto': 'II - ...'
-        }
+    Divide artigos extensos garantindo a integridade isolada dos incisos, parágrafos e alíneas.
     """
     texto = normalizar_estrutura_dispositivo(corpo_limpo)
-    linhas = [l.strip() for l in texto.split('\n') if l.strip()]
 
-    # Mantém artigos curtos exatamente como o sistema sempre fez.
     if len(corpo_limpo) <= 700:
         return [{'numero': num_art, 'texto': corpo_limpo.strip()}]
 
     paragrafos = extrair_blocos_por_marcador(texto, 'paragrafo')
     incisos = extrair_blocos_por_marcador(texto, 'inciso')
 
-    # Se o artigo for longo, mas não tiver estrutura reconhecível, não fazemos
-    # uma quebra arbitrária. Isso preserva a segurança do texto legal.
     if len(paragrafos) == 0 and len(incisos) == 0:
         return [{'numero': num_art, 'texto': corpo_limpo.strip()}]
 
     alvos = []
 
-    # Caput: tudo que aparece antes do primeiro § ou inciso.
     inicio = texto
     marcadores = []
     for padrao in [
@@ -526,42 +498,28 @@ def fracionar_artigo_extenso(num_art, corpo_limpo):
     if inicio:
         alvos.append({'numero': f'{num_art} (caput)', 'texto': inicio})
 
-    # Primeiro tratamos parágrafos, porque alíneas pertencem a eles.
-    paragrafos = extrair_blocos_por_marcador(texto, 'paragrafo')
     posicao_primeiro_paragrafo = None
     if paragrafos:
-        # Localiza a posição do primeiro parágrafo para separar incisos que
-        # estejam antes dele.
         m = re.search(r'(?m)^(?:§\s*\d+º?|Parágrafo único)\b', texto, re.IGNORECASE)
         if m:
             posicao_primeiro_paragrafo = m.start()
 
-    # Incisos que ficam antes do primeiro parágrafo.
     trecho_inicial = texto[:posicao_primeiro_paragrafo].strip() if posicao_primeiro_paragrafo is not None else texto
     incisos_iniciais = extrair_blocos_por_marcador(trecho_inicial, 'inciso')
     for marcador, texto_inciso in incisos_iniciais:
         if marcador and texto_inciso:
             alvos.append({'numero': f'{num_art}, inciso {marcador.rstrip("-").strip()}', 'texto': f'{marcador} {texto_inciso}'.strip()})
 
-    # Parágrafos e, quando existirem, suas alíneas.
     for marcador_par, texto_par in paragrafos:
         if not marcador_par or not texto_par:
             continue
 
-        # O bloco do § foi unido em uma linha para preservar o texto.
-        # Normalizamos novamente apenas aqui para recuperar as alíneas internas.
         texto_par_estruturado = normalizar_estrutura_dispositivo(texto_par)
         alíneas = [(m, t) for m, t in extrair_blocos_por_marcador(texto_par_estruturado, 'alinea') if m]
         if alíneas:
-
             for idx, (marcador_al, texto_al) in enumerate(alíneas):
                 if not marcador_al or not texto_al:
                     continue
-                prefixo = f'{marcador_par} '
-                # A alínea recebe somente seu próprio texto. A hierarquia
-                # completa fica no campo "numero_dispositivo", por exemplo:
-                # Art. 5º, § 1º, alínea a. Assim evitamos repetir um § inteiro
-                # dentro de cada alínea e mantemos as questões curtas.
                 texto_alvo = f'{marcador_al} {texto_al}'.strip()
                 alvos.append({
                     'numero': f'{num_art}, {marcador_par}, alínea {marcador_al[0].lower()}',
@@ -573,8 +531,6 @@ def fracionar_artigo_extenso(num_art, corpo_limpo):
                 'texto': f'{marcador_par} {texto_par}'.strip()
             })
 
-    # Caso existam incisos depois de um parágrafo, ou estruturas que o PDF
-    # colocou em posição diferente, acrescentamos os que ainda não entraram.
     todos_incisos = extrair_blocos_por_marcador(texto, 'inciso')
     numeros_existentes = {a['numero'] for a in alvos}
     for marcador, texto_inciso in todos_incisos:
@@ -584,22 +540,12 @@ def fracionar_artigo_extenso(num_art, corpo_limpo):
                 alvos.append({'numero': numero, 'texto': f'{marcador} {texto_inciso}'.strip()})
                 numeros_existentes.add(numero)
 
-    # Segurança: se o parser produziu algo estranho, volta ao artigo integral.
     if not alvos:
         return [{'numero': num_art, 'texto': corpo_limpo.strip()}]
 
     return alvos
 
-
 def parse_and_store_pdf(pdf_path, law_id):
-    """
-    Lê o PDF e armazena cada artigo INTEGRALMENTE, preservando o comportamento
-    original do sistema.
-
-    A fragmentação de artigos extensos NÃO acontece no banco. Ela acontece
-    somente durante a geração das questões, evitando duplicação dos artigos,
-    alteração dos filtros e perda do texto original.
-    """
     doc = fitz.open(pdf_path)
     full_text = "\n".join([page.get_text() for page in doc])
     doc.close()
@@ -721,26 +667,48 @@ def alterar_texto_para_errado(texto):
 
 def gerar_explicacao_humana(art_num, texto_original, foi_correto=False, tipo_troca=None, texto_modificado=None):
     """
-    Gera explicações didáticas focadas na historinha prática do caso concreto.
+    Gera explicações didáticas focadas na historinha prática do caso concreto e precisas por artigo/inciso.
     """
+    art_lower = art_num.lower()
     txt_lower = texto_original.lower()
 
-    # Construção contextualizada da história do caso real
-    if "dados" in txt_lower or "informações cadastrais" in txt_lower or "requisitar" in txt_lower:
-        situacao_real = "Ocorre um sequestro ou tráfico de pessoas e a polícia precisa identificar rapidamente a vítima ou os suspeitos obtendo dados de cadastro (nome, CPF, endereço)."
-        regra_aplicada = f"O **{art_num}** permite que o Delegado ou Promotor requisite esses dados diretamente a órgãos públicos ou empresas privadas sem precisar aguardar autorização judicial prévia."
-    elif "sinal" in txt_lower or "telecomunicações" in txt_lower or "localização" in txt_lower:
-        situacao_real = "Um crime grave está em andamento e a polícia precisa rastrear a localização do telemóvel do suspeito através das antenas de telefonia."
-        regra_aplicada = f"O **{art_num}** autoriza a requisição do sinal (estação de cobertura), mas exige **autorização judicial** e estabelece prazos rigorosos para o procedimento."
-    elif "flagrante" in txt_lower or "prisão" in txt_lower:
-        situacao_real = "Um suspeito rouba uma pessoa na rua e é apanhado logo em seguida pela polícia ainda em posse do bem."
-        regra_aplicada = f"O **{art_num}** determina que a prisão em flagrante exige a lavratura do auto e o envio imediato da documentação ao juiz e família no prazo legal."
-    elif "inquérito" in txt_lower or "instaurado" in txt_lower:
-        situacao_real = "A polícia toma conhecimento da prática de uma infração penal e precisa dar início oficial às investigações formalizadas."
-        regra_aplicada = f"O **{art_num}** fixa o prazo máximo obrigatório para a abertura oficial do inquérito policial a contar do registo da ocorrência."
+    # Mapeamentos específicos por dispositivo
+    if "23" in art_lower and "art" in art_lower:
+        exemplo_pratico = (
+            "Ao concluir o inquérito de um roubo e enviá-lo para a 1ª Vara Criminal, "
+            "o Delegado envia um comunicado ao Instituto de Identificação informando quem é o suspeito, "
+            "o crime cometido e para qual juízo o processo foi enviado.\n\n"
+            "• **Objetivo:** Registrar o crime e o local do processo no histórico criminal do investigado."
+        )
+    elif "14" in art_lower and "§ 2" in art_lower:
+        exemplo_pratico = (
+            "• **Situação:** Um prazo legal de investigação (como uma diligência especial ou infiltração) "
+            "chega ao fim e nenhuma prorrogação foi solicitada formalmente.\n"
+            "• **Objetivo:** Forçar o encerramento imediato da medida e a entrega do relatório, "
+            "impedindo prazos indefinidos ou abusivos na persecução penal."
+        )
+    elif "13-a" in art_lower or ("13" in art_lower and "a" in art_lower):
+        exemplo_pratico = (
+            "Em uma investigação de sequestro, a polícia requisita às operadoras de telefonia o sinal da antena "
+            "de celular utilizada pelo suspeito para localizar a região onde a vítima está mantida em cativeiro.\n\n"
+            "• **Aplicação Prática:** O ofício enviado à operadora deve conter a identificação do distrito policial "
+            "responsável pela investigação. A operadora fornece apenas a localização aproximada (antena/ERB), "
+            "sem gravar ou escutar as conversas (o áudio exige autorização judicial).\n"
+            "• **Objetivo:** Agilizar a localização geográfica de vítimas/suspeitos sem violar o sigilo do conteúdo "
+            "das chamadas sem ordem do juiz."
+        )
+    elif "dados" in txt_lower or "informações cadastrais" in txt_lower or "requisitar" in txt_lower:
+        exemplo_pratico = (
+            "• **A Situação Concreta:** Ocorre um sequestro ou tráfico de pessoas e a polícia precisa identificar "
+            "rapidamente a vítima ou os suspeitos obtendo dados de cadastro (nome, CPF, endereço).\n"
+            f"• **A Regra do {art_num}:** Permite que o Delegado ou Promotor requisite esses dados diretamente "
+            "a órgãos públicos ou empresas privadas sem precisar aguardar autorização judicial prévia."
+        )
     else:
-        situacao_real = "Diante de um caso prático no dia a dia policial ou jurídico envolvendo a aplicação desta norma."
-        regra_aplicada = f"O **{art_num}** determina exatamente a conduta e os prazos que as autoridades devem respeitar."
+        exemplo_pratico = (
+            f"• **A Situação Concreta:** Diante de um caso prático no dia a dia policial ou jurídico envolvendo a aplicação desta norma.\n"
+            f"• **A Regra do {art_num}:** Determina exatamente a conduta e os prazos que as autoridades devem respeitar."
+        )
 
     if foi_correto:
         status_txt = "O item está **CORRETO**."
@@ -755,10 +723,8 @@ def gerar_explicacao_humana(art_num, texto_original, foi_correto=False, tipo_tro
 {status_txt} {detalhe_erro}
 
 📌 **Exemplo Prático da Vida Real (Como funciona o {art_num}):**
-Imagine a seguinte situação:
 
-• **A Situação Concreta:** {situacao_real}
-• **A Regra do {art_num}:** {regra_aplicada}{resumo_erro_bloco}
+{exemplo_pratico}{resumo_erro_bloco}
 
 📜 **Texto Original da Lei:**
 > "{texto_original}"
@@ -777,8 +743,6 @@ def generate_questions_for_articles(discipline_id, law_id, article_ids, qtd_tota
         conn.close()
         return 0
 
-    # Mantém artigos curtos exatamente como eram. Somente artigos extensos
-    # ganham alvos internos (caput/incisos/§/alíneas).
     alvos = []
     for art in arts:
         texto_artigo = limpar_e_formatar_texto_lei(art["texto"])
@@ -1178,7 +1142,7 @@ with tab3:
     saved_filters = get_saved_filters(selected_disc_id)
     
     if not saved_filters:
-        st.info("Nenhum caderno de questões encontrado para a disciplina selecionada.")
+        st.info("Nenum caderno de questões encontrado para a disciplina selecionada.")
     else:
         f_options = {f"{f['nome']} ({f['disciplina']} - {f['lei']})": f["id"] for f in saved_filters}
         sel_filter_label = st.selectbox("Selecione o Caderno para Treinar:", list(f_options.keys()), key="res_caderno_filter")
