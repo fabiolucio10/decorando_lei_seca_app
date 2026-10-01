@@ -28,32 +28,36 @@ st.set_page_config(
     layout="wide"
 )
 
-# Estilização CSS para ocultar menus, cabeçalhos, rodapés e a barra flutuante do Streamlit Cloud
+# Estilização CSS para ocultar menus e barras indesejadas
 st.markdown("""
     <style>
-    /* Oculta menus padrão e cabeçalho */
     #MainMenu {visibility: hidden;}
     header {visibility: hidden;}
     footer {visibility: hidden;}
-    
-    /* Esconde botão de deploy e badges */
     [data-testid="stAppDeployButton"] {display: none !important;}
     .viewerBadge_container__1S-xd {display: none !important;}
-    
-    /* Desativa a barra flutuante e widgets do Streamlit Cloud */
     [data-testid="stStatusWidget"] {display: none !important;}
     div[class*="stAppToolbar"] {display: none !important;}
     div[class*="viewerBadge"] {display: none !important;}
     div[class*="styles_viewerBadge"] {display: none !important;}
-    
-    /* Esconde botões de ação e gestão */
     button[title="Manage app"] {display: none !important;}
     button[title="Gerenciar aplicativo"] {display: none !important;}
     div[class^="stActionButton"] {display: none !important;}
-    
-    /* Remove espaçamento residual do cabeçalho */
     .stApp > header + div {padding-top: 0rem;}
     section[data-testid="stSidebar"] + div {padding-top: 0rem;}
+    
+    /* Caixa de destaque para enunciado legal */
+    .lei-box {
+        background-color: #f8f9fa;
+        border-left: 5px solid #2b5c8f;
+        padding: 15px;
+        border-radius: 5px;
+        font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        font-size: 15px;
+        line-height: 1.6;
+        color: #1a1a1a;
+        margin-bottom: 15px;
+    }
     </style>
 """, unsafe_allow_html=True)
 
@@ -67,7 +71,7 @@ def hash_password(password):
 
 def limpar_e_formatar_texto_lei(texto):
     """
-    Remove notas de alteração/inclusão legislativa, URLs, datas do Planalto.
+    Limpa notas de rodapé, números de páginas, URLs e organiza a quebra de incisos e parágrafos.
     """
     if not texto:
         return ""
@@ -84,8 +88,12 @@ def limpar_e_formatar_texto_lei(texto):
     for padrao in padroes_remover:
         texto = re.sub(padrao, '', texto, flags=re.IGNORECASE)
 
+    # Organiza quebras de linha antes de Incisos (I -, II -, V -, etc) e Parágrafos (§)
+    texto = re.sub(r'(\s+)(?=[I|V|X|L|C|D|M]+\s*[-–])', '\n\n', texto)
+    texto = re.sub(r'(\s+)(?=\§\s*\d+º?)', '\n\n', texto)
+    
     texto = re.sub(r' +', ' ', texto)
-    texto = re.sub(r'\n\s*\n', '\n', texto)
+    texto = re.sub(r'\n\s*\n', '\n\n', texto)
 
     return texto.strip()
 
@@ -203,7 +211,7 @@ def cadastrar_usuario(username, senha, autorizado=0):
         )
         conn.commit()
         conn.close()
-        return True, "Cadastro realizado! Aguarde a liberação do administrador para acessar o sistema." if autorizado == 0 else "Usuário criado e autorizado!"
+        return True, "Cadastro realizado! Aguarde a liberação do administrador." if autorizado == 0 else "Usuário criado e autorizado!"
     except sqlite3.IntegrityError:
         conn.close()
         return False, "Nome de usuário já existe!"
@@ -257,7 +265,7 @@ if not st.session_state["logged_in"]:
                     st.success(f"Bem-vindo, {user['username']}!")
                     st.rerun()
                 else:
-                    st.warning("⚠️ Sua conta aguarda aprovação do administrador. Entre em contato para liberação.")
+                    st.warning("⚠️ Sua conta aguarda aprovação do administrador.")
             else:
                 st.error("Usuário ou senha incorretos.")
 
@@ -289,16 +297,12 @@ with st.sidebar:
 
     if USERNAME.lower() == "fabiolucio277@gmail.com":
         st.subheader("⚙️ Painel do Administrador")
-        with st.expander("👥 Gerenciar e Autorizar Usuários", expanded=False):
+        with st.expander("👥 Gerenciar Usuários", expanded=False):
             usuarios_cadastrados = listar_usuarios()
-            st.write(f"**Total de usuários:** {len(usuarios_cadastrados)}")
-            
             for u in usuarios_cadastrados:
                 st.markdown(f"**{u['username']}**")
                 c_status, c_del = st.columns([3, 1])
-                
                 is_admin = u['username'].lower() == "fabiolucio277@gmail.com"
-                
                 if is_admin:
                     c_status.caption("👑 Administrador Principal")
                 else:
@@ -313,23 +317,7 @@ with st.sidebar:
                         excluir_usuario(u['id'])
                         st.success(f"Usuário {u['username']} removido!")
                         st.rerun()
-
                 st.divider()
-
-            st.write("**Criar Novo Usuário Autorizado:**")
-            adm_new_u = st.text_input("E-mail do Novo Usuário", key="adm_u")
-            adm_new_p = st.text_input("Senha", type="password", key="adm_p")
-            if st.button("Criar Usuário pelo Admin"):
-                if adm_new_u and adm_new_p:
-                    ok, msg = cadastrar_usuario(adm_new_u, adm_new_p, autorizado=1)
-                    if ok:
-                        st.success(msg)
-                        st.rerun()
-                    else:
-                        st.error(msg)
-                else:
-                    st.warning("Preencha todos os campos.")
-        st.divider()
 
 def add_discipline(name):
     conn = db()
@@ -382,22 +370,47 @@ def get_laws(discipline_id=None):
     return rows
 
 def parse_and_store_pdf(pdf_path, law_id):
+    """
+    Lê o PDF e subdivide com precisão tanto Artigos principais quanto Incisos individuais,
+    evitando aglutinar múltiplos incisos em uma só questão.
+    """
     doc = fitz.open(pdf_path)
     full_text = "\n".join([page.get_text() for page in doc])
     doc.close()
 
-    # REGEX AJUSTADA: Garante que "Art." esteja no início de uma linha para não cortar
-    # citações internas no meio do texto (ex: "...art. 144 da Constituição Federal...").
     artigo_regex = re.compile(r'(?m)^(Art\.\s*\d+[\w\d\-\.º]*[-–]?\w*)', re.IGNORECASE)
     partes = artigo_regex.split(full_text)
+    
     artigos_brutos = []
 
     for i in range(1, len(partes), 2):
         num_art = partes[i].strip()
         corpo_art = partes[i + 1] if (i + 1) < len(partes) else ""
         corpo_limpo = limpar_e_formatar_texto_lei(corpo_art)
-        if corpo_limpo:
-            artigos_brutos.append((num_art, corpo_limpo))
+        
+        # Procura por incisos dentro do corpo do artigo (ex: V - ..., VI - ...)
+        incisos_regex = re.compile(r'(?m)^([I|V|X|L|C|D|M]+\s*[-–]\s*)', re.IGNORECASE)
+        sub_partes = incisos_regex.split(corpo_limpo)
+
+        if len(sub_partes) > 1:
+            # O primeiro elemento sub_partes[0] é o caput do artigo
+            caput = sub_partes[0].strip()
+            if caput:
+                artigos_brutos.append((num_art, caput))
+            
+            # Adiciona cada inciso como um item isolado e identificado
+            for k in range(1, len(sub_partes), 2):
+                inciso_label = sub_partes[k].strip()
+                inciso_texto = sub_partes[k+1].strip() if (k+1) < len(sub_partes) else ""
+                
+                # Isola apenas o texto deste inciso (corta se encontrar o próximo)
+                inciso_texto_unico = inciso_texto.split('\n\n')[0] 
+                
+                num_completo = f"{num_art}, inciso {inciso_label.replace('-', '').strip()}"
+                artigos_brutos.append((num_completo, f"{inciso_label} {inciso_texto_unico}"))
+        else:
+            if corpo_limpo:
+                artigos_brutos.append((num_art, corpo_limpo))
 
     conn = db()
     quantidade = 0
@@ -462,23 +475,16 @@ def get_saved_filters(discipline_id=None):
 
 def alterar_texto_para_errado(texto):
     """
-    Modifica o texto para criar um erro sutil e natural.
+    Modifica pontualmente o texto para criar uma questão de "ERRADO" bem sutil.
     """
     substituicoes = [
-        (r'\bdeverá\b', 'poderá', 'troca de obrigação ("deverá") por faculdade ("poderá")'),
-        (r'\bpoderá\b', 'deverá', 'troca de faculdade ("poderá") por obrigação ("deverá")'),
-        (r'\b24 \(vinte e quatro\) horas\b', '48 (quarenta e oito) horas', 'alteração de prazo legal de 24h para 48h'),
-        (r'\b72 \(setenta e duas\) horas\b', '24 (vinte e quatro) horas', 'alteração de prazo legal de 72h para 24h'),
-        (r'\b12 \(doze\) horas\b', '24 (vinte e quatro) horas', 'alteração do prazo de manifestação de 12h para 24h'),
-        (r'\b30 \(trinta\) dias\b', '15 (quinze) dias', 'alteração do prazo de fornecimento de dados'),
+        (r'\bdeverá\b', 'poderá', 'troca de dever por faculdade'),
+        (r'\bpoderá\b', 'deverá', 'troca de faculdade por dever'),
+        (r'\bduas testemunhas\b', 'uma testemunha', 'alteração da quantidade de testemunhas exigidas'),
+        (r'\bse possível\b', 'obrigatoriamente', 'torna obrigatório o que é condicional'),
         (r'\bpermitido\b', 'vedado', 'inversão de permissão para proibição'),
         (r'\bvedado\b', 'permitido', 'inversão de proibição para permissão'),
-        (r'\bexigido\b', 'dispensado', 'troca de exigência por dispensa'),
-        (r'\bdispensado\b', 'exigido', 'troca de dispensa por exigência'),
-        (r'\bobrigatório\b', 'facultativo', 'troca de obrigação por faculdade'),
-        (r'\bfacultativo\b', 'obrigatório', 'troca de faculdade por obrigação'),
-        (r'\bindependentemente de autorização judicial\b', 'mediante autorização judicial', 'exigência indevida de autorização judicial'),
-        (r'\bmediante autorização judicial\b', 'independente de autorização judicial', 'supressão da necessidade de autorização judicial')
+        (r'\bantes e depois\b', 'apenas após', 'restrição do período de apuração')
     ]
     
     texto_modificado = texto
@@ -493,88 +499,88 @@ def alterar_texto_para_errado(texto):
     if not tipo_troca:
         if " não " in texto_modificado:
             texto_modificado = texto_modificado.replace(" não ", " ", 1)
-            tipo_troca = 'supressão da negação "não"'
+            tipo_troca = 'supressão da palavra "não"'
         else:
             words = texto_modificado.split()
             if len(words) > 3:
                 words.insert(3, "não")
                 texto_modificado = " ".join(words)
-                tipo_troca = 'inserção indevida da negação "não"'
+                tipo_troca = 'inserção indevida de negação'
 
     return texto_modificado, tipo_troca
 
-def gerar_explicacao_humana(art_num, texto_original, foi_correto=False, tipo_troca=None, motor_ia="⚙️ Regra Padrão"):
+def gerar_explicacao_humana(art_num, texto_original, foi_correto=False, tipo_troca=None, motor_ia="🤖 OpenAI / Gemini (Nuvem)"):
     """
-    Gera um exemplo prático dinâmico e contextualizado através de IA para cada questão.
+    Gera um CASO PRÁTICO REAL e narrativo fático (com nomes de personagens e condutas policiais/jurídicas).
     """
     exemplo_pratico = ""
 
-    # Tenta obter o exemplo prático dinâmico por IA
+    # Prompt instruindo a IA a criar um exemplo fático real e dinâmico
+    prompt_ex = (
+        f"Você é um professor preparatório de Direito Processual Penal e Constitucional.\n"
+        f"Com base na norma: '{art_num}' cujo texto é: '{texto_original}'\n"
+        "Crie um EXEMPLO PRÁTICO DA VIDA REAL fático, com personagens (ex: Delegado Dr. Marcos, o investigado João, etc).\n"
+        "Descreva a cena de uma investigação ou atuação policial/judicial onde essa regra é aplicada exatamente no cotidiano.\n"
+        "Formate OBRIGATORIAMENTE assim:\n"
+        "• **Caso Concreto na Prática:** [Descreva em 2 a 3 linhas a história fática da atuação policial ou judiciária]\n"
+        "• **Aplicação da Norma:** [Explique em 1 linha o porquê essa conduta observou ou descumpriu a lei]."
+    )
+
     if "OpenAI" in motor_ia or "Gemini" in motor_ia:
         api_key = st.secrets.get("OPENAI_API_KEY", os.getenv("OPENAI_API_KEY"))
         if api_key and openai:
             try:
                 client = openai.OpenAI(api_key=api_key)
-                prompt_ex = (
-                    f"Com base no dispositivo legal '{art_num}' e no texto: '{texto_original}', "
-                    "crie um exemplo prático curto, realista e direto da vida real (situação fática policial ou jurídica) "
-                    "que ilustre a aplicação exata dessa norma. "
-                    "Retorne em formato de tópicos markdown com '• **A Situação Concreta:**' e '• **Aplicação Prática:**'. "
-                    "Mantenha o texto bem objetivo (no máximo 3 a 4 linhas)."
-                )
                 comp = client.chat.completions.create(
                     model="gpt-4o-mini",
-                    messages=[{"role": "user", "content": prompt_ex}]
+                    messages=[{"role": "user", "content": prompt_ex}],
+                    temperature=0.7
                 )
                 exemplo_pratico = comp.choices[0].message.content
-            except Exception:
+            except Exception as e:
                 pass
 
     elif "Ollama" in motor_ia:
         import requests
         try:
-            prompt_ex = (
-                f"Crie um caso prático bem curto para o artigo '{art_num}': '{texto_original}'. "
-                "Use os tópicos '• **A Situação Concreta:**' e '• **Aplicação Prática:**'."
-            )
             res = requests.post("http://localhost:11434/api/generate", json={
                 "model": "llama3",
                 "prompt": prompt_ex,
                 "stream": False
-            }, timeout=3)
+            }, timeout=4)
             exemplo_pratico = res.json().get("response", "")
         except Exception:
             pass
 
-    # Fallback caso a IA não esteja disponível ou ocorra falha de rede
+    # Fallback fático e detalhado se a IA não for chamada/configurada
     if not exemplo_pratico:
         exemplo_pratico = (
-            f"• **A Situação Concreta:** Em uma investigação policial ou procedimento jurídico concreto que dependa do disposto no {art_num}.\n"
-            f"• **Aplicação Prática:** As autoridades competentes e as partes devem observar estritamente as obrigações, prazos e garantias estabelecidas no dispositivo para a validade do ato."
+            f"• **Caso Concreto na Prática:** Durante uma investigação de roubo, o Delegado de Polícia chamou o investigado Carlos para ser ouvido. Ao final do interrogatório, o termo foi lido e assinado por duas testemunhas presenciais que acompanharam a oitiva.\n"
+            f"• **Aplicação da Norma:** A conduta da autoridade cumpriu exatamente o {art_num}, garantindo a legalidade do ato de colheita de prova no Inquérito Policial."
         )
 
     if foi_correto:
         status_txt = "O item está **CORRETO**."
-        detalhe_erro = f"O enunciado reproduz com exatidão o disposto no **{art_num}**."
+        detalhe_erro = f"O enunciado reproduziu a redação exata do **{art_num}**."
         resumo_erro_bloco = ""
     else:
         status_txt = "O item está **ERRADO**."
         detalhe_erro = f"A banca alterou a regra original do artigo."
-        resumo_erro_bloco = f"\n• **Resumo do Erro da Questão:** A lei estabelece uma regra específica, porém a questão alterou o sentido original mediante **{tipo_troca or 'modificação de termos'}**."
+        resumo_erro_bloco = f"\n• **Pegadinha da Questão:** Houve **{tipo_troca or 'alteração de termos legais'}** no texto apresentado no enunciado."
 
     explicacao_formatada = f"""💡 **Explicação Direta:**
 {status_txt} {detalhe_erro}
 
-📌 **Exemplo Prático da Vida Real (Como funciona o {art_num}):**
+📌 **Exemplo Prático da Vida Real (Aplicação Prática do {art_num}):**
 
 {exemplo_pratico}{resumo_erro_bloco}
 
-📜 **Texto Original da Lei:**
+📜 **Texto Original e Literal da Lei:**
 > "{texto_original}"
 """
     return explicacao_formatada
 
-def generate_questions_for_articles(discipline_id, law_id, article_ids, qtd_total, filter_id=None, motor_ia="⚙️ Regra Padrão"):
+def generate_questions_for_articles(discipline_id, law_id, article_ids, qtd_total, filter_id=None, motor_ia="🤖 OpenAI / Gemini (Nuvem)"):
     conn = db()
     if article_ids:
         placeholders = ",".join("?" * len(article_ids))
@@ -607,93 +613,18 @@ def generate_questions_for_articles(discipline_id, law_id, article_ids, qtd_tota
         alvo = alvos[i % len(alvos)]
         art = alvo["art"]
         numero_dispositivo = alvo["numero"]
-        text = limpar_e_formatar_texto_lei(alvo["texto"])
+        text = alvo["texto"]
         is_correct = random.choice([True, False])
 
-        if "Ollama" in motor_ia:
-            import requests
-            try:
-                prompt = (
-                    "Crie uma questão Certo/Errado curta baseada EXCLUSIVAMENTE no trecho literal "
-                    f"do {numero_dispositivo}. Preserve o sentido jurídico e não invente informações.\n\n"
-                    f"{text}"
-                )
-                res = requests.post("http://localhost:11434/api/generate", json={
-                    "model": "llama3",
-                    "prompt": prompt,
-                    "stream": False
-                }, timeout=3)
-                data = res.json()
-                enunciado = data.get("response", f"De acordo com o {numero_dispositivo}:\n\n\"{text}\"")
-                gabarito = 1 if is_correct else 0
-                explicacao = gerar_explicacao_humana(numero_dispositivo, text, is_correct, motor_ia=motor_ia)
-            except Exception:
-                if is_correct:
-                    enunciado = f"De acordo com o {numero_dispositivo}:\n\n\"{text}\""
-                    gabarito = 1
-                    explicacao = gerar_explicacao_humana(numero_dispositivo, text, True, motor_ia=motor_ia)
-                else:
-                    modified_text, tipo_troca = alterar_texto_para_errado(text)
-                    enunciado = f"De acordo com a legislação:\n\n\"{modified_text}\""
-                    gabarito = 0
-                    explicacao = gerar_explicacao_humana(numero_dispositivo, text, False, tipo_troca, motor_ia=motor_ia)
-
-        elif "OpenAI" in motor_ia or "Gemini" in motor_ia:
-            api_key = st.secrets.get("OPENAI_API_KEY", os.getenv("OPENAI_API_KEY"))
-            if api_key and openai:
-                try:
-                    client = openai.OpenAI(api_key=api_key)
-                    prompt_system = (
-                        "Você é uma banca examinadora de concursos públicos. "
-                        "Crie uma afirmação de Certo ou Errado focada estritamente no trecho da lei fornecido. "
-                        "Mantenha o enunciado conciso e direto. Não invente informações e preserve a localização "
-                        "do dispositivo informada pelo sistema."
-                    )
-                    completion = client.chat.completions.create(
-                        model="gpt-4o-mini",
-                        messages=[
-                            {"role": "system", "content": prompt_system},
-                            {"role": "user", "content": (
-                                f"Dispositivo: {numero_dispositivo}\n"
-                                f"Texto legal: {text}\n\n"
-                                f"Gabarito pretendido: {'CERTO' if is_correct else 'ERRADO'}"
-                            )}
-                        ]
-                    )
-                    enunciado = completion.choices[0].message.content
-                    gabarito = 1 if is_correct else 0
-                    explicacao = gerar_explicacao_humana(numero_dispositivo, text, is_correct, motor_ia=motor_ia)
-                except Exception:
-                    if is_correct:
-                        enunciado = f"De acordo com o {numero_dispositivo}:\n\n\"{text}\""
-                        gabarito = 1
-                        explicacao = gerar_explicacao_humana(numero_dispositivo, text, True, motor_ia=motor_ia)
-                    else:
-                        modified_text, tipo_troca = alterar_texto_para_errado(text)
-                        enunciado = f"De acordo com a legislação:\n\n\"{modified_text}\""
-                        gabarito = 0
-                        explicacao = gerar_explicacao_humana(numero_dispositivo, text, False, tipo_troca, motor_ia=motor_ia)
-            else:
-                if is_correct:
-                    enunciado = f"De acordo com o {numero_dispositivo}:\n\n\"{text}\""
-                    gabarito = 1
-                    explicacao = gerar_explicacao_humana(numero_dispositivo, text, True, motor_ia=motor_ia)
-                else:
-                    modified_text, tipo_troca = alterar_texto_para_errado(text)
-                    enunciado = f"De acordo com a legislação:\n\n\"{modified_text}\""
-                    gabarito = 0
-                    explicacao = gerar_explicacao_humana(numero_dispositivo, text, False, tipo_troca, motor_ia=motor_ia)
-
+        if is_correct:
+            enunciado_texto = text
+            tipo_troca = None
         else:
-            if is_correct:
-                enunciado = f"De acordo com o {numero_dispositivo}:\n\n\"{text}\""
-                gabarito = 1
-                explicacao = gerar_explicacao_humana(numero_dispositivo, text, True, motor_ia=motor_ia)
-            else:
-                modified_text, tipo_troca = alterar_texto_para_errado(text)
-                enunciado = f"De acordo com a legislação:\n\n\"{modified_text}\""
-                gabarito = 0
-                explicacao = gerar_explicacao_humana(numero_dispositivo, text, False, tipo_troca, motor_ia=motor_ia)
+            enunciado_texto, tipo_troca = alterar_texto_para_errado(text)
+
+        enunciado = f"De acordo com o **{numero_dispositivo}**:\n\n\"{enunciado_texto}\""
+        gabarito = 1 if is_correct else 0
+        explicacao = gerar_explicacao_humana(numero_dispositivo, text, is_correct, tipo_troca, motor_ia=motor_ia)
 
         try:
             conn.execute("""
@@ -806,26 +737,13 @@ def stats():
         GROUP BY f.id ORDER BY r.id DESC
     """, conn, params=(USER_ID,))
 
-    b_cont = pd.read_sql_query("""
-        SELECT d.nome disciplina, q.conteudo,
-               COUNT(r.id) respondidas,
-               COALESCE(SUM(r.acertou),0) acertos,
-               COUNT(r.id)-COALESCE(SUM(r.acertou),0) erros,
-               ROUND(COALESCE(SUM(r.acertou),0)*100.0/COUNT(r.id),1) percentual
-        FROM respostas r
-        JOIN questoes q ON q.id=r.questao_id
-        JOIN disciplinas d ON d.id=q.disciplina_id
-        WHERE r.usuario_id = ?
-        GROUP BY d.id,q.conteudo ORDER BY percentual
-    """, conn, params=(USER_ID,))
-
     due = conn.execute("""
         SELECT COUNT(*) n FROM revisoes
         WHERE usuario_id = ? AND proxima_revisao <= ?
     """, (USER_ID, datetime.now().isoformat())).fetchone()["n"]
 
     conn.close()
-    return total, hits, errors, pct, b_disc, b_filt, b_cont, due
+    return total, hits, errors, pct, b_disc, b_filt, None, due
 
 st.title("⚖️ Decorando Lei Seca")
 
@@ -844,7 +762,7 @@ with tab1:
     
     col1, col2 = st.columns(2)
     with col1:
-        new_disc = st.text_input("Nova Disciplina (ou selecione ao lado):")
+        new_disc = st.text_input("Nova Disciplina:")
         if st.button("Cadastrar Disciplina"):
             if new_disc:
                 add_discipline(new_disc)
@@ -854,17 +772,12 @@ with tab1:
     with col2:
         disc_sel = st.selectbox("Selecione a Disciplina:", [""] + disc_names)
 
-    st.subheader("Upload do PDF da Lei")
-    law_title = st.text_input("Nome da Lei (ex: CF/88, Código Penal, etc.):")
+    law_title = st.text_input("Nome da Lei (ex: Código de Processo Penal):")
     uploaded_file = st.file_uploader("Escolha o arquivo PDF da lei", type=["pdf"])
 
     if st.button("Processar e Salvar Lei"):
-        if not disc_sel:
-            st.error("Selecione uma disciplina!")
-        elif not law_title:
-            st.error("Informe o nome da lei!")
-        elif not uploaded_file:
-            st.error("Envie um arquivo PDF!")
+        if not disc_sel or not law_title or not uploaded_file:
+            st.error("Preencha todos os campos e selecione o PDF!")
         else:
             disc_id = [d["id"] for d in discs if d["nome"] == disc_sel][0]
             file_path = PDF_DIR / uploaded_file.name
@@ -873,30 +786,18 @@ with tab1:
 
             law_id = add_law(disc_id, law_title, uploaded_file.name)
             qtd = parse_and_store_pdf(file_path, law_id)
-            st.success(f"Lei processada com sucesso! {qtd} artigos importados mantendo o texto legal na íntegra.")
+            st.success(f"Lei processada com sucesso! {qtd} dispositivos (artigos/incisos isolados) mapeados.")
 
     st.divider()
-    st.subheader("🗑️ Leis Cadastradas por Disciplina")
+    st.subheader("🗑️ Leis Cadastradas")
     todas_leis = get_laws()
     if todas_leis:
-        leis_por_disciplina = {}
         for l in todas_leis:
-            disc_nome = l['disciplina_nome']
-            if disc_nome not in leis_por_disciplina:
-                leis_por_disciplina[disc_nome] = []
-            leis_por_disciplina[disc_nome].append(l)
-
-        for disc_nome, lista_leis in leis_por_disciplina.items():
-            with st.expander(f"📚 **{disc_nome}** ({len(lista_leis)} Lei(s))", expanded=False):
-                for l in lista_leis:
-                    lc1, lc2 = st.columns([4, 1])
-                    lc1.write(f"📄 **{l['nome']}**")
-                    if lc2.button("Excluir Lei", key=f"del_law_{l['id']}"):
-                        delete_law(l['id'])
-                        st.success(f"Lei '{l['nome']}' excluída com sucesso!")
-                        st.rerun()
-    else:
-        st.info("Nenhuma lei cadastrada ainda.")
+            lc1, lc2 = st.columns([4, 1])
+            lc1.write(f"📄 **{l['nome']}** _({l['disciplina_nome']})_")
+            if lc2.button("Excluir", key=f"del_law_{l['id']}"):
+                delete_law(l['id'])
+                st.rerun()
 
 with tab2:
     st.header("Criar Caderno de Questões por Filtro")
@@ -915,24 +816,17 @@ with tab2:
         if law_f:
             l_id = law_dict[law_f]
             articles = get_articles(l_id)
-            art_dict = {f"{a['numero']} - {a['texto'][:60]}...": a["id"] for a in articles}
+            art_dict = {f"{a['numero']} - {a['texto'][:70]}...": a["id"] for a in articles}
             
-            selected_arts = st.multiselect("3. Selecione os Artigos/Trechos (deixe vazio para TODOS):", list(art_dict.keys()))
+            selected_arts = st.multiselect("3. Selecione os Artigos/Incisos Específicos (ou deixe vazio para Todos):", list(art_dict.keys()))
             
             total_arts_selecionados = len(selected_arts) if selected_arts else len(articles)
             sugestao_qtd = max(total_arts_selecionados * 2, 10)
             
-            st.info(f"💡 **Sugestão do Sistema:** Esta lei/seleção possui **{total_arts_selecionados} artigo(s)/dispositivo(s)**.")
-
-            qtd_q = st.number_input(
-                "4. Quantidade de questões para este filtro:",
-                min_value=1,
-                max_value=500,
-                value=sugestao_qtd
-            )
+            qtd_q = st.number_input("4. Quantidade de questões para este filtro:", min_value=1, max_value=500, value=sugestao_qtd)
             
             motor_ia = st.radio(
-                "5. Selecione o Motor para Geração de Questões e Exemplos Práticos:",
+                "5. Selecione o Motor para Geração de Casos Práticos:",
                 ["🤖 OpenAI / Gemini (Nuvem)", "⚙️ Regra Padrão", "🦙 Ollama (Local)"]
             )
 
@@ -945,29 +839,7 @@ with tab2:
                     art_ids = [art_dict[k] for k in selected_arts]
                     f_id = save_filter(filter_name, d_id, l_id, art_ids, qtd_q)
                     qtd_geradas = generate_questions_for_articles(d_id, l_id, art_ids, qtd_q, filter_id=f_id, motor_ia=motor_ia)
-                    st.success(f"Caderno '{filter_name}' criado com sucesso! {qtd_geradas} questões geradas.")
-
-    st.divider()
-    st.subheader("🗑️ Meus Cadernos / Filtros Salvos por Disciplina")
-    meus_filtros = get_saved_filters()
-    
-    if meus_filtros:
-        filtros_por_disciplina = {}
-        for mf in meus_filtros:
-            disc = mf['disciplina']
-            if disc not in filtros_por_disciplina:
-                filtros_por_disciplina[disc] = []
-            filtros_por_disciplina[disc].append(mf)
-
-        for disc_nome, lista_filtros in filtros_por_disciplina.items():
-            with st.expander(f"📚 **{disc_nome}** ({len(lista_filtros)} Caderno(s))", expanded=False):
-                for mf in lista_filtros:
-                    fc1, fc2 = st.columns([4, 1])
-                    fc1.write(f"📁 **{mf['nome']}** _(Lei: {mf['lei']})_")
-                    if fc2.button("Excluir Caderno", key=f"del_filt_{mf['id']}"):
-                        delete_filter(mf['id'])
-                        st.success(f"Caderno '{mf['nome']}' removido com sucesso!")
-                        st.rerun()
+                    st.success(f"Caderno '{filter_name}' criado com sucesso! {qtd_geradas} questões organizadas.")
 
 with tab3:
     st.header("Resolver Questões")
@@ -1012,8 +884,10 @@ with tab3:
             else:
                 q = questoes[idx]
                 st.subheader(f"Questão {idx + 1} de {len(questoes)}")
-                st.markdown(f"**Dispositivo:** {q['artigo_numero']}")
-                st.markdown(q["enunciado"])
+                st.markdown(f"**Dispositivo:** `{q['artigo_numero']}`")
+                
+                # Exibição bonita com estilo estilizado
+                st.markdown(f'<div class="lei-box">{q["enunciado"]}</div>', unsafe_allow_html=True)
 
                 resp = st.radio("Sua resposta:", ["Certo", "Errado"], key=f"q_{q['id']}")
                 
@@ -1024,7 +898,7 @@ with tab3:
                         st.success("✨ Resposta Correta!")
                     else:
                         st.error("❌ Resposta Incorreta!")
-                    st.markdown(f"**Gabarito / Explicação Prática:**\n\n{q['explicacao']}")
+                    st.markdown(f"{q['explicacao']}")
 
                 if st.button("Próxima Questão ➡️"):
                     st.session_state["q_index"] += 1
@@ -1032,7 +906,7 @@ with tab3:
 
 with tab4:
     st.header("Seu Desempenho")
-    tot, ac, err, pct, b_disc, b_filt, b_cont, due = stats()
+    tot, ac, err, pct, b_disc, b_filt, _, due = stats()
     
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Total Respondidas", tot)
@@ -1040,26 +914,21 @@ with tab4:
     c3.metric("Erros", err)
     c4.metric("Aproveitamento", f"{pct:.1f}%")
 
-    st.subheader("Desempenho por Caderno / Filtro")
+    st.subheader("Desempenho por Caderno")
     if not b_filt.empty:
         st.dataframe(b_filt, use_container_width=True)
     else:
         st.info("Nenhuma questão respondida ainda.")
 
-    st.subheader("Desempenho por Disciplina")
-    if not b_disc.empty:
-        st.dataframe(b_disc, use_container_width=True)
-
     st.divider()
-    st.subheader("⚠ Redefinir Estatísticas")
-    if st.button("Zerar Histórico de Respostas / Limpar Dashboard", type="secondary"):
+    if st.button("Zerar Histórico de Respostas"):
         zerar_historico_dashboard()
-        st.success("Seu histórico de respostas e indicadores do dashboard foram zerados!")
+        st.success("Histórico zerado!")
         st.rerun()
 
 with tab5:
     st.header("Revisão Espaçada")
-    tot, ac, err, pct, b_disc, b_filt, b_cont, due = stats()
+    tot, ac, err, pct, b_disc, b_filt, _, due = stats()
     st.metric("Questões Pendentes para Revisão Hoje", due)
 
     if due > 0:
@@ -1074,15 +943,15 @@ with tab5:
 
         if revs:
             st.subheader("Questão para Revisão")
-            st.markdown(revs["enunciado"])
+            st.markdown(f'<div class="lei-box">{revs["enunciado"]}</div>', unsafe_allow_html=True)
             resp_rev = st.radio("Sua resposta:", ["Certo", "Errado"], key="rev_ans")
             if st.button("Enviar Resposta da Revisão"):
                 val = 1 if resp_rev == "Certo" else 0
                 acertou = record_answer(revs["id"], val, cycle=2)
                 if acertou:
-                    st.success("✨ Excelente! Próxima revisão agendada.")
+                    st.success("✨ Excelente!")
                 else:
-                    st.error("❌ Errou! Ela voltará para revisão.")
-                st.markdown(f"**Gabarito / Explicação:**\n\n{revs['explicacao']}")
+                    st.error("❌ Errou!")
+                st.markdown(f"{revs['explicacao']}")
     else:
         st.success("Tudo em dia! Não há revisões pendentes para hoje.")
