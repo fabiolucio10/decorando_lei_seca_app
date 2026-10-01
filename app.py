@@ -648,13 +648,27 @@ def alterar_texto_para_errado(texto):
 
     return texto_modificado, tipo_troca
 
+def obter_rotulo_dispositivo(numero_dispositivo):
+    """
+    Retorna a identificação formal do tipo de dispositivo (Parágrafo, Inciso, Alínea ou Artigo).
+    """
+    num_lower = numero_dispositivo.lower()
+
+    if "alínea" in num_lower or "alinea" in num_lower:
+        return f"Alínea ({numero_dispositivo})"
+    elif "§" in numero_dispositivo or "parágrafo" in num_lower or "paragrafo" in num_lower:
+        return f"Parágrafo ({numero_dispositivo})"
+    elif "inciso" in num_lower or re.search(r'\b(I|II|III|IV|V|VI|VII|VIII|IX|X|XI|XII|XIII|XIV|XV|XVI|XVII|XVIII|XIX|XX)\b', numero_dispositivo):
+        return f"Inciso ({numero_dispositivo})"
+    else:
+        return f"Artigo ({numero_dispositivo})"
+
 def gerar_explicacao_humana(art_num, texto_original, foi_correto=False, tipo_troca=None, texto_modificado=None):
     """
     Gera explicações didáticas enxutas no modelo objetivo de 3 partes.
     """
     txt_lower = texto_original.lower()
 
-    # Mapeamento do caso prático e aplicação de acordo com os termos do dispositivo
     if "sinal" in txt_lower or "estação de cobertura" in txt_lower or "radiofrequência" in txt_lower:
         situacao_real = "Em uma investigação de sequestro, a polícia requisita às operadoras de telefonia o sinal da antena de celular utilizada pelo suspeito para localizar a região onde a vítima está mantida em cativeiro."
         aplicacao_regra = f"• **Aplicação do {art_num}:**\n  - O ofício enviado à operadora deve conter a identificação da unidade de polícia judiciária responsável.\n  - Fornece apenas a localização aproximada (antena/ERB), sem dar acesso ao conteúdo das conversas (o áudio exige autorização judicial)."
@@ -731,6 +745,7 @@ def generate_questions_for_articles(discipline_id, law_id, article_ids, qtd_tota
         alvo = alvos[i % len(alvos)]
         art = alvo["art"]
         numero_dispositivo = alvo["numero"]
+        rotulo_dispositivo = obter_rotulo_dispositivo(numero_dispositivo)
         text = limpar_e_formatar_texto_lei(alvo["texto"])
         is_correct = random.choice([True, False])
 
@@ -739,7 +754,7 @@ def generate_questions_for_articles(discipline_id, law_id, article_ids, qtd_tota
             try:
                 prompt = (
                     "Crie uma questão Certo/Errado curta baseada EXCLUSIVAMENTE no trecho literal "
-                    f"do {numero_dispositivo}. Preserve o sentido jurídico e não invente informações.\n\n"
+                    f"do {rotulo_dispositivo}. Preserve o sentido jurídico e não invente informações.\n\n"
                     f"{text}"
                 )
                 res = requests.post("http://localhost:11434/api/generate", json={
@@ -748,17 +763,17 @@ def generate_questions_for_articles(discipline_id, law_id, article_ids, qtd_tota
                     "stream": False
                 }, timeout=3)
                 data = res.json()
-                enunciado = data.get("response", f"De acordo com o {numero_dispositivo}:\n\n\"{text}\"")
+                enunciado = data.get("response", f"De acordo com o **{rotulo_dispositivo}**:\n\n\"{text}\"")
                 gabarito = 1 if is_correct else 0
                 explicacao = gerar_explicacao_humana(numero_dispositivo, text, is_correct)
             except Exception:
                 if is_correct:
-                    enunciado = f"De acordo com o {numero_dispositivo}:\n\n\"{text}\""
+                    enunciado = f"De acordo com o **{rotulo_dispositivo}**:\n\n\"{text}\""
                     gabarito = 1
                     explicacao = gerar_explicacao_humana(numero_dispositivo, text, True)
                 else:
                     modified_text, tipo_troca = alterar_texto_para_errado(text)
-                    enunciado = f"De acordo com a legislação:\n\n\"{modified_text}\""
+                    enunciado = f"De acordo com o **{rotulo_dispositivo}**:\n\n\"{modified_text}\""
                     gabarito = 0
                     explicacao = gerar_explicacao_humana(numero_dispositivo, text, False, tipo_troca, modified_text)
 
@@ -778,7 +793,7 @@ def generate_questions_for_articles(discipline_id, law_id, article_ids, qtd_tota
                         messages=[
                             {"role": "system", "content": prompt_system},
                             {"role": "user", "content": (
-                                f"Dispositivo: {numero_dispositivo}\n"
+                                f"Dispositivo: {rotulo_dispositivo}\n"
                                 f"Texto legal: {text}\n\n"
                                 f"Gabarito pretendido: {'CERTO' if is_correct else 'ERRADO'}"
                             )}
@@ -789,33 +804,33 @@ def generate_questions_for_articles(discipline_id, law_id, article_ids, qtd_tota
                     explicacao = gerar_explicacao_humana(numero_dispositivo, text, is_correct)
                 except Exception:
                     if is_correct:
-                        enunciado = f"De acordo com o {numero_dispositivo}:\n\n\"{text}\""
+                        enunciado = f"De acordo com o **{rotulo_dispositivo}**:\n\n\"{text}\""
                         gabarito = 1
                         explicacao = gerar_explicacao_humana(numero_dispositivo, text, True)
                     else:
                         modified_text, tipo_troca = alterar_texto_para_errado(text)
-                        enunciado = f"De acordo com a legislação:\n\n\"{modified_text}\""
+                        enunciado = f"De acordo com o **{rotulo_dispositivo}**:\n\n\"{modified_text}\""
                         gabarito = 0
                         explicacao = gerar_explicacao_humana(numero_dispositivo, text, False, tipo_troca, modified_text)
             else:
                 if is_correct:
-                    enunciado = f"De acordo com o {numero_dispositivo}:\n\n\"{text}\""
+                    enunciado = f"De acordo com o **{rotulo_dispositivo}**:\n\n\"{text}\""
                     gabarito = 1
                     explicacao = gerar_explicacao_humana(numero_dispositivo, text, True)
                 else:
                     modified_text, tipo_troca = alterar_texto_para_errado(text)
-                    enunciado = f"De acordo com a legislação:\n\n\"{modified_text}\""
+                    enunciado = f"De acordo com o **{rotulo_dispositivo}**:\n\n\"{modified_text}\""
                     gabarito = 0
                     explicacao = gerar_explicacao_humana(numero_dispositivo, text, False, tipo_troca, modified_text)
 
         else:
             if is_correct:
-                enunciado = f"De acordo com o {numero_dispositivo}:\n\n\"{text}\""
+                enunciado = f"De acordo com o **{rotulo_dispositivo}**:\n\n\"{text}\""
                 gabarito = 1
                 explicacao = gerar_explicacao_humana(numero_dispositivo, text, True)
             else:
                 modified_text, tipo_troca = alterar_texto_para_errado(text)
-                enunciado = f"De acordo com a legislação:\n\n\"{modified_text}\""
+                enunciado = f"De acordo com o **{rotulo_dispositivo}**:\n\n\"{modified_text}\""
                 gabarito = 0
                 explicacao = gerar_explicacao_humana(numero_dispositivo, text, False, tipo_troca, modified_text)
 
