@@ -16,6 +16,11 @@ try:
 except ImportError:
     openai = None
 
+try:
+    import google.generativeai as genai
+except ImportError:
+    genai = None
+
 APP_DIR = Path(__file__).parent
 DB_FILE = APP_DIR / "decorando_lei.db"
 PDF_DIR = APP_DIR / "leis_importadas"
@@ -276,7 +281,7 @@ with st.sidebar:
     st.divider()
 
     if USERNAME.lower() == "fabiolucio277@gmail.com":
-        st.subheader("⚙️ Painel do Administrador")
+        st.subheader("⚙️️ Painel do Administrador")
         with st.expander("👥 Gerenciar e Autorizar Usuários", expanded=False):
             usuarios_cadastrados = listar_usuarios()
             st.write(f"**Total de usuários:** {len(usuarios_cadastrados)}")
@@ -524,7 +529,6 @@ def parse_and_store_pdf(pdf_path, law_id):
     full_text = "\n".join([page.get_text() for page in doc])
     doc.close()
 
-    # Regex para capturar artigos apenas quando estão no começo de linha com pontuação/espaço formal
     artigo_regex = re.compile(r'(?m)^(Art\.\s*\d+[\w\-]*[\.\º\ª]?)', re.IGNORECASE)
     partes = artigo_regex.split(full_text)
     artigos_brutos = []
@@ -608,9 +612,6 @@ def get_saved_filters(discipline_id=None):
     return rows
 
 def obter_texto_caput(artigo_id):
-    """
-    Recupera a cabeça (Caput) integral do artigo no banco de dados.
-    """
     if not artigo_id:
         return None
     conn = db()
@@ -620,7 +621,6 @@ def obter_texto_caput(artigo_id):
         texto_limpo = limpar_e_formatar_texto_lei(artigo["texto"])
         texto_normalizado = normalizar_estrutura_dispositivo(texto_limpo)
         
-        # Procura o primeiro grande divisor estrutural do artigo (Parágrafo ou Inciso)
         m = re.search(r'(?m)^(?:§\s*\d+º?|Parágrafo único\b|(?:I|II|III|IV|V|VI|VII|VIII|IX|X|XI|XII|XIII|XIV|XV|XVI|XVII|XVIII|XIX|XX)\s*-)', texto_normalizado, re.IGNORECASE)
         if m:
             inicio = texto_normalizado[:m.start()].strip()
@@ -780,7 +780,7 @@ def generate_questions_for_articles(discipline_id, law_id, article_ids, qtd_tota
                     "model": "llama3",
                     "prompt": prompt,
                     "stream": False
-                }, timeout=3)
+                }, timeout=5)
                 data = res.json()
                 enunciado = data.get("response", f"De acordo com o **{rotulo_dispositivo}**:\n\n\"{text}\"")
                 gabarito = 1 if is_correct else 0
@@ -796,7 +796,48 @@ def generate_questions_for_articles(discipline_id, law_id, article_ids, qtd_tota
                     gabarito = 0
                     explicacao = gerar_explicacao_humana(numero_dispositivo, text, False, tipo_troca, modified_text)
 
-        elif "OpenAI" in motor_ia or "Gemini" in motor_ia:
+        elif "Gemini" in motor_ia:
+            gemini_key = st.secrets.get("GEMINI_API_KEY", os.getenv("GEMINI_API_KEY"))
+            if gemini_key and genai:
+                try:
+                    genai.configure(api_key=gemini_key)
+                    model = genai.GenerativeModel("gemini-2.5-flash")
+                    prompt = (
+                        "Você é uma banca examinadora de concursos públicos. "
+                        "Crie uma afirmação de Certo ou Errado focada estritamente no trecho da lei fornecido. "
+                        "Mantenha o enunciado conciso e direto. Não invente informações.\n\n"
+                        f"Dispositivo: {rotulo_dispositivo}\n"
+                        f"Texto legal: {text}\n"
+                        f"Gabarito pretendido: {'CERTO' if is_correct else 'ERRADO'}"
+                    )
+                    response = model.generate_content(prompt)
+                    enunciado = response.text
+                    gabarito = 1 if is_correct else 0
+                    explicacao = gerar_explicacao_humana(numero_dispositivo, text, is_correct)
+                except Exception as e:
+                    st.warning(f"Erro na API Gemini ({e}). Aplicando motor de regra padrão.")
+                    if is_correct:
+                        enunciado = f"De acordo com o **{rotulo_dispositivo}**:\n\n\"{text}\""
+                        gabarito = 1
+                        explicacao = gerar_explicacao_humana(numero_dispositivo, text, True)
+                    else:
+                        modified_text, tipo_troca = alterar_texto_para_errado(text)
+                        enunciado = f"De acordo com o **{rotulo_dispositivo}**:\n\n\"{modified_text}\""
+                        gabarito = 0
+                        explicacao = gerar_explicacao_humana(numero_dispositivo, text, False, tipo_troca, modified_text)
+            else:
+                st.warning("Biblioteca ou Chave do Gemini (GEMINI_API_KEY) não configurada.")
+                if is_correct:
+                    enunciado = f"De acordo com o **{rotulo_dispositivo}**:\n\n\"{text}\""
+                    gabarito = 1
+                    explicacao = gerar_explicacao_humana(numero_dispositivo, text, True)
+                else:
+                    modified_text, tipo_troca = alterar_texto_para_errado(text)
+                    enunciado = f"De acordo com o **{rotulo_dispositivo}**:\n\n\"{modified_text}\""
+                    gabarito = 0
+                    explicacao = gerar_explicacao_humana(numero_dispositivo, text, False, tipo_troca, modified_text)
+
+        elif "OpenAI" in motor_ia:
             api_key = st.secrets.get("OPENAI_API_KEY", os.getenv("OPENAI_API_KEY"))
             if api_key and openai:
                 try:
@@ -804,8 +845,7 @@ def generate_questions_for_articles(discipline_id, law_id, article_ids, qtd_tota
                     prompt_system = (
                         "Você é uma banca examinadora de concursos públicos. "
                         "Crie uma afirmação de Certo ou Errado focada estritamente no trecho da lei fornecido. "
-                        "Mantenha o enunciado conciso e direto. Não invente informações e preserve a localização "
-                        "do dispositivo informada pelo sistema."
+                        "Mantenha o enunciado conciso e direto. Não invente informações."
                     )
                     completion = client.chat.completions.create(
                         model="gpt-4o-mini",
@@ -1091,7 +1131,7 @@ with tab2:
             
             motor_ia = st.radio(
                 "5. Selecione o Motor para Geração de Questões:",
-                ["⚙️ Regra Padrão", "🦙 Ollama (Local)", "🤖 OpenAI / Gemini (Nuvem)"]
+                ["⚙️ Regra Padrão", "🦙 Ollama (Local)", "🤖 OpenAI (Nuvem)", "♊ Gemini (Nuvem)"]
             )
 
             filter_name = st.text_input("6. Nome do seu Caderno / Filtro:")
@@ -1178,7 +1218,6 @@ with tab3:
                 num_disp = q['artigo_numero']
                 st.markdown(f"**Dispositivo:** {num_disp}")
 
-                # Se for inciso, parágrafo ou alínea, carrega a cabeça integral do artigo (Caput)
                 is_subdevice = any(tag in num_disp.lower() for tag in ["§", "parágrafo", "inciso", "alínea", "alinea"]) or re.search(r'\b(I|II|III|IV|V|VI|VII|VIII|IX|X|XI|XII|XIII|XIV|XV|XVI|XVII|XVIII|XIX|XX)\b', num_disp)
                 if is_subdevice:
                     caput_text = obter_texto_caput(q["artigo_id"])
