@@ -28,7 +28,7 @@ st.set_page_config(
     layout="wide"
 )
 
-# Estilização CSS para ocultar menus e barras indesejadas
+# Estilização CSS
 st.markdown("""
     <style>
     #MainMenu {visibility: hidden;}
@@ -46,7 +46,6 @@ st.markdown("""
     .stApp > header + div {padding-top: 0rem;}
     section[data-testid="stSidebar"] + div {padding-top: 0rem;}
     
-    /* Caixa de destaque para enunciado legal */
     .lei-box {
         background-color: #f8f9fa;
         border-left: 5px solid #2b5c8f;
@@ -70,9 +69,6 @@ def hash_password(password):
     return hashlib.sha256(password.encode("utf-8")).hexdigest()
 
 def limpar_e_formatar_texto_lei(texto):
-    """
-    Limpa notas de rodapé, números de páginas, URLs e organiza a quebra de incisos e parágrafos.
-    """
     if not texto:
         return ""
 
@@ -88,7 +84,6 @@ def limpar_e_formatar_texto_lei(texto):
     for padrao in padroes_remover:
         texto = re.sub(padrao, '', texto, flags=re.IGNORECASE)
 
-    # Organiza quebras de linha antes de Incisos (I -, II -, V -, etc) e Parágrafos (§)
     texto = re.sub(r'(\s+)(?=[I|V|X|L|C|D|M]+\s*[-–])', '\n\n', texto)
     texto = re.sub(r'(\s+)(?=\§\s*\d+º?)', '\n\n', texto)
     
@@ -384,13 +379,15 @@ def parse_and_store_pdf(pdf_path, law_id):
         corpo_art = partes[i + 1] if (i + 1) < len(partes) else ""
         corpo_limpo = limpar_e_formatar_texto_lei(corpo_art)
         
+        # Isola o Caput para evitar pegar o texto de artigos subsequentes
+         caput_apenas = corpo_limpo.split('\n\n')[0].strip()
+        
         incisos_regex = re.compile(r'(?m)^([I|V|X|L|C|D|M]+\s*[-–]\s*)', re.IGNORECASE)
         sub_partes = incisos_regex.split(corpo_limpo)
 
         if len(sub_partes) > 1:
-            caput = sub_partes[0].strip()
-            if caput:
-                artigos_brutos.append((num_art, caput))
+            if caput_apenas:
+                artigos_brutos.append((num_art, caput_apenas))
             
             for k in range(1, len(sub_partes), 2):
                 inciso_label = sub_partes[k].strip()
@@ -400,8 +397,8 @@ def parse_and_store_pdf(pdf_path, law_id):
                 num_completo = f"{num_art}, inciso {inciso_label.replace('-', '').strip()}"
                 artigos_brutos.append((num_completo, f"{inciso_label} {inciso_texto_unico}"))
         else:
-            if corpo_limpo:
-                artigos_brutos.append((num_art, corpo_limpo))
+            if caput_apenas:
+                artigos_brutos.append((num_art, caput_apenas))
 
     conn = db()
     quantidade = 0
@@ -501,13 +498,13 @@ def gerar_explicacao_humana(art_num, texto_original, foi_correto=False, tipo_tro
     exemplo_pratico = ""
 
     prompt_ex = (
-        f"Você é um professor preparatório de Direito Processual Penal e Constitucional.\n"
-        f"Com base na norma: '{art_num}' cujo texto é: '{texto_original}'\n"
-        "Crie um EXEMPLO PRÁTICO DA VIDA REAL fático, com personagens (ex: Delegado Dr. Marcos, o investigado João, etc).\n"
-        "Descreva a cena de uma investigação ou atuação policial/judicial onde essa regra é aplicada exatamente no cotidiano.\n"
-        "Formate OBRIGATORIAMENTE assim:\n"
-        "• **Caso Concreto na Prática:** [Descreva em 2 a 3 linhas a história fática da atuação policial ou judiciária]\n"
-        "• **Aplicação da Norma:** [Explique em 1 linha o porquê essa conduta observou ou descumpriu a lei]."
+        f"Você é um professor preparatório para concursos públicos.\n"
+        f"Com base na norma legal: '{art_num}' que possui o texto original: '{texto_original}'\n"
+        "Crie um EXEMPLO PRÁTICO DA VIDA REAL fático e direto, com nomes hipotéticos (ex: Delegado Marcos, investigado João, etc).\n"
+        "Descreva brevemente uma situação cotidiana do trabalho policial ou judicial que exemplifique este dispositivo.\n"
+        "Siga ESTRITAMENTE o formato:\n"
+        "• **Caso Concreto na Prática:** [Situação em 2 a 3 linhas]\n"
+        "• **Aplicação da Norma:** [Aplicação em 1 linha]"
     )
 
     if "OpenAI" in motor_ia or "Gemini" in motor_ia:
@@ -538,8 +535,8 @@ def gerar_explicacao_humana(art_num, texto_original, foi_correto=False, tipo_tro
 
     if not exemplo_pratico:
         exemplo_pratico = (
-            f"• **Caso Concreto na Prática:** Durante uma investigação de roubo, o Delegado de Polícia chamou o investigado Carlos para ser ouvido. Ao final do interrogatório, o termo foi lido e assinado por duas testemunhas presenciais que acompanharam a oitiva.\n"
-            f"• **Aplicação da Norma:** A conduta da autoridade cumpriu exatamente o {art_num}, garantindo a legalidade do ato de colheita de prova no Inquérito Policial."
+            f"• **Caso Concreto na Prática:** Durante o procedimento, a autoridade cumpriu estritamente a diretriz disposta no dispositivo legal.\n"
+            f"• **Aplicação da Norma:** A atuação observou exatamente os limites e exigências do {art_num}."
         )
 
     if foi_correto:
@@ -577,7 +574,7 @@ def generate_questions_for_articles(discipline_id, law_id, article_ids, qtd_tota
 
     alvos = []
     for art in arts:
-        texto_artigo = limpar_e_formatar_texto_lei(art["texto"])
+        texto_artigo = limpar_e_formatar_texto_lei(art["texto"]).split('\n\n')[0]
         alvos.append({
             "art": art,
             "numero": art["numero"],
@@ -688,34 +685,32 @@ def stats():
     total = conn.execute("SELECT COUNT(*) n FROM respostas WHERE usuario_id=?", (USER_ID,)).fetchone()["n"]
     hits = conn.execute("SELECT COALESCE(SUM(acertou),0) n FROM respostas WHERE usuario_id=?", (USER_ID,)).fetchone()["n"]
     errors = total - hits
-    pct = (hits / total * 100) if total else 0
+    pct = (hits / total * 100) if total else 0.0
     
     b_disc = pd.read_sql_query("""
-        SELECT d.nome disciplina,
-               COUNT(r.id) respondidas,
-               COALESCE(SUM(r.acertou),0) acertos,
-               COUNT(r.id)-COALESCE(SUM(r.acertou),0) erros,
-               ROUND(COALESCE(SUM(r.acertou),0)*100.0/COUNT(r.id),1) percentual
+        SELECT d.nome as disciplina,
+               COUNT(r.id) as respondidas,
+               COALESCE(SUM(r.acertou),0) as acertos,
+               COUNT(r.id)-COALESCE(SUM(r.acertou),0) as erros,
+               ROUND(COALESCE(SUM(r.acertou),0)*100.0/COUNT(r.id),1) as percentual
         FROM respostas r
         JOIN questoes q ON q.id=r.questao_id
         JOIN disciplinas d ON d.id=q.disciplina_id
         WHERE r.usuario_id = ?
-        GROUP BY d.id ORDER BY percentual
+        GROUP BY d.id ORDER BY percentual DESC
     """, conn, params=(USER_ID,))
 
     b_filt = pd.read_sql_query("""
-        SELECT f.nome filtro,
-               d.nome disciplina,
-               l.nome lei,
-               COUNT(r.id) respondidas,
-               COALESCE(SUM(r.acertou),0) acertos,
-               COUNT(r.id)-COALESCE(SUM(r.acertou),0) erros,
-               ROUND(COALESCE(SUM(r.acertou),0)*100.0/COUNT(r.id),1) percentual
+        SELECT f.nome as filtro,
+               d.nome as disciplina,
+               COUNT(r.id) as respondidas,
+               COALESCE(SUM(r.acertou),0) as acertos,
+               COUNT(r.id)-COALESCE(SUM(r.acertou),0) as erros,
+               ROUND(COALESCE(SUM(r.acertou),0)*100.0/COUNT(r.id),1) as percentual
         FROM respostas r
         JOIN questoes q ON q.id=r.questao_id
         JOIN filtros_salvos f ON f.id=q.filtro_id
         JOIN disciplinas d ON d.id=f.disciplina_id
-        JOIN leis l ON l.id=f.lei_id
         WHERE r.usuario_id = ?
         GROUP BY f.id ORDER BY r.id DESC
     """, conn, params=(USER_ID,))
@@ -956,21 +951,25 @@ with tab5:
 
     if revs:
         q_rev = revs[0]
-        st.markdown(f"### Revisão - Dispositivo `{q_rev['artigo_numero']}`")
+        st.subheader("Questão para Revisão")
+        st.markdown(f"**Dispositivo:** `{q_rev['artigo_numero']}`")
         st.markdown(f"<div class='lei-box'>{q_rev['enunciado']}</div>", unsafe_allow_html=True)
         
-        resp_rev = st.radio("Sua resposta:", ["Certo", "Errado"], key=f"rev_radio_{q_rev['questao_id']}")
+        resp_rev = st.radio("Sua resposta:", ["Certo", "Errado"], key=f"rev_ans_{q_rev['questao_id']}")
         
-        if st.button("Validar Revisão", type="primary"):
-            val_rev = 1 if resp_rev == "Certo" else 0
-            acertou = record_answer(q_rev["questao_id"], val_rev, cycle=2)
+        if st.button("Enviar Resposta da Revisão", type="primary"):
+            val = 1 if resp_rev == "Certo" else 0
+            acertou = record_answer(q_rev["questao_id"], val, cycle=2)
             
             if acertou:
-                st.success("🎉 Correto! A próxima revisão foi espaçada.")
+                st.success("✨ Excelente! Próxima revisão agendada.")
             else:
-                st.error("❌ Errado! A prioridade da revisão foi aumentada.")
+                st.error("❌ Errou! Ela voltará para revisão.")
             
             st.markdown("---")
-            st.markdown(q_rev["explicacao"])
+            st.markdown(f"**Gabarito / Explicação:**\n\n{q_rev['explicacao']}")
+            
             if st.button("Próxima Revisão ➔"):
                 st.rerun()
+    else:
+        st.success("Tudo em dia! Não há revisões pendentes para hoje.")
