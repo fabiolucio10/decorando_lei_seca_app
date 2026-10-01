@@ -703,13 +703,13 @@ def gerar_exemplo_pratico_gemini(dispositivo, texto_lei):
         if hasattr(genai, "Client"):
             client = genai.Client(api_key=gemini_key)
             response = client.models.generate_content(
-                model="models/gemini-2.5-flash",
+                model="models/gemini-3.8-flash",
                 contents=prompt
             )
             return response.text
         else:
             genai.configure(api_key=gemini_key)
-            model = genai.GenerativeModel("models/gemini-2.5-flash")
+            model = genai.GenerativeModel("models/gemini-3.8-flash")
             response = model.generate_content(prompt)
             return response.text
     except Exception as e:
@@ -845,13 +845,13 @@ def generate_questions_for_articles(discipline_id, law_id, article_ids, qtd_tota
                     if hasattr(genai, "Client"):
                         client = genai.Client(api_key=gemini_key)
                         response = client.models.generate_content(
-                            model="models/gemini-2.5-flash",
+                            model="models/gemini-3.8-flash",
                             contents=prompt
                         )
                         enunciado = response.text
                     else:
                         genai.configure(api_key=gemini_key)
-                        model = genai.GenerativeModel("models/gemini-2.5-flash")
+                        model = genai.GenerativeModel("models/gemini-3.8-flash")
                         response = model.generate_content(prompt)
                         enunciado = response.text
                         
@@ -1301,7 +1301,6 @@ with tab3:
                     # Botão para buscar exemplo prático via Gemini
                     if st.button("🤖 Exemplo Prático com Gemini", key=f"gem_ex_{q_id}"):
                         with st.spinner("Consultando o Gemini para gerar um exemplo prático do dia a dia..."):
-                            # Obtém o texto literal do artigo associado à questão
                             conn_art = db()
                             art_obj = conn_art.execute("SELECT texto FROM artigos WHERE id = ?", (q["artigo_id"],)).fetchone()
                             conn_art.close()
@@ -1310,7 +1309,7 @@ with tab3:
                             exemplo_gerado = gerar_exemplo_pratico_gemini(num_disp, texto_lei_base)
                             st.info(f"📌 **Exemplo Prático (Gerado pelo Gemini):**\n\n{exemplo_gerado}")
 
-                    if st.button("Próxima Questão ➡️️", key=f"next_{q_id}"):
+                    if st.button("Próxima Questão ➡", key=f"next_{q_id}"):
                         st.session_state["q_index"] += 1
                         st.rerun()
 
