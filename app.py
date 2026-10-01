@@ -28,30 +28,21 @@ st.set_page_config(
     layout="wide"
 )
 
-# Estilização CSS para ocultar menus, cabeçalhos, rodapés e a barra flutuante do Streamlit Cloud
+# Estilização CSS para ocultar menus, cabeçalhos, rodapés e a barra flutuante
 st.markdown("""
     <style>
-    /* Oculta menus padrão e cabeçalho */
     #MainMenu {visibility: hidden;}
     header {visibility: hidden;}
     footer {visibility: hidden;}
-    
-    /* Esconde botão de deploy e badges */
     [data-testid="stAppDeployButton"] {display: none !important;}
     .viewerBadge_container__1S-xd {display: none !important;}
-    
-    /* Desativa a barra flutuante e widgets do Streamlit Cloud */
     [data-testid="stStatusWidget"] {display: none !important;}
     div[class*="stAppToolbar"] {display: none !important;}
     div[class*="viewerBadge"] {display: none !important;}
     div[class*="styles_viewerBadge"] {display: none !important;}
-    
-    /* Esconde botões de ação e gestão */
     button[title="Manage app"] {display: none !important;}
     button[title="Gerenciar aplicativo"] {display: none !important;}
     div[class^="stActionButton"] {display: none !important;}
-    
-    /* Remove espaçamento residual do cabeçalho */
     .stApp > header + div {padding-top: 0rem;}
     section[data-testid="stSidebar"] + div {padding-top: 0rem;}
     </style>
@@ -66,9 +57,6 @@ def hash_password(password):
     return hashlib.sha256(password.encode("utf-8")).hexdigest()
 
 def limpar_e_formatar_texto_lei(texto):
-    """
-    Remove notas de alteração/inclusão legislativa, URLs, datas do Planalto.
-    """
     if not texto:
         return ""
 
@@ -608,6 +596,33 @@ def get_saved_filters(discipline_id=None):
     conn.close()
     return rows
 
+def obter_texto_caput(artigo_id):
+    """
+    Recupera o texto do Caput (artigo principal) no banco de dados.
+    """
+    if not artigo_id:
+        return None
+    conn = db()
+    artigo = conn.execute("SELECT texto FROM artigos WHERE id = ?", (artigo_id,)).fetchone()
+    conn.close()
+    if artigo and artigo["texto"]:
+        texto_limpo = limpar_e_formatar_texto_lei(artigo["texto"])
+        texto_normalizado = normalizar_estrutura_dispositivo(texto_limpo)
+        inicio = texto_normalizado
+        marcadores = []
+        for padrao in [
+            r'(?m)^§\s*\d+º?',
+            r'(?m)^Parágrafo único\b',
+            r'(?m)^(?:I|II|III|IV|V|VI|VII|VIII|IX|X|XI|XII|XIII|XIV|XV|XVI|XVII|XVIII|XIX|XX)\s*-'
+        ]:
+            m = re.search(padrao, texto_normalizado, re.IGNORECASE)
+            if m:
+                marcadores.append(m.start())
+        if marcadores:
+            inicio = texto_normalizado[:min(marcadores)].strip()
+        return inicio.strip()
+    return None
+
 def alterar_texto_para_errado(texto):
     substituicoes = [
         (r'\bdeverá\b', 'poderá', 'troca de obrigação ("deverá") por faculdade ("poderá")'),
@@ -649,9 +664,6 @@ def alterar_texto_para_errado(texto):
     return texto_modificado, tipo_troca
 
 def obter_rotulo_dispositivo(numero_dispositivo):
-    """
-    Retorna a identificação formal do tipo de dispositivo (Parágrafo, Inciso, Alínea ou Artigo).
-    """
     num_lower = numero_dispositivo.lower()
 
     if "alínea" in num_lower or "alinea" in num_lower:
@@ -664,9 +676,6 @@ def obter_rotulo_dispositivo(numero_dispositivo):
         return f"Artigo ({numero_dispositivo})"
 
 def gerar_explicacao_humana(art_num, texto_original, foi_correto=False, tipo_troca=None, texto_modificado=None):
-    """
-    Gera explicações didáticas enxutas no modelo objetivo de 3 partes.
-    """
     txt_lower = texto_original.lower()
 
     if "sinal" in txt_lower or "estação de cobertura" in txt_lower or "radiofrequência" in txt_lower:
@@ -1131,6 +1140,7 @@ with tab3:
         if "last_filter_id" not in st.session_state or st.session_state["last_filter_id"] != sel_filter_id:
             st.session_state["last_filter_id"] = sel_filter_id
             st.session_state["q_index"] = 0
+            st.session_state["answered_q"] = {}
 
         conn = db()
         questoes = conn.execute("SELECT * FROM questoes WHERE filtro_id=? ORDER BY id", (sel_filter_id,)).fetchall()
@@ -1141,33 +1151,57 @@ with tab3:
         else:
             if "q_index" not in st.session_state:
                 st.session_state["q_index"] = 0
+            if "answered_q" not in st.session_state:
+                st.session_state["answered_q"] = {}
 
             idx = st.session_state["q_index"]
             if idx >= len(questoes):
                 st.success("🎉 Você concluiu todas as questões deste caderno!")
                 if st.button("Reiniciar Caderno"):
                     st.session_state["q_index"] = 0
+                    st.session_state["answered_q"] = {}
                     st.rerun()
             else:
                 q = questoes[idx]
                 st.subheader(f"Questão {idx + 1} de {len(questoes)}")
-                st.markdown(f"**Dispositivo:** {q['artigo_numero']}")
+                
+                num_disp = q['artigo_numero']
+                st.markdown(f"**Dispositivo:** {num_disp}")
+
+                # Exibe o texto do Caput (artigo principal) quando o dispositivo for Parágrafo, Inciso ou Alínea
+                is_subdevice = any(tag in num_disp.lower() for tag in ["§", "parágrafo", "inciso", "alínea", "alinea"]) or re.search(r'\b(I|II|III|IV|V|VI|VII|VIII|IX|X|XI|XII|XIII|XIV|XV|XVI|XVII|XVIII|XIX|XX)\b', num_disp)
+                if is_subdevice:
+                    caput_text = obter_texto_caput(q["artigo_id"])
+                    if caput_text:
+                        st.info(f"📜 **Artigo Principal (Caput):**\n\n\"{caput_text}\"")
+
                 st.markdown(q["enunciado"])
 
-                resp = st.radio("Sua resposta:", ["Certo", "Errado"], key=f"q_{q['id']}")
+                q_id = q["id"]
+                ja_respondida = q_id in st.session_state["answered_q"]
+
+                resp = st.radio("Sua resposta:", ["Certo", "Errado"], key=f"q_{q_id}", disabled=ja_respondida)
                 
-                if st.button("Responder", key=f"btn_{q['id']}"):
-                    val = 1 if resp == "Certo" else 0
-                    acertou = record_answer(q["id"], val, cycle=1)
-                    if acertou:
+                if not ja_respondida:
+                    if st.button("Responder", key=f"btn_{q_id}"):
+                        val = 1 if resp == "Certo" else 0
+                        acertou = record_answer(q_id, val, cycle=1)
+                        st.session_state["answered_q"][q_id] = {
+                            "acertou": acertou,
+                            "resposta": resp
+                        }
+                        st.rerun()
+                else:
+                    dados_resp = st.session_state["answered_q"][q_id]
+                    if dados_resp["acertou"]:
                         st.success("✨ Resposta Correta!")
                     else:
                         st.error("❌ Resposta Incorreta!")
                     st.markdown(f"**Gabarito / Explicação Prática:**\n\n{q['explicacao']}")
 
-                if st.button("Próxima Questão ➡️"):
-                    st.session_state["q_index"] += 1
-                    st.rerun()
+                    if st.button("Próxima Questão ➡️", key=f"next_{q_id}"):
+                        st.session_state["q_index"] += 1
+                        st.rerun()
 
 with tab4:
     st.header("Seu Desempenho")
