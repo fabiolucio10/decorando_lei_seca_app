@@ -814,13 +814,13 @@ def generate_questions_for_articles(discipline_id, law_id, article_ids, qtd_tota
                     if hasattr(genai, "Client"):
                         client = genai.Client(api_key=gemini_key)
                         response = client.models.generate_content(
-                            model="gemini-2.5-flash",
+                            model="models/gemini-3.8-flash",  # <--- ATUALIZADO AQUI
                             contents=prompt
                         )
                         enunciado = response.text
                     else:
                         genai.configure(api_key=gemini_key)
-                        model = genai.GenerativeModel("gemini-2.5-flash")
+                        model = genai.GenerativeModel("models/gemini-3.8-flash")  # <--- ATUALIZADO AQUI
                         response = model.generate_content(prompt)
                         enunciado = response.text
                         
@@ -1099,7 +1099,7 @@ with tab1:
             st.success(f"Lei processada com sucesso! {qtd} artigos importados. Reimporte ou gere novos cadernos para aplicar os ajustes.")
 
     st.divider()
-    st.subheader("🗑️ Leis Cadastradas por Disciplina")
+    st.subheader("🗑️️ Leis Cadastradas por Disciplina")
     todas_leis = get_laws()
     if todas_leis:
         leis_por_disciplina = {}
@@ -1337,7 +1337,7 @@ with tab5:
 # Se o utilizador for administrador, renderiza a aba completa do Painel Admin em destaque na tela
 if is_admin_user:
     with tab_admin:
-        st.header("🛡️️ Painel de Controlo do Administrador")
+        st.header("🛡 Painel de Controlo do Administrador")
         st.write("Gerencie e aprove o acesso de novos utilizadores ao sistema de forma rápida e segura.")
         
         usuarios_cadastrados = listar_usuarios()
