@@ -380,7 +380,7 @@ def parse_and_store_pdf(pdf_path, law_id):
         corpo_limpo = limpar_e_formatar_texto_lei(corpo_art)
         
         # Isola o Caput para evitar pegar o texto de artigos subsequentes
-         caput_apenas = corpo_limpo.split('\n\n')[0].strip()
+        caput_apenas = corpo_limpo.split('\n\n')[0].strip()
         
         incisos_regex = re.compile(r'(?m)^([I|V|X|L|C|D|M]+\s*[-–]\s*)', re.IGNORECASE)
         sub_partes = incisos_regex.split(corpo_limpo)
