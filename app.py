@@ -17,7 +17,6 @@ try:
 except ImportError:
     openai = None
 
-# Suporte ao SDK atualizado google-genai e ao legado google.generativeai
 try:
     from google import genai
 except ImportError:
@@ -31,10 +30,8 @@ DB_FILE = APP_DIR / "decorando_lei.db"
 PDF_DIR = APP_DIR / "leis_importadas"
 PDF_DIR.mkdir(exist_ok=True)
 
-# Definição do e-mail de administrador exclusivo
 ADMIN_EMAIL = "fabiolucio277@gmail.com"
 
-# Configuração da página - Mantém a barra lateral sempre expandida por padrão
 st.set_page_config(
     page_title="Decorando Lei Seca",
     page_icon="⚖",
@@ -42,7 +39,6 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Estilização CSS aprimorada para justificar os textos e alinhar o layout
 st.markdown("""
     <style>
     #MainMenu {visibility: hidden;}
@@ -57,12 +53,10 @@ st.markdown("""
     button[title="Gerenciar aplicativo"] {display: none !important;}
     div[class^="stActionButton"] {display: none !important;}
     
-    /* Garante alinhamento justificado e legibilidade perfeita dos enunciados e citações */
     .stMarkdown, p, div[data-testid="stMarkdownContainer"] {
         text-align: justify !important;
     }
     
-    /* Garante que o botão de alternar/expandir a sidebar permaneça sempre visível */
     [data-testid="stSidebarCollapseButton"] {display: block !important; visibility: visible !important;}
     [data-testid="stHeader"] {background-color: transparent !important; z-index: 999;}
     </style>
@@ -193,7 +187,6 @@ def init_db():
     except sqlite3.OperationalError:
         pass
 
-    # Garante permissão automática apenas para o administrador
     conn.execute("UPDATE usuarios SET autorizado = 1 WHERE LOWER(TRIM(username)) = ?", (ADMIN_EMAIL,))
     conn.commit()
     conn.close()
@@ -842,7 +835,6 @@ def generate_questions_for_articles(discipline_id, law_id, article_ids, qtd_tota
                         gabarito = 0
                         explicacao = gerar_explicacao_humana(numero_dispositivo, text, False, tipo_troca, modified_text)
             else:
-                logging.warning("Biblioteca ou Chave do Gemini (GEMINI_API_KEY) não configurada.")
                 if is_correct:
                     enunciado = f"De acordo com o **{rotulo_dispositivo}**:\n\n\"{text}\""
                     gabarito = 1
@@ -961,7 +953,6 @@ def record_answer(question_id, answer, cycle):
         idx = min(len(intervals)-1, hits-1)
         next_date = now + timedelta(days=intervals[idx])
 
-    # Utiliza INSERT OR REPLACE para atualizar ou inserir sem gerar erro de chave duplicada
     conn.execute("""
         INSERT OR REPLACE INTO revisoes(usuario_id, questao_id, prioridade, proxima_revisao, erros, acertos)
         VALUES(?, ?, ?, ?, ?, ?)
@@ -1272,7 +1263,7 @@ with tab3:
                         st.error("❌ Resposta Incorreta!")
                     st.markdown(f"{q['explicacao']}")
 
-                    if st.button("Próxima Questão ➡️", key=f"next_{q_id}"):
+                    if st.button("Próxima Questão ➡️️", key=f"next_{q_id}"):
                         st.session_state["q_index"] += 1
                         st.rerun()
 
@@ -1320,16 +1311,30 @@ with tab5:
 
         if revs:
             st.subheader("Questão para Revisão")
+            
+            num_disp = revs['artigo_numero']
+            st.markdown(f"**Dispositivo:** {num_disp}")
+
+            is_subdevice = any(tag in num_disp.lower() for tag in ["§", "parágrafo", "inciso", "alínea", "alinea"]) or re.search(r'\b(I|II|III|IV|V|VI|VII|VIII|IX|X|XI|XII|XIII|XIV|XV|XVI|XVII|XVIII|XIX|XX)\b', num_disp)
+            if is_subdevice:
+                caput_text = obter_texto_caput(revs["artigo_id"])
+                if caput_text:
+                    st.info(f"📜 **Artigo Principal (Caput):**\n\n\"{caput_text}\"")
+
             st.markdown(revs["enunciado"])
-            resp_rev = st.radio("A sua resposta:", ["Certo", "Errado"], key="rev_ans")
-            if st.button("Enviar Resposta da Revisão"):
+            
+            rev_q_id = revs["id"]
+            resp_rev = st.radio("A sua resposta:", ["Certo", "Errado"], key=f"rev_ans_{rev_q_id}")
+            
+            if st.button("Enviar Resposta da Revisão", key=f"btn_rev_{rev_q_id}"):
                 val = 1 if resp_rev == "Certo" else 0
-                acertou = record_answer(revs["id"], val, cycle=2)
+                acertou = record_answer(rev_q_id, val, cycle=2)
                 if acertou:
                     st.success("✨ Excelente! Próxima revisão agendada.")
                 else:
                     st.error("❌ Errou! Ela voltará para revisão.")
                 st.markdown(f"{revs['explicacao']}")
+                st.rerun()
     else:
         st.success("Tudo em dia! Não há revisões pendentes para hoje.")
 
