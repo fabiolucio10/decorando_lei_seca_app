@@ -297,50 +297,30 @@ with st.sidebar:
         st.rerun()
     st.divider()
 
-    # O Painel de Administração surge APENAS para o administrador
+    # O Painel de Administração na Sidebar (opcional / atalho rápido)
     if is_admin_user:
-        st.subheader("⚙ Painel do Administrador")
-        with st.expander("👥 Gerenciar e Autorizar Usuários", expanded=True):
+        st.subheader("⚙ Atalho Admin")
+        with st.expander("👥 Gerenciar Usuários", expanded=False):
             usuarios_cadastrados = listar_usuarios()
             st.write(f"**Total de usuários:** {len(usuarios_cadastrados)}")
-            
             for u in usuarios_cadastrados:
                 st.markdown(f"**{u['username']}**")
                 c_status, c_del = st.columns([3, 1])
-                
                 is_this_admin = u['username'].strip().lower() == ADMIN_EMAIL
-                
                 if is_this_admin:
-                    c_status.caption("👑 Administrador Principal")
+                    c_status.caption("👑 Admin Principal")
                 else:
                     status_atual = bool(u['autorizado'])
-                    novo_status = c_status.toggle("Autorizado", value=status_atual, key=f"aut_{u['id']}")
+                    novo_status = c_status.toggle("Autorizado", value=status_atual, key=f"aut_side_{u['id']}")
                     if novo_status != status_atual:
                         alterar_status_autorizacao(u['id'], 1 if novo_status else 0)
                         st.toast(f"Status de {u['username']} alterado!")
                         st.rerun()
-
-                    if c_del.button("❌", key=f"del_user_{u['id']}", help="Excluir Usuário"):
+                    if c_del.button("❌", key=f"del_side_{u['id']}", help="Excluir Usuário"):
                         excluir_usuario(u['id'])
                         st.success(f"Usuário {u['username']} removido!")
                         st.rerun()
-
                 st.divider()
-
-            st.write("**Criar Novo Usuário Autorizado:**")
-            adm_new_u = st.text_input("E-mail do Novo Usuário", key="adm_u")
-            adm_new_p = st.text_input("Senha", type="password", key="adm_p")
-            if st.button("Criar Usuário pelo Admin"):
-                if adm_new_u and adm_new_p:
-                    ok, msg = cadastrar_usuario(adm_new_u, adm_new_p, autorizado=1)
-                    if ok:
-                        st.success(msg)
-                        st.rerun()
-                    else:
-                        st.error(msg)
-                else:
-                    st.warning("Preencha todos os campos.")
-        st.divider()
 
 def add_discipline(name):
     conn = db()
@@ -1059,13 +1039,26 @@ def stats():
 
 st.title("⚖ Decorando Lei Seca")
 
-tab1, tab2, tab3, tab4, tab5 = st.tabs([
-    "📚 Importar Leis",
-    "🎯 Criar Caderno / Filtro",
-    "📝 Resolver Questões",
-    "📊 Desempenho",
-    "🔄 Revisões"
-])
+# Definição dinâmica das abas com base no status de administrador
+is_admin_user = bool(USERNAME and USERNAME.strip().lower() == ADMIN_EMAIL)
+
+if is_admin_user:
+    tab1, tab2, tab3, tab4, tab5, tab_admin = st.tabs([
+        "📚 Importar Leis",
+        "🎯 Criar Caderno / Filtro",
+        "📝 Resolver Questões",
+        "📊 Desempenho",
+        "🔄 Revisões",
+        "🛡️ Painel Admin"
+    ])
+else:
+    tab1, tab2, tab3, tab4, tab5 = st.tabs([
+        "📚 Importar Leis",
+        "🎯 Criar Caderno / Filtro",
+        "📝 Resolver Questões",
+        "📊 Desempenho",
+        "🔄 Revisões"
+    ])
 
 with tab1:
     st.header("Importar Nova Lei (PDF)")
@@ -1213,7 +1206,7 @@ with tab3:
     saved_filters = get_saved_filters(selected_disc_id)
     
     if not saved_filters:
-        st.info("Nenum caderno de questões encontrado para a disciplina selecionada.")
+        st.info("Nenhum caderno de questões encontrado para a disciplina selecionada.")
     else:
         f_options = {f"{f['nome']} ({f['disciplina']} - {f['lei']})": f["id"] for f in saved_filters}
         sel_filter_label = st.selectbox("Selecione o Caderno para Treinar:", list(f_options.keys()), key="res_caderno_filter")
@@ -1340,3 +1333,56 @@ with tab5:
                 st.markdown(f"{revs['explicacao']}")
     else:
         st.success("Tudo em dia! Não há revisões pendentes para hoje.")
+
+# Se o usuário for administrador, renderiza a aba completa do Painel Admin em destaque na tela
+if is_admin_user:
+    with tab_admin:
+        st.header("🛡️ Painel de Controle do Administrador")
+        st.write("Gerencie e aprove o acesso de novos usuários ao sistema de forma rápida e segura.")
+        
+        usuarios_cadastrados = listar_usuarios()
+        st.info(f"**Total de usuários cadastrados no sistema:** {len(usuarios_cadastrados)}")
+        
+        st.subheader("👥 Lista de Utilizadores e Autorizações")
+        for u in usuarios_cadastrados:
+            with st.container(border=True):
+                col_info, col_toggle, col_del = st.columns([3, 2, 1])
+                
+                col_info.markdown(f"**E-mail / Usuário:** `{u['username']}`")
+                col_info.caption(f"Criado em: {u['criado_em'][:10]}")
+                
+                is_this_admin = u['username'].strip().lower() == ADMIN_EMAIL
+                
+                if is_this_admin:
+                    col_toggle.markdown("👑 **Administrador Principal**")
+                else:
+                    status_atual = bool(u['autorizado'])
+                    novo_status = col_toggle.toggle("Acesso Autorizado", value=status_atual, key=f"aut_tab_{u['id']}")
+                    if novo_status != status_atual:
+                        alterar_status_autorizacao(u['id'], 1 if novo_status else 0)
+                        st.toast(f"Status de autorização de {u['username']} atualizado com sucesso!")
+                        st.rerun()
+
+                    if col_del.button("🗑️ Excluir", key=f"del_tab_{u['id']}", help="Remover Utilizador"):
+                        excluir_usuario(u['id'])
+                        st.success(f"Utilizador {u['username']} removido do sistema!")
+                        st.rerun()
+
+        st.divider()
+        st.subheader("➕ Criar Novo Utilizador Autorizado Diretamente")
+        col_au1, col_au2 = st.columns(2)
+        with col_au1:
+            adm_new_u = st.text_input("E-mail do Novo Utilizador", key="adm_u_tab")
+        with col_au2:
+            adm_new_p = st.text_input("Senha Inicial", type="password", key="adm_p_tab")
+            
+        if st.button("Cadastrar e Autorizar Imediatamente", type="primary"):
+            if adm_new_u and adm_new_p:
+                ok, msg = cadastrar_usuario(adm_new_u, adm_new_p, autorizado=1)
+                if ok:
+                    st.success(msg)
+                    st.rerun()
+                else:
+                    st.error(msg)
+            else:
+                st.warning("Preencha todos os campos para prosseguir.")
