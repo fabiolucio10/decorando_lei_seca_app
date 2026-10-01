@@ -5,6 +5,7 @@ import random
 import re
 import sqlite3
 import logging
+import time
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -687,33 +688,50 @@ def obter_rotulo_dispositivo(numero_dispositivo):
     else:
         return f"Artigo ({numero_dispositivo})"
 
-def gerar_exemplo_pratico_gemini(dispositivo, texto_lei):
+def chamar_gemini_com_retry(prompt, max_tentativas=3):
+    """Executa a chamada ao Gemini com reiteração automática em caso de sobrecarga (503)."""
     gemini_key = st.secrets.get("GEMINI_API_KEY", os.getenv("GEMINI_API_KEY"))
     if not gemini_key or not genai:
-        return "⚠️ A chave da API do Gemini (GEMINI_API_KEY) não está configurada nos segredos ou variáveis de ambiente."
-    
-    try:
-        prompt = (
-            "Com base estritamente na letra da lei abaixo, crie de forma objetiva e prática "
-            "um exemplo do dia a dia que ilustre perfeitamente a aplicação deste dispositivo legal.\n\n"
-            f"Dispositivo: {dispositivo}\n"
-            f"Texto da Lei: {texto_lei}"
-        )
-        
-        if hasattr(genai, "Client"):
-            client = genai.Client(api_key=gemini_key)
-            response = client.models.generate_content(
-                model="models/gemini-3.8-flash",
-                contents=prompt
-            )
-            return response.text
-        else:
-            genai.configure(api_key=gemini_key)
-            model = genai.GenerativeModel("models/gemini-3.8-flash")
-            response = model.generate_content(prompt)
-            return response.text
-    except Exception as e:
-        return f"❌ Erro ao consultar o Gemini: {e}"
+        return None, "⚠️ A chave da API do Gemini (GEMINI_API_KEY) não está configurada."
+
+    tentativa = 0
+    espera = 2
+    while tentativa < max_tentativas:
+        try:
+            if hasattr(genai, "Client"):
+                client = genai.Client(api_key=gemini_key)
+                response = client.models.generate_content(
+                    model="models/gemini-3.8-flash",
+                    contents=prompt
+                )
+                return response.text, None
+            else:
+                genai.configure(api_key=gemini_key)
+                model = genai.GenerativeModel("models/gemini-3.8-flash")
+                response = model.generate_content(prompt)
+                return response.text, None
+        except Exception as e:
+            err_str = str(e)
+            if "503" in err_str or "UNAVAILABLE" in err_str or "high demand" in err_str:
+                tentativa += 1
+                if tentativa < max_tentativas:
+                    time.sleep(espera)
+                    espera *= 2
+                    continue
+            return None, err_str
+    return None, "Limite de tentativas excedido por alta demanda no servidor do Gemini."
+
+def gerar_exemplo_pratico_gemini(dispositivo, texto_lei):
+    prompt = (
+        "Com base estritamente na letra da lei abaixo, crie de forma objetiva e prática "
+        "um exemplo do dia a dia que ilustre perfeitamente a aplicação deste dispositivo legal.\n\n"
+        f"Dispositivo: {dispositivo}\n"
+        f"Texto da Lei: {texto_lei}"
+    )
+    resposta, erro = chamar_gemini_com_retry(prompt)
+    if resposta:
+        return resposta
+    return f"❌ Erro ao consultar o Gemini após tentativas: {erro}"
 
 def gerar_explicacao_humana(art_num, texto_original, foi_correto=False, tipo_troca=None, texto_modificado=None):
     txt_lower = texto_original.lower()
@@ -830,46 +848,22 @@ def generate_questions_for_articles(discipline_id, law_id, article_ids, qtd_tota
                     explicacao = gerar_explicacao_humana(numero_dispositivo, text, False, tipo_troca, modified_text)
 
         elif "Gemini" in motor_ia:
-            gemini_key = st.secrets.get("GEMINI_API_KEY", os.getenv("GEMINI_API_KEY"))
-            if gemini_key and genai:
-                try:
-                    prompt = (
-                        "Você é uma banca examinadora de concursos públicos. "
-                        "Crie uma afirmação de Certo ou Errado focada estritamente no trecho da lei fornecido. "
-                        "Mantenha o enunciado conciso e direto. Não invente informações.\n\n"
-                        f"Dispositivo: {rotulo_dispositivo}\n"
-                        f"Texto legal: {text}\n"
-                        f"Gabarito pretendido: {'CERTO' if is_correct else 'ERRADO'}"
-                    )
-                    
-                    if hasattr(genai, "Client"):
-                        client = genai.Client(api_key=gemini_key)
-                        response = client.models.generate_content(
-                            model="models/gemini-3.8-flash",
-                            contents=prompt
-                        )
-                        enunciado = response.text
-                    else:
-                        genai.configure(api_key=gemini_key)
-                        model = genai.GenerativeModel("models/gemini-3.8-flash")
-                        response = model.generate_content(prompt)
-                        enunciado = response.text
-                        
-                    gabarito = 1 if is_correct else 0
-                    explicacao = gerar_explicacao_humana(numero_dispositivo, text, is_correct)
-                except Exception as e:
-                    logging.warning(f"Erro na API Gemini: {e}. Aplicando motor de regra padrão.")
-                    if is_correct:
-                        enunciado = f"De acordo com o **{rotulo_dispositivo}**:\n\n\"{text}\""
-                        gabarito = 1
-                        explicacao = gerar_explicacao_humana(numero_dispositivo, text, True)
-                    else:
-                        modified_text, tipo_troca = alterar_texto_para_errado(text)
-                        enunciado = f"De acordo com o **{rotulo_dispositivo}**:\n\n\"{modified_text}\""
-                        gabarito = 0
-                        explicacao = gerar_explicacao_humana(numero_dispositivo, text, False, tipo_troca, modified_text)
+            prompt = (
+                "Você é uma banca examinadora de concursos públicos. "
+                "Crie uma afirmação de Certo ou Errado focada estritamente no trecho da lei fornecido. "
+                "Mantenha o enunciado conciso e direto. Não invente informações.\n\n"
+                f"Dispositivo: {rotulo_dispositivo}\n"
+                f"Texto legal: {text}\n"
+                f"Gabarito pretendido: {'CERTO' if is_correct else 'ERRADO'}"
+            )
+            resposta_gemini, erro_gemini = chamar_gemini_com_retry(prompt)
+            
+            if resposta_gemini:
+                enunciado = resposta_gemini
+                gabarito = 1 if is_correct else 0
+                explicacao = gerar_explicacao_humana(numero_dispositivo, text, is_correct)
             else:
-                logging.warning("Biblioteca ou Chave do Gemini (GEMINI_API_KEY) não configurada.")
+                logging.warning(f"Erro na API Gemini: {erro_gemini}. Aplicando motor de regra padrão.")
                 if is_correct:
                     enunciado = f"De acordo com o **{rotulo_dispositivo}**:\n\n\"{text}\""
                     gabarito = 1
