@@ -4,6 +4,7 @@ import os
 import random
 import re
 import sqlite3
+import logging
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -814,20 +815,21 @@ def generate_questions_for_articles(discipline_id, law_id, article_ids, qtd_tota
                     if hasattr(genai, "Client"):
                         client = genai.Client(api_key=gemini_key)
                         response = client.models.generate_content(
-                            model="gemini-2.5-flash",  # <--- ATUALIZADO AQUI
+                            model="models/gemini-3.8-flash",  # <--- ATUALIZADO AQUI
                             contents=prompt
                         )
                         enunciado = response.text
                     else:
                         genai.configure(api_key=gemini_key)
-                        model = genai.GenerativeModel("models/gemini-2.5-flash")  # <--- ATUALIZADO AQUI
+                        model = genai.GenerativeModel("models/gemini-3.8-flash")  # <--- ATUALIZADO AQUI
                         response = model.generate_content(prompt)
                         enunciado = response.text
                         
                     gabarito = 1 if is_correct else 0
                     explicacao = gerar_explicacao_humana(numero_dispositivo, text, is_correct)
                 except Exception as e:
-                    st.warning(f"Erro na API Gemini ({e}). Aplicando motor de regra padrão.")
+                    # Log de erro interno silencioso sem poluir a tela
+                    logging.warning(f"Erro na API Gemini: {e}. Aplicando motor de regra padrão.")
                     if is_correct:
                         enunciado = f"De acordo com o **{rotulo_dispositivo}**:\n\n\"{text}\""
                         gabarito = 1
@@ -838,7 +840,7 @@ def generate_questions_for_articles(discipline_id, law_id, article_ids, qtd_tota
                         gabarito = 0
                         explicacao = gerar_explicacao_humana(numero_dispositivo, text, False, tipo_troca, modified_text)
             else:
-                st.warning("Biblioteca ou Chave do Gemini (GEMINI_API_KEY) não configurada no Streamlit/secrets ou variáveis de ambiente.")
+                logging.warning("Biblioteca ou Chave do Gemini (GEMINI_API_KEY) não configurada no Streamlit/secrets ou variáveis de ambiente.")
                 if is_correct:
                     enunciado = f"De acordo com o **{rotulo_dispositivo}**:\n\n\"{text}\""
                     gabarito = 1
@@ -1099,7 +1101,7 @@ with tab1:
             st.success(f"Lei processada com sucesso! {qtd} artigos importados. Reimporte ou gere novos cadernos para aplicar os ajustes.")
 
     st.divider()
-    st.subheader("🗑️️ Leis Cadastradas por Disciplina")
+    st.subheader("🗑 Leis Cadastradas por Disciplina")
     todas_leis = get_laws()
     if todas_leis:
         leis_por_disciplina = {}
@@ -1171,7 +1173,7 @@ with tab2:
                     st.success(f"Caderno '{filter_name}' criado com sucesso! {qtd_geradas} questões geradas.")
 
     st.divider()
-    st.subheader("🗑️ Meus Cadernos / Filtros Salvos por Disciplina")
+    st.subheader("🗑️️ Meus Cadernos / Filtros Salvos por Disciplina")
     meus_filtros = get_saved_filters()
     
     if meus_filtros:
