@@ -716,51 +716,69 @@ def chamar_gemini_com_retry(prompt, max_tentativas=2):
 
 def gerar_exemplo_pratico_gemini(dispositivo, texto_lei):
     """
-    Gera um exemplo prático específico para o dispositivo que originou a questão.
+    Consulta REAL o Gemini pela API oficial e gera um exemplo prático
+    específico para o dispositivo legal da questão.
+
+    Não existe fallback genérico: se a API não responder, o erro é
+    devolvido para que o usuário saiba que a consulta não foi realizada.
     """
     gemini_key = st.secrets.get("GEMINI_API_KEY", os.getenv("GEMINI_API_KEY"))
-    if not gemini_key or not genai:
-        return (
-            f"Imagine uma situação real em que alguém precise aplicar especificamente "
-            f"o {dispositivo}. Nesse caso, a conduta deve seguir a regra prevista no "
-            f'dispositivo: "{texto_lei}".'
-        )
+
+    if not gemini_key:
+        return None, "A chave GEMINI_API_KEY não está configurada."
+
+    if genai is None:
+        return None, "A biblioteca google-genai não está instalada."
+
+    dispositivo = (dispositivo or "").strip()
+    texto_lei = (texto_lei or "").strip()
+
+    if not dispositivo or not texto_lei:
+        return None, "Não foi possível identificar o dispositivo e o texto legal da questão."
 
     prompt = f"""
-Você é um professor de Direito para concursos públicos.
+Você é um professor de Direito para concursos públicos e deve criar UM exemplo
+prático da vida real para ajudar o aluno a memorizar EXATAMENTE o dispositivo
+legal abaixo.
 
-Transforme EXATAMENTE o dispositivo legal abaixo em um exemplo prático da vida real
-para ajudar o aluno a memorizar a regra.
+OBJETIVO:
+O exemplo precisa permitir que o aluno reconheça a regra deste dispositivo
+em uma situação concreta. Não quero uma explicação genérica sobre a lei.
 
-REGRAS:
-- Use somente a regra contida no dispositivo fornecido.
-- O exemplo deve ser ESPECÍFICO para esse dispositivo, nunca uma explicação genérica da lei.
-- Se for inciso, parágrafo ou alínea, demonstre exatamente a situação prevista nele.
-- Use uma situação cotidiana ou profissional plausível, conforme o assunto do dispositivo.
-- Explique claramente como a regra se aplica ao caso concreto.
-- Responda em no máximo 2 parágrafos curtos.
-- Não faça listas, tópicos, introdução ou conclusão.
-- Não invente prazos, exceções, requisitos, autoridades ou consequências que não estejam no texto.
-- Não use outros artigos para complementar a resposta.
-- O objetivo é fazer o aluno lembrar do dispositivo ao visualizar a situação prática.
+REGRAS OBRIGATÓRIAS:
+1. Use exclusivamente o conteúdo do dispositivo fornecido.
+2. O exemplo deve aplicar diretamente a regra escrita no dispositivo.
+3. Se o dispositivo tiver condição, obrigação, proibição, faculdade, prazo,
+   destinatário, situação ou procedimento expressamente escrito, isso deve
+   aparecer no exemplo quando for necessário para demonstrar a aplicação.
+4. Não invente artigo, prazo, exceção, autoridade, requisito, penalidade ou
+   consequência que não esteja no dispositivo fornecido.
+5. Não use outro artigo ou conhecimento jurídico externo para completar a resposta.
+6. Se o dispositivo for um inciso, parágrafo ou alínea, o exemplo deve demonstrar
+   especificamente aquele inciso, parágrafo ou alínea, e não apenas o artigo inteiro.
+7. Prefira nomes e uma situação concreta (por exemplo: "João...", "um servidor...",
+   "uma empresa...", "um candidato...") quando isso ajudar a tornar o caso real.
+8. Explique no próprio exemplo qual fato concreto faz a regra do dispositivo ser aplicada.
+9. Responda em NO MÁXIMO 2 parágrafos curtos.
+10. Não faça lista, tópicos, título, introdução ou conclusão.
+11. Não diga "imagine uma situação" de forma genérica. Comece diretamente pelo caso concreto.
+12. Não repita simplesmente o texto da lei; transforme a regra em uma situação prática.
 
-Dispositivo específico: {dispositivo}
+DISPOSITIVO:
+{dispositivo}
 
-Texto EXATO do dispositivo:
+TEXTO EXATO DO DISPOSITIVO:
 {texto_lei}
 
-Responda somente com o exemplo prático, em no máximo 2 parágrafos.
+Agora responda SOMENTE com o exemplo prático específico, em no máximo 2 parágrafos.
 """
 
     resposta, erro = chamar_gemini_com_retry(prompt)
-    if resposta and resposta.strip():
-        return resposta.strip()
 
-    return (
-        f"Imagine uma situação real em que alguém precise aplicar especificamente "
-        f"o **{dispositivo}**. Nesse caso, a conduta deve seguir exatamente a regra "
-        f'prevista no dispositivo: "{texto_lei}".'
-    )
+    if resposta and resposta.strip():
+        return resposta.strip(), None
+
+    return None, erro or "O Gemini não retornou uma resposta."
 
 def gerar_explicacao_humana(art_num, texto_original, foi_correto=False, tipo_troca=None, texto_modificado=None):
     if foi_correto:
@@ -1234,6 +1252,12 @@ with tab3:
             st.session_state["q_index"] = 0
             st.session_state["answered_q"] = {}
 
+            # Limpa exemplos gerados anteriormente para não misturar respostas
+            # de outro caderno/questão.
+            for key in list(st.session_state.keys()):
+                if key.startswith("gemini_exemplo_") or key.startswith("gemini_erro_"):
+                    del st.session_state[key]
+
         conn = db()
         questoes = conn.execute("SELECT * FROM questoes WHERE filtro_id=? ORDER BY id", (sel_filter_id,)).fetchall()
         conn.close()
@@ -1252,6 +1276,11 @@ with tab3:
                 if st.button("Reiniciar Caderno"):
                     st.session_state["q_index"] = 0
                     st.session_state["answered_q"] = {}
+
+                    for key in list(st.session_state.keys()):
+                        if key.startswith("gemini_exemplo_") or key.startswith("gemini_erro_"):
+                            del st.session_state[key]
+
                     st.rerun()
             else:
                 q = questoes[idx]
@@ -1291,21 +1320,42 @@ with tab3:
                     st.markdown(f"{q['explicacao']}")
 
                     exemplo_salvo = st.session_state.get(f"gemini_exemplo_{q_id}")
+                    erro_exemplo = st.session_state.get(f"gemini_erro_{q_id}")
+
+                    # O exemplo só existe depois que a questão foi respondida.
+                    if st.button(
+                        "🤖 Consultar Gemini — Exemplo Prático",
+                        key=f"gem_ex_{q_id}",
+                        type="secondary"
+                    ):
+                        with st.spinner("Consultando o Gemini com o dispositivo legal desta questão..."):
+                            # O texto enviado ao Gemini é o dispositivo que originou
+                            # a questão, e não o enunciado da pergunta.
+                            texto_lei_base = (q["conteudo"] or "").strip()
+
+                            exemplo_gerado, erro_gemini = gerar_exemplo_pratico_gemini(
+                                num_disp,
+                                texto_lei_base
+                            )
+
+                            if exemplo_gerado:
+                                st.session_state[f"gemini_exemplo_{q_id}"] = exemplo_gerado
+                                st.session_state.pop(f"gemini_erro_{q_id}", None)
+                            else:
+                                st.session_state.pop(f"gemini_exemplo_{q_id}", None)
+                                st.session_state[f"gemini_erro_{q_id}"] = erro_gemini
+
+                        st.rerun()
+
+                    # O resultado é mostrado somente depois da consulta terminar.
+                    exemplo_salvo = st.session_state.get(f"gemini_exemplo_{q_id}")
+                    erro_exemplo = st.session_state.get(f"gemini_erro_{q_id}")
+
                     if exemplo_salvo:
-                        st.info(f"📌 **Exemplo Prático:**\\n\\n{exemplo_salvo}")
+                        st.info(f"📌 **Exemplo Prático da regra:**\n\n{exemplo_salvo}")
 
-                    if st.button("🤖 Exemplo Prático com Gemini", key=f"gem_ex_{q_id}"):
-                        with st.spinner("Consultando o Gemini para gerar um exemplo prático do dia a dia..."):
-                            conn_art = db()
-                            art_obj = conn_art.execute("SELECT texto FROM artigos WHERE id = ?", (q["artigo_id"],)).fetchone()
-                            conn_art.close()
-
-                            # Usa somente o dispositivo que originou a questão.
-                            # Assim o Gemini não recebe o artigo inteiro e não responde de forma genérica.
-                            texto_lei_base = q["conteudo"] or (art_obj["texto"] if art_obj else q["enunciado"])
-
-                            exemplo_gerado = gerar_exemplo_pratico_gemini(num_disp, texto_lei_base)
-                            st.session_state[f"gemini_exemplo_{q_id}"] = exemplo_gerado
+                    if erro_exemplo:
+                        st.error(f"❌ Não foi possível consultar o Gemini: {erro_exemplo}")
 
                     if st.button("Próxima Questão ➡", key=f"next_{q_id}"):
                         st.session_state["q_index"] += 1
