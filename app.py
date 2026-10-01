@@ -210,10 +210,10 @@ def cadastrar_usuario(username, senha, autorizado=0):
         )
         conn.commit()
         conn.close()
-        return True, "Cadastro realizado! Aguarde a liberação do administrador para acessar o sistema." if autorizado == 0 else "Usuário criado e autorizado!"
+        return True, "Cadastro realizado! Aguarde a liberação do administrador para acessar o sistema." if autorizado == 0 else "Utilizador criado e autorizado!"
     except sqlite3.IntegrityError:
         conn.close()
-        return False, "Nome de usuário já existe!"
+        return False, "Nome de utilizador já existe!"
 
 def alterar_status_autorizacao(user_id, status):
     conn = db()
@@ -252,8 +252,8 @@ if not st.session_state["logged_in"]:
     tab_login, tab_cadastro = st.tabs(["🔑 Entrar", "📝 Criar Conta"])
 
     with tab_login:
-        u = st.text_input("Usuário / E-mail", key="login_user")
-        p = st.text_input("Senha", type="password", key="login_pass")
+        u = st.text_input("Utilizador / E-mail", key="login_user")
+        p = st.text_input("Palavra-passe", type="password", key="login_pass")
         if st.button("Entrar", type="primary"):
             user = autenticar_usuario(u, p)
             if user:
@@ -264,13 +264,13 @@ if not st.session_state["logged_in"]:
                     st.success(f"Bem-vindo, {user['username']}!")
                     st.rerun()
                 else:
-                    st.warning("⚠️ Sua conta aguarda aprovação do administrador. Entre em contato para liberação.")
+                    st.warning("⚠️ A sua conta aguarda aprovação do administrador. Entre em contacto para liberação.")
             else:
-                st.error("Usuário ou senha incorretos.")
+                st.error("Utilizador ou palavra-passe incorretos.")
 
     with tab_cadastro:
-        new_u = st.text_input("Escolha um Usuário / E-mail", key="cad_user")
-        new_p = st.text_input("Escolha uma Senha", type="password", key="cad_pass")
+        new_u = st.text_input("Escolha um Utilizador / E-mail", key="cad_user")
+        new_p = st.text_input("Escolha uma Palavra-passe", type="password", key="cad_pass")
         if st.button("Cadastrar Conta"):
             if new_u and new_p:
                 ok, msg = cadastrar_usuario(new_u, new_p, autorizado=0)
@@ -289,7 +289,7 @@ USERNAME = st.session_state["username"]
 is_admin_user = bool(USERNAME and USERNAME.strip().lower() == ADMIN_EMAIL)
 
 with st.sidebar:
-    st.markdown(f"👤 Usuário: **{USERNAME}**")
+    st.markdown(f"👤 Utilizador: **{USERNAME}**")
     if st.button("🚪 Sair / Logout"):
         st.session_state["logged_in"] = False
         st.session_state["user_id"] = None
@@ -297,12 +297,12 @@ with st.sidebar:
         st.rerun()
     st.divider()
 
-    # O Painel de Administração na Sidebar (opcional / atalho rápido)
+    # O Painel de Administração na Sidebar (atalho rápido)
     if is_admin_user:
         st.subheader("⚙ Atalho Admin")
-        with st.expander("👥 Gerenciar Usuários", expanded=False):
+        with st.expander("👥 Gerir Utilizadores", expanded=False):
             usuarios_cadastrados = listar_usuarios()
-            st.write(f"**Total de usuários:** {len(usuarios_cadastrados)}")
+            st.write(f"**Total de utilizadores:** {len(usuarios_cadastrados)}")
             for u in usuarios_cadastrados:
                 st.markdown(f"**{u['username']}**")
                 c_status, c_del = st.columns([3, 1])
@@ -316,9 +316,9 @@ with st.sidebar:
                         alterar_status_autorizacao(u['id'], 1 if novo_status else 0)
                         st.toast(f"Status de {u['username']} alterado!")
                         st.rerun()
-                    if c_del.button("❌", key=f"del_side_{u['id']}", help="Excluir Usuário"):
+                    if c_del.button("❌", key=f"del_side_{u['id']}", help="Excluir Utilizador"):
                         excluir_usuario(u['id'])
-                        st.success(f"Usuário {u['username']} removido!")
+                        st.success(f"Utilizador {u['username']} removido!")
                         st.rerun()
                 st.divider()
 
@@ -1079,7 +1079,7 @@ with tab1:
 
     st.subheader("Upload do PDF da Lei")
     law_title = st.text_input("Nome da Lei (ex: CF/88, Código Penal, etc.):")
-    uploaded_file = st.file_uploader("Escolha o arquivo PDF da lei", type=["pdf"])
+    uploaded_file = st.file_uploader("Escolha o ficheiro PDF da lei", type=["pdf"])
 
     if st.button("Processar e Salvar Lei"):
         if not disc_sel:
@@ -1087,7 +1087,7 @@ with tab1:
         elif not law_title:
             st.error("Informe o nome da lei!")
         elif not uploaded_file:
-            st.error("Envie um arquivo PDF!")
+            st.error("Envie um ficheiro PDF!")
         else:
             disc_id = [d["id"] for d in discs if d["nome"] == disc_sel][0]
             file_path = PDF_DIR / uploaded_file.name
@@ -1231,7 +1231,7 @@ with tab3:
 
             idx = st.session_state["q_index"]
             if idx >= len(questoes):
-                st.success("🎉 Você concluiu todas as questões deste caderno!")
+                st.success("🎉 Concluiu todas as questões deste caderno!")
                 if st.button("Reiniciar Caderno"):
                     st.session_state["q_index"] = 0
                     st.session_state["answered_q"] = {}
@@ -1254,7 +1254,7 @@ with tab3:
                 q_id = q["id"]
                 ja_respondida = q_id in st.session_state["answered_q"]
 
-                resp = st.radio("Sua resposta:", ["Certo", "Errado"], key=f"q_{q_id}", disabled=ja_respondida)
+                resp = st.radio("A sua resposta:", ["Certo", "Errado"], key=f"q_{q_id}", disabled=ja_respondida)
                 
                 if not ja_respondida:
                     if st.button("Responder", key=f"btn_{q_id}"):
@@ -1278,7 +1278,7 @@ with tab3:
                         st.rerun()
 
 with tab4:
-    st.header("Seu Desempenho")
+    st.header("O seu Desempenho")
     tot, ac, err, pct, b_disc, b_filt, b_cont, due = stats()
     
     c1, c2, c3, c4 = st.columns(4)
@@ -1301,7 +1301,7 @@ with tab4:
     st.subheader("⚠ Redefinir Estatísticas")
     if st.button("Zerar Histórico de Respostas / Limpar Dashboard", type="secondary"):
         zerar_historico_dashboard()
-        st.success("Seu histórico de respostas e indicadores do dashboard foram zerados!")
+        st.success("O seu histórico de respostas e indicadores do dashboard foram zerados!")
         st.rerun()
 
 with tab5:
@@ -1322,7 +1322,7 @@ with tab5:
         if revs:
             st.subheader("Questão para Revisão")
             st.markdown(revs["enunciado"])
-            resp_rev = st.radio("Sua resposta:", ["Certo", "Errado"], key="rev_ans")
+            resp_rev = st.radio("A sua resposta:", ["Certo", "Errado"], key="rev_ans")
             if st.button("Enviar Resposta da Revisão"):
                 val = 1 if resp_rev == "Certo" else 0
                 acertou = record_answer(revs["id"], val, cycle=2)
@@ -1334,21 +1334,21 @@ with tab5:
     else:
         st.success("Tudo em dia! Não há revisões pendentes para hoje.")
 
-# Se o usuário for administrador, renderiza a aba completa do Painel Admin em destaque na tela
+# Se o utilizador for administrador, renderiza a aba completa do Painel Admin em destaque na tela
 if is_admin_user:
     with tab_admin:
-        st.header("🛡️ Painel de Controle do Administrador")
-        st.write("Gerencie e aprove o acesso de novos usuários ao sistema de forma rápida e segura.")
+        st.header("🛡️️ Painel de Controlo do Administrador")
+        st.write("Gerencie e aprove o acesso de novos utilizadores ao sistema de forma rápida e segura.")
         
         usuarios_cadastrados = listar_usuarios()
-        st.info(f"**Total de usuários cadastrados no sistema:** {len(usuarios_cadastrados)}")
+        st.info(f"**Total de utilizadores cadastrados no sistema:** {len(usuarios_cadastrados)}")
         
         st.subheader("👥 Lista de Utilizadores e Autorizações")
         for u in usuarios_cadastrados:
             with st.container(border=True):
                 col_info, col_toggle, col_del = st.columns([3, 2, 1])
                 
-                col_info.markdown(f"**E-mail / Usuário:** `{u['username']}`")
+                col_info.markdown(f"**E-mail / Utilizador:** `{u['username']}`")
                 col_info.caption(f"Criado em: {u['criado_em'][:10]}")
                 
                 is_this_admin = u['username'].strip().lower() == ADMIN_EMAIL
@@ -1374,7 +1374,7 @@ if is_admin_user:
         with col_au1:
             adm_new_u = st.text_input("E-mail do Novo Utilizador", key="adm_u_tab")
         with col_au2:
-            adm_new_p = st.text_input("Senha Inicial", type="password", key="adm_p_tab")
+            adm_new_p = st.text_input("Palavra-passe Inicial", type="password", key="adm_p_tab")
             
         if st.button("Cadastrar e Autorizar Imediatamente", type="primary"):
             if adm_new_u and adm_new_p:
