@@ -524,8 +524,8 @@ def parse_and_store_pdf(pdf_path, law_id):
     full_text = "\n".join([page.get_text() for page in doc])
     doc.close()
 
-    # Expressão ajustada para capturar artigos no início de linhas para evitar citações cruzadas
-    artigo_regex = re.compile(r'(?m)^(Art\.\s*\d+[\w\d\-\.º]*)\b', re.IGNORECASE)
+    # Regex para capturar artigos apenas quando estão no começo de linha com pontuação/espaço formal
+    artigo_regex = re.compile(r'(?m)^(Art\.\s*\d+[\w\-]*[\.\º\ª]?)', re.IGNORECASE)
     partes = artigo_regex.split(full_text)
     artigos_brutos = []
 
@@ -537,8 +537,7 @@ def parse_and_store_pdf(pdf_path, law_id):
             if corpo_limpo and len(corpo_limpo) > 10:
                 artigos_brutos.append((num_art, corpo_limpo))
     else:
-        # Fallback caso não quebre em novas linhas
-        artigo_regex_alt = re.compile(r'(Art\.\s*\d+[\w\d\-\.º]*)', re.IGNORECASE)
+        artigo_regex_alt = re.compile(r'(Art\.\s*\d+[\w\-]*[\.\º\ª]?)', re.IGNORECASE)
         partes = artigo_regex_alt.split(full_text)
         for i in range(1, len(partes), 2):
             num_art = partes[i].strip()
@@ -610,7 +609,7 @@ def get_saved_filters(discipline_id=None):
 
 def obter_texto_caput(artigo_id):
     """
-    Recupera o texto do Caput (artigo principal) no banco de dados.
+    Recupera a cabeça (Caput) integral do artigo no banco de dados.
     """
     if not artigo_id:
         return None
@@ -620,18 +619,14 @@ def obter_texto_caput(artigo_id):
     if artigo and artigo["texto"]:
         texto_limpo = limpar_e_formatar_texto_lei(artigo["texto"])
         texto_normalizado = normalizar_estrutura_dispositivo(texto_limpo)
-        inicio = texto_normalizado
-        marcadores = []
-        for padrao in [
-            r'(?m)^§\s*\d+º?',
-            r'(?m)^Parágrafo único\b',
-            r'(?m)^(?:I|II|III|IV|V|VI|VII|VIII|IX|X|XI|XII|XIII|XIV|XV|XVI|XVII|XVIII|XIX|XX)\s*-'
-        ]:
-            m = re.search(padrao, texto_normalizado, re.IGNORECASE)
-            if m:
-                marcadores.append(m.start())
-        if marcadores:
-            inicio = texto_normalizado[:min(marcadores)].strip()
+        
+        # Procura o primeiro grande divisor estrutural do artigo (Parágrafo ou Inciso)
+        m = re.search(r'(?m)^(?:§\s*\d+º?|Parágrafo único\b|(?:I|II|III|IV|V|VI|VII|VIII|IX|X|XI|XII|XIII|XIV|XV|XVI|XVII|XVIII|XIX|XX)\s*-)', texto_normalizado, re.IGNORECASE)
+        if m:
+            inicio = texto_normalizado[:m.start()].strip()
+        else:
+            inicio = texto_normalizado.strip()
+            
         return inicio.strip()
     return None
 
@@ -1036,7 +1031,7 @@ with tab1:
 
             law_id = add_law(disc_id, law_title, uploaded_file.name)
             qtd = parse_and_store_pdf(file_path, law_id)
-            st.success(f"Lei processada com sucesso! {qtd} artigos importados. Artigos extensos serão fracionados automaticamente apenas na geração das questões.")
+            st.success(f"Lei processada com sucesso! {qtd} artigos importados. Reimporte ou gere novos cadernos para aplicar os ajustes.")
 
     st.divider()
     st.subheader("🗑️ Leis Cadastradas por Disciplina")
@@ -1183,7 +1178,7 @@ with tab3:
                 num_disp = q['artigo_numero']
                 st.markdown(f"**Dispositivo:** {num_disp}")
 
-                # Exibe o texto do Caput (artigo principal) quando o dispositivo for Parágrafo, Inciso ou Alínea
+                # Se for inciso, parágrafo ou alínea, carrega a cabeça integral do artigo (Caput)
                 is_subdevice = any(tag in num_disp.lower() for tag in ["§", "parágrafo", "inciso", "alínea", "alinea"]) or re.search(r'\b(I|II|III|IV|V|VI|VII|VIII|IX|X|XI|XII|XIII|XIV|XV|XVI|XVII|XVIII|XIX|XX)\b', num_disp)
                 if is_subdevice:
                     caput_text = obter_texto_caput(q["artigo_id"])
