@@ -186,6 +186,32 @@ def init_db():
     );
     """)
     
+    # Compatibilidade com versões anteriores do aplicativo:
+    # algumas versões chegaram a criar filtros_salvos com "discipline_id",
+    # enquanto a estrutura atual usa "disciplina_id".
+    # Corrigimos o banco automaticamente sem apagar os cadernos existentes.
+    try:
+        colunas_filtros = {
+            row["name"]
+            for row in conn.execute("PRAGMA table_info(filtros_salvos)").fetchall()
+        }
+
+        if "disciplina_id" not in colunas_filtros and "discipline_id" in colunas_filtros:
+            conn.execute(
+                "ALTER TABLE filtros_salvos RENAME COLUMN discipline_id TO disciplina_id"
+            )
+            colunas_filtros.add("disciplina_id")
+
+        if "disciplina_id" not in colunas_filtros:
+            conn.execute(
+                "ALTER TABLE filtros_salvos ADD COLUMN disciplina_id INTEGER"
+            )
+    except sqlite3.OperationalError:
+        # A tabela normalmente já existe com a estrutura correta.
+        # Se o SQLite não permitir alguma operação de migração, a estrutura
+        # original continua preservada e o erro ficará registrado no log.
+        logging.exception("Falha na migração da tabela filtros_salvos.")
+
     try:
         conn.execute("ALTER TABLE usuarios ADD COLUMN autorizado INTEGER DEFAULT 0")
     except sqlite3.OperationalError:
@@ -569,12 +595,29 @@ def get_articles(law_id):
     return rows
 
 def save_filter(name, discipline_id, law_id, article_ids, qtd_questoes):
+    """
+    Salva um caderno/filtro.
+
+    IMPORTANTE: a tabela filtros_salvos foi criada com a coluna
+    disciplina_id. O INSERT precisa usar exatamente esse nome.
+    """
     conn = db()
     art_str = ",".join(map(str, article_ids))
+
     cur = conn.execute("""
-        INSERT INTO filtros_salvos (usuario_id, nome, discipline_id, lei_id, artigos_ids, qtd_questoes, criado_em)
+        INSERT INTO filtros_salvos
+            (usuario_id, nome, disciplina_id, lei_id, artigos_ids, qtd_questoes, criado_em)
         VALUES (?, ?, ?, ?, ?, ?, ?)
-    """, (USER_ID, name, discipline_id, law_id, art_str, qtd_questoes, datetime.now().isoformat()))
+    """, (
+        USER_ID,
+        name.strip(),
+        discipline_id,
+        law_id,
+        art_str,
+        int(qtd_questoes),
+        datetime.now().isoformat()
+    ))
+
     filter_id = cur.lastrowid
     conn.commit()
     conn.close()
@@ -1148,9 +1191,38 @@ with tab2:
                 else:
                     with st.spinner("Aguarde sincronização... Gerando questões e estruturando o caderno..."):
                         art_ids = [art_dict[k] for k in selected_arts]
-                        f_id = save_filter(filter_name, d_id, l_id, art_ids, qtd_q)
-                        qtd_geradas = generate_questions_for_articles(d_id, l_id, art_ids, qtd_q, filter_id=f_id, motor_ia=motor_ia)
-                    st.success(f"Caderno '{filter_name}' criado com sucesso! {qtd_geradas} questões geradas.")
+
+                        try:
+                            f_id = save_filter(
+                                filter_name,
+                                d_id,
+                                l_id,
+                                art_ids,
+                                qtd_q
+                            )
+
+                            qtd_geradas = generate_questions_for_articles(
+                                d_id,
+                                l_id,
+                                art_ids,
+                                qtd_q,
+                                filter_id=f_id,
+                                motor_ia=motor_ia
+                            )
+
+                            st.success(
+                                f"Caderno '{filter_name}' criado com sucesso! "
+                                f"{qtd_geradas} questões geradas."
+                            )
+                        except sqlite3.Error as e:
+                            logging.exception(
+                                "Erro ao criar caderno/filtro: %s",
+                                e
+                            )
+                            st.error(
+                                "Não foi possível criar o caderno. "
+                                "O banco de dados apresentou um erro ao salvar o filtro."
+                            )
 
     st.divider()
     st.subheader("🗑 Meus Cadernos / Filtros Salvos por Disciplina")
