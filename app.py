@@ -1205,7 +1205,7 @@ with tab3:
     saved_filters = get_saved_filters(selected_disc_id)
     
     if not saved_filters:
-        st.info("Nenhum caderno de questões encontrado para a disciplina selecionada.")
+        st.info("Nenum caderno de questões encontrado para a disciplina selecionada.")
     else:
         f_options = {f"{f['nome']} ({f['disciplina']} - {f['lei']})": f["id"] for f in saved_filters}
         sel_filter_label = st.selectbox("Selecione o Caderno para Treinar:", list(f_options.keys()), key="res_caderno_filter")
