@@ -685,178 +685,47 @@ def obter_rotulo_dispositivo(numero_dispositivo):
     else:
         return f"Artigo ({numero_dispositivo})"
 
-def chamar_gemini_com_retry(prompt, max_tentativas=2):
+def gerar_exemplo_pratico_local(dispositivo, texto_lei):
     """
-    Consulta a Gemini API usando a Interactions API oficial e o
-    modelo Gemini 3.8 Flash.
+    Gera um exemplo prático LOCAL, sem API externa.
 
-    A chamada é feita diretamente pelo endpoint oficial para evitar
-    incompatibilidade entre versões antigas/novas da SDK google-genai.
+    A regra é construída exclusivamente a partir do dispositivo legal já
+    armazenado no banco. Não usa Gemini, OpenAI, internet, chave de API ou
+    qualquer serviço pago/gratuito sujeito a quota.
     """
-    gemini_key = st.secrets.get("GEMINI_API_KEY", os.getenv("GEMINI_API_KEY"))
-
-    if not gemini_key:
-        return None, "A chave da API do Gemini (GEMINI_API_KEY) não está configurada."
-
-    tentativa = 0
-    espera = 2
-
-    while tentativa < max_tentativas:
-        try:
-            import requests
-
-            url = "https://generativelanguage.googleapis.com/v1beta/interactions"
-            headers = {
-                "x-goog-api-key": gemini_key,
-                "Content-Type": "application/json",
-            }
-            payload = {
-                "model": "gemini-3.8-flash",
-                "input": prompt,
-                "generation_config": {
-                    "thinking_level": "medium"
-                },
-            }
-
-            response = requests.post(
-                url,
-                headers=headers,
-                json=payload,
-                timeout=90
-            )
-
-            if not response.ok:
-                try:
-                    erro_json = response.json()
-                    erro_msg = erro_json.get("error", {}).get("message")
-                    if erro_msg:
-                        return None, f"{response.status_code} {response.reason}: {erro_msg}"
-                except Exception:
-                    pass
-
-                return None, f"{response.status_code} {response.reason}: {response.text[:500]}"
-
-            data = response.json()
-
-            # A Interactions API normalmente devolve output_text.
-            texto = data.get("output_text")
-            if texto and str(texto).strip():
-                return str(texto).strip(), None
-
-            # Compatibilidade com respostas em blocos de saída.
-            blocos = data.get("output") or []
-            partes = []
-
-            for bloco in blocos:
-                if isinstance(bloco, dict):
-                    texto_bloco = bloco.get("text")
-                    if texto_bloco:
-                        partes.append(str(texto_bloco))
-
-                    content = bloco.get("content")
-                    if isinstance(content, list):
-                        for item in content:
-                            if isinstance(item, dict) and item.get("text"):
-                                partes.append(str(item["text"]))
-
-            texto = "\n".join(partes).strip()
-
-            if texto:
-                return texto, None
-
-            return None, "O Gemini respondeu, mas não retornou texto no campo de saída."
-
-        except requests.exceptions.Timeout:
-            tentativa += 1
-            if tentativa < max_tentativas:
-                time.sleep(espera)
-                espera *= 2
-                continue
-            return None, "Tempo limite excedido ao consultar o Gemini."
-
-        except requests.exceptions.RequestException as e:
-            return None, f"Erro de conexão com o Gemini: {e}"
-
-        except Exception as e:
-            err_str = str(e)
-
-            if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
-                return None, "429 RESOURCE_EXHAUSTED: limite da API do Gemini atingido."
-
-            if "503" in err_str or "UNAVAILABLE" in err_str or "high demand" in err_str:
-                tentativa += 1
-                if tentativa < max_tentativas:
-                    time.sleep(espera)
-                    espera *= 2
-                    continue
-
-            return None, err_str
-
-    return None, "Limite de tentativas excedido no servidor do Gemini."
-
-
-def gerar_exemplo_pratico_gemini(dispositivo, texto_lei):
-    """
-    Consulta REAL o Gemini pela API oficial e gera um exemplo prático
-    específico para o dispositivo legal da questão.
-
-    Não existe fallback genérico: se a API não responder, o erro é
-    devolvido para que o usuário saiba que a consulta não foi realizada.
-    """
-    gemini_key = st.secrets.get("GEMINI_API_KEY", os.getenv("GEMINI_API_KEY"))
-
-    if not gemini_key:
-        return None, "A chave GEMINI_API_KEY não está configurada."
-
     dispositivo = (dispositivo or "").strip()
-    texto_lei = (texto_lei or "").strip()
+    texto_lei = limpar_e_formatar_texto_lei(texto_lei or "").strip()
 
     if not dispositivo or not texto_lei:
         return None, "Não foi possível identificar o dispositivo e o texto legal da questão."
 
-    prompt = f"""
-Você é um professor de Direito para concursos públicos e deve criar UM exemplo
-prático da vida real para ajudar o aluno a memorizar EXATAMENTE o dispositivo
-legal abaixo.
+    # O texto do dispositivo é preservado e usado como fundamento do caso.
+    # Os modelos abaixo apenas contextualizam a regra; não acrescentam
+    # artigo, prazo, exceção ou requisito jurídico que não esteja no texto.
+    t = texto_lei.rstrip(".")
+    tl = t.lower()
 
-OBJETIVO:
-O exemplo precisa permitir que o aluno reconheça a regra deste dispositivo
-em uma situação concreta. Não quero uma explicação genérica sobre a lei.
+    if any(x in tl for x in ["deverá", "deve", "obrigatório", "obrigatoriamente"]):
+        sujeito = "João, que está na situação descrita pela norma"
+        acao = "precisa cumprir a conduta prevista no dispositivo"
+        frase = f"{sujeito} encontra-se exatamente na situação abrangida pelo {dispositivo}. Nesse caso, {acao}. A aplicação da regra decorre do próprio texto legal: \"{t}.\""
+    elif any(x in tl for x in ["poderá", "pode", "facultado", "facultativamente"]):
+        sujeito = "Maria, que está na situação descrita pela norma"
+        acao = "pode exercer a faculdade prevista no dispositivo, sem transformar essa faculdade em obrigação"
+        frase = f"Maria encontra-se na situação prevista pelo {dispositivo}. Nesse caso, {acao}. O ponto prático é perceber que a situação concreta se enquadra diretamente na regra: \"{t}.\""
+    elif any(x in tl for x in ["vedado", "proibido", "não poderá", "não pode"]):
+        sujeito = "Carlos, que está na situação descrita pela norma"
+        acao = "não pode praticar a conduta que o dispositivo veda"
+        frase = f"Carlos encontra-se na situação abrangida pelo {dispositivo} e pretende praticar a conduta mencionada na regra. Nesse caso, {acao}. A proibição aplicada ao caso é exatamente a prevista no texto: \"{t}.\""
+    elif any(x in tl for x in ["prazo", "dias", "horas", "minutos", "até "]):
+        frase = f"Ana está diante da situação regulada pelo {dispositivo} e precisa observar o prazo ou marco temporal expressamente previsto na regra. Na prática, ela deve aplicar exatamente o que consta no dispositivo, sem acrescentar ou retirar tempo: \"{t}.\""
+    elif any(x in tl for x in ["mediante", "autorização", "consentimento", "requerimento"]):
+        frase = f"Pedro encontra-se na situação disciplinada pelo {dispositivo}. Para aplicar a regra ao caso concreto, ele deve observar a condição expressamente indicada no próprio dispositivo. Assim, a conduta é definida por esta regra: \"{t}.\""
+    else:
+        frase = f"João encontra-se em uma situação concreta que corresponde à hipótese prevista pelo {dispositivo}. Ao analisar o caso, a regra deve ser aplicada exatamente como está escrita no dispositivo: \"{t}.\""
 
-REGRAS OBRIGATÓRIAS:
-1. Use exclusivamente o conteúdo do dispositivo fornecido.
-2. O exemplo deve aplicar diretamente a regra escrita no dispositivo.
-3. Se o dispositivo tiver condição, obrigação, proibição, faculdade, prazo,
-   destinatário, situação ou procedimento expressamente escrito, isso deve
-   aparecer no exemplo quando for necessário para demonstrar a aplicação.
-4. Não invente artigo, prazo, exceção, autoridade, requisito, penalidade ou
-   consequência que não esteja no dispositivo fornecido.
-5. Não use outro artigo ou conhecimento jurídico externo para completar a resposta.
-6. Se o dispositivo for um inciso, parágrafo ou alínea, o exemplo deve demonstrar
-   especificamente aquele inciso, parágrafo ou alínea, e não apenas o artigo inteiro.
-7. Prefira nomes e uma situação concreta (por exemplo: "João...", "um servidor...",
-   "uma empresa...", "um candidato...") quando isso ajudar a tornar o caso real.
-8. Explique no próprio exemplo qual fato concreto faz a regra do dispositivo ser aplicada.
-9. Responda em NO MÁXIMO 2 parágrafos curtos.
-10. Não faça lista, tópicos, título, introdução ou conclusão.
-11. Não diga "imagine uma situação" de forma genérica. Comece diretamente pelo caso concreto.
-12. Não repita simplesmente o texto da lei; transforme a regra em uma situação prática.
+    return frase, None
 
-DISPOSITIVO:
-{dispositivo}
-
-TEXTO EXATO DO DISPOSITIVO:
-{texto_lei}
-
-Agora responda SOMENTE com o exemplo prático específico, em no máximo 2 parágrafos.
-"""
-
-    resposta, erro = chamar_gemini_com_retry(prompt)
-
-    if resposta and resposta.strip():
-        return resposta.strip(), None
-
-    return None, erro or "O Gemini não retornou uma resposta."
 
 def gerar_explicacao_humana(art_num, texto_original, foi_correto=False, tipo_troca=None, texto_modificado=None):
     if foi_correto:
@@ -1333,7 +1202,7 @@ with tab3:
             # Limpa exemplos gerados anteriormente para não misturar respostas
             # de outro caderno/questão.
             for key in list(st.session_state.keys()):
-                if key.startswith("gemini_exemplo_") or key.startswith("gemini_erro_"):
+                if key.startswith("exemplo_pratico_") or key.startswith("exemplo_pratico_erro_"):
                     del st.session_state[key]
 
         conn = db()
@@ -1356,7 +1225,7 @@ with tab3:
                     st.session_state["answered_q"] = {}
 
                     for key in list(st.session_state.keys()):
-                        if key.startswith("gemini_exemplo_") or key.startswith("gemini_erro_"):
+                        if key.startswith("exemplo_pratico_") or key.startswith("exemplo_pratico_erro_"):
                             del st.session_state[key]
 
                     st.rerun()
@@ -1397,43 +1266,40 @@ with tab3:
                         st.error("❌ Resposta Incorreta!")
                     st.markdown(f"{q['explicacao']}")
 
-                    exemplo_salvo = st.session_state.get(f"gemini_exemplo_{q_id}")
-                    erro_exemplo = st.session_state.get(f"gemini_erro_{q_id}")
+                    exemplo_salvo = st.session_state.get(f"exemplo_pratico_{q_id}")
+                    erro_exemplo = st.session_state.get(f"exemplo_pratico_erro_{q_id}")
 
-                    # O exemplo só existe depois que a questão foi respondida.
+                    # Este botão só aparece depois que a questão foi respondida.
+                    # A geração é 100% local: não consulta Gemini nem qualquer API.
                     if st.button(
-                        "🤖 Consultar Gemini — Exemplo Prático",
-                        key=f"gem_ex_{q_id}",
+                        "💡 Exemplo Prático da Regra",
+                        key=f"exemplo_pratico_btn_{q_id}",
                         type="secondary"
                     ):
-                        with st.spinner("Consultando o Gemini com o dispositivo legal desta questão..."):
-                            # O texto enviado ao Gemini é o dispositivo que originou
-                            # a questão, e não o enunciado da pergunta.
+                        with st.spinner("Montando um exemplo prático a partir do dispositivo legal..."):
                             texto_lei_base = (q["conteudo"] or "").strip()
-
-                            exemplo_gerado, erro_gemini = gerar_exemplo_pratico_gemini(
+                            exemplo_gerado, erro_local = gerar_exemplo_pratico_local(
                                 num_disp,
                                 texto_lei_base
                             )
 
                             if exemplo_gerado:
-                                st.session_state[f"gemini_exemplo_{q_id}"] = exemplo_gerado
-                                st.session_state.pop(f"gemini_erro_{q_id}", None)
+                                st.session_state[f"exemplo_pratico_{q_id}"] = exemplo_gerado
+                                st.session_state.pop(f"exemplo_pratico_erro_{q_id}", None)
                             else:
-                                st.session_state.pop(f"gemini_exemplo_{q_id}", None)
-                                st.session_state[f"gemini_erro_{q_id}"] = erro_gemini
+                                st.session_state.pop(f"exemplo_pratico_{q_id}", None)
+                                st.session_state[f"exemplo_pratico_erro_{q_id}"] = erro_local
 
                         st.rerun()
 
-                    # O resultado é mostrado somente depois da consulta terminar.
-                    exemplo_salvo = st.session_state.get(f"gemini_exemplo_{q_id}")
-                    erro_exemplo = st.session_state.get(f"gemini_erro_{q_id}")
+                    exemplo_salvo = st.session_state.get(f"exemplo_pratico_{q_id}")
+                    erro_exemplo = st.session_state.get(f"exemplo_pratico_erro_{q_id}")
 
                     if exemplo_salvo:
                         st.info(f"📌 **Exemplo Prático da regra:**\n\n{exemplo_salvo}")
 
                     if erro_exemplo:
-                        st.error(f"❌ Não foi possível consultar o Gemini: {erro_exemplo}")
+                        st.error(f"❌ Não foi possível gerar o exemplo: {erro_exemplo}")
 
                     if st.button("Próxima Questão ➡", key=f"next_{q_id}"):
                         st.session_state["q_index"] += 1
