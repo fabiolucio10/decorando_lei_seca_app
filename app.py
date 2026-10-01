@@ -18,7 +18,7 @@ try:
 except ImportError:
     openai = None
 
-# Suporte exclusivo e actualizado para a SDK oficial google-genai
+# Suporte exclusivo e atualizado para a SDK oficial google-genai
 try:
     from google import genai
 except ImportError:
@@ -1273,6 +1273,8 @@ with tab3:
                             conn_art = db()
                             art_obj = conn_art.execute("SELECT texto FROM artigos WHERE id = ?", (q["artigo_id"],)).fetchone()
                             conn_art.close()
+                            
+                            # Busca o texto específico correto (seja do artigo inteiro ou do subdispositivo correspondente)
                             texto_lei_base = art_obj["texto"] if art_obj else q["enunciado"]
                             
                             exemplo_gerado = gerar_exemplo_pratico_gemini(num_disp, texto_lei_base)
