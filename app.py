@@ -689,8 +689,7 @@ def obter_rotulo_dispositivo(numero_dispositivo):
         return f"Artigo ({numero_dispositivo})"
 
 def chamar_gemini_com_retry(prompt, max_tentativas=2):
-    """Executa a chamada ao Gemini com reiteração automática para erros temporários. 
-    Se houver esgotamento de cota (429), retorna fallback limpo imediatamente."""
+    """Executa a chamada ao Gemini com suporte a google-genai atualizado e retry automático."""
     gemini_key = st.secrets.get("GEMINI_API_KEY", os.getenv("GEMINI_API_KEY"))
     if not gemini_key or not genai:
         return None, "⚠️ A chave da API do Gemini (GEMINI_API_KEY) não está configurada."
@@ -702,18 +701,17 @@ def chamar_gemini_com_retry(prompt, max_tentativas=2):
             if hasattr(genai, "Client"):
                 client = genai.Client(api_key=gemini_key)
                 response = client.models.generate_content(
-                    model="models/gemini-3.8-flash",
+                    model="gemini-2.5-flash",
                     contents=prompt
                 )
                 return response.text, None
             else:
                 genai.configure(api_key=gemini_key)
-                model = genai.GenerativeModel("models/gemini-3.8-flash")
+                model = genai.GenerativeModel("gemini-2.5-flash")
                 response = model.generate_content(prompt)
                 return response.text, None
         except Exception as e:
             err_str = str(e)
-            # Se for esgotamento de cota (429), não adianta insistir com retry, retorna o erro específico
             if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
                 return None, "429 RESOURCE_EXHAUSTED"
             
@@ -737,7 +735,6 @@ def gerar_exemplo_pratico_gemini(dispositivo, texto_lei):
     if resposta:
         return resposta
     
-    # Fallback automático elegante caso a API atinja cota (429) ou indisponibilidade (503)
     return (
         "A aplicação prática deste dispositivo ocorre nas rotinas e atos oficiais de investigação criminal "
         "da polícia judiciária, visando garantir a legalidade, a segurança jurídica e a padronização dos procedimentos no inquérito policial."
@@ -873,7 +870,6 @@ def generate_questions_for_articles(discipline_id, law_id, article_ids, qtd_tota
                 gabarito = 1 if is_correct else 0
                 explicacao = gerar_explicacao_humana(numero_dispositivo, text, is_correct)
             else:
-                # Se falhar por cota ou indisponibilidade, aplica regra padrão perfeitamente
                 if is_correct:
                     enunciado = f"De acordo com o **{rotulo_dispositivo}**:\n\n\"{text}\""
                     gabarito = 1
@@ -1302,7 +1298,6 @@ with tab3:
                         st.error("❌ Resposta Incorreta!")
                     st.markdown(f"{q['explicacao']}")
 
-                    # Botão para buscar exemplo prático via Gemini
                     if st.button("🤖 Exemplo Prático com Gemini", key=f"gem_ex_{q_id}"):
                         with st.spinner("Consultando o Gemini para gerar um exemplo prático do dia a dia..."):
                             conn_art = db()
