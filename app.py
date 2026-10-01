@@ -687,6 +687,34 @@ def obter_rotulo_dispositivo(numero_dispositivo):
     else:
         return f"Artigo ({numero_dispositivo})"
 
+def gerar_exemplo_pratico_gemini(dispositivo, texto_lei):
+    gemini_key = st.secrets.get("GEMINI_API_KEY", os.getenv("GEMINI_API_KEY"))
+    if not gemini_key or not genai:
+        return "⚠️ A chave da API do Gemini (GEMINI_API_KEY) não está configurada nos segredos ou variáveis de ambiente."
+    
+    try:
+        prompt = (
+            "Com base estritamente na letra da lei abaixo, crie de forma objetiva e prática "
+            "um exemplo do dia a dia que ilustre perfeitamente a aplicação deste dispositivo legal.\n\n"
+            f"Dispositivo: {dispositivo}\n"
+            f"Texto da Lei: {texto_lei}"
+        )
+        
+        if hasattr(genai, "Client"):
+            client = genai.Client(api_key=gemini_key)
+            response = client.models.generate_content(
+                model="models/gemini-2.5-flash",
+                contents=prompt
+            )
+            return response.text
+        else:
+            genai.configure(api_key=gemini_key)
+            model = genai.GenerativeModel("models/gemini-2.5-flash")
+            response = model.generate_content(prompt)
+            return response.text
+    except Exception as e:
+        return f"❌ Erro ao consultar o Gemini: {e}"
+
 def gerar_explicacao_humana(art_num, texto_original, foi_correto=False, tipo_troca=None, texto_modificado=None):
     txt_lower = texto_original.lower()
 
@@ -817,13 +845,13 @@ def generate_questions_for_articles(discipline_id, law_id, article_ids, qtd_tota
                     if hasattr(genai, "Client"):
                         client = genai.Client(api_key=gemini_key)
                         response = client.models.generate_content(
-                            model="models/gemini-3.8-flash",
+                            model="models/gemini-2.5-flash",
                             contents=prompt
                         )
                         enunciado = response.text
                     else:
                         genai.configure(api_key=gemini_key)
-                        model = genai.GenerativeModel("models/gemini-3.8-flash")
+                        model = genai.GenerativeModel("models/gemini-2.5-flash")
                         response = model.generate_content(prompt)
                         enunciado = response.text
                         
@@ -1270,7 +1298,19 @@ with tab3:
                         st.error("❌ Resposta Incorreta!")
                     st.markdown(f"{q['explicacao']}")
 
-                    if st.button("Próxima Questão ➡️", key=f"next_{q_id}"):
+                    # Botão para buscar exemplo prático via Gemini
+                    if st.button("🤖 Exemplo Prático com Gemini", key=f"gem_ex_{q_id}"):
+                        with st.spinner("Consultando o Gemini para gerar um exemplo prático do dia a dia..."):
+                            # Obtém o texto literal do artigo associado à questão
+                            conn_art = db()
+                            art_obj = conn_art.execute("SELECT texto FROM artigos WHERE id = ?", (q["artigo_id"],)).fetchone()
+                            conn_art.close()
+                            texto_lei_base = art_obj["texto"] if art_obj else q["enunciado"]
+                            
+                            exemplo_gerado = gerar_exemplo_pratico_gemini(num_disp, texto_lei_base)
+                            st.info(f"📌 **Exemplo Prático (Gerado pelo Gemini):**\n\n{exemplo_gerado}")
+
+                    if st.button("Próxima Questão ➡️️", key=f"next_{q_id}"):
                         st.session_state["q_index"] += 1
                         st.rerun()
 
