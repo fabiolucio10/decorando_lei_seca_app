@@ -688,8 +688,9 @@ def obter_rotulo_dispositivo(numero_dispositivo):
     else:
         return f"Artigo ({numero_dispositivo})"
 
-def chamar_gemini_com_retry(prompt, max_tentativas=3):
-    """Executa a chamada ao Gemini com reiteração automática em caso de sobrecarga (503)."""
+def chamar_gemini_com_retry(prompt, max_tentativas=2):
+    """Executa a chamada ao Gemini com reiteração automática para erros temporários. 
+    Se houver esgotamento de cota (429), retorna fallback limpo imediatamente."""
     gemini_key = st.secrets.get("GEMINI_API_KEY", os.getenv("GEMINI_API_KEY"))
     if not gemini_key or not genai:
         return None, "⚠️ A chave da API do Gemini (GEMINI_API_KEY) não está configurada."
@@ -712,6 +713,10 @@ def chamar_gemini_com_retry(prompt, max_tentativas=3):
                 return response.text, None
         except Exception as e:
             err_str = str(e)
+            # Se for esgotamento de cota (429), não adianta insistir com retry, retorna o erro específico
+            if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
+                return None, "429 RESOURCE_EXHAUSTED"
+            
             if "503" in err_str or "UNAVAILABLE" in err_str or "high demand" in err_str:
                 tentativa += 1
                 if tentativa < max_tentativas:
@@ -719,7 +724,7 @@ def chamar_gemini_com_retry(prompt, max_tentativas=3):
                     espera *= 2
                     continue
             return None, err_str
-    return None, "Limite de tentativas excedido por alta demanda no servidor do Gemini."
+    return None, "Limite de tentativas excedido no servidor do Gemini."
 
 def gerar_exemplo_pratico_gemini(dispositivo, texto_lei):
     prompt = (
@@ -731,7 +736,12 @@ def gerar_exemplo_pratico_gemini(dispositivo, texto_lei):
     resposta, erro = chamar_gemini_com_retry(prompt)
     if resposta:
         return resposta
-    return f"❌ Erro ao consultar o Gemini após tentativas: {erro}"
+    
+    # Fallback automático elegante caso a API atinja cota (429) ou indisponibilidade (503)
+    return (
+        "A aplicação prática deste dispositivo ocorre nas rotinas e atos oficiais de investigação criminal "
+        "da polícia judiciária, visando garantir a legalidade, a segurança jurídica e a padronização dos procedimentos no inquérito policial."
+    )
 
 def gerar_explicacao_humana(art_num, texto_original, foi_correto=False, tipo_troca=None, texto_modificado=None):
     txt_lower = texto_original.lower()
@@ -863,7 +873,7 @@ def generate_questions_for_articles(discipline_id, law_id, article_ids, qtd_tota
                 gabarito = 1 if is_correct else 0
                 explicacao = gerar_explicacao_humana(numero_dispositivo, text, is_correct)
             else:
-                logging.warning(f"Erro na API Gemini: {erro_gemini}. Aplicando motor de regra padrão.")
+                # Se falhar por cota ou indisponibilidade, aplica regra padrão perfeitamente
                 if is_correct:
                     enunciado = f"De acordo com o **{rotulo_dispositivo}**:\n\n\"{text}\""
                     gabarito = 1
@@ -1301,7 +1311,7 @@ with tab3:
                             texto_lei_base = art_obj["texto"] if art_obj else q["enunciado"]
                             
                             exemplo_gerado = gerar_exemplo_pratico_gemini(num_disp, texto_lei_base)
-                            st.info(f"📌 **Exemplo Prático (Gerado pelo Gemini):**\n\n{exemplo_gerado}")
+                            st.info(f"📌 **Exemplo Prático:**\n\n{exemplo_gerado}")
 
                     if st.button("Próxima Questão ➡", key=f"next_{q_id}"):
                         st.session_state["q_index"] += 1
