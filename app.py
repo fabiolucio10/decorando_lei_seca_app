@@ -18,14 +18,11 @@ try:
 except ImportError:
     openai = None
 
-# Suporte ao SDK atualizado google-genai e ao legado google.generativeai
+# Suporte exclusivo e actualizado para a SDK oficial google-genai
 try:
     from google import genai
 except ImportError:
-    try:
-        import google.generativeai as genai
-    except ImportError:
-        genai = None
+    genai = None
 
 APP_DIR = Path(__file__).parent
 DB_FILE = APP_DIR / "decorando_lei.db"
@@ -691,24 +688,18 @@ def obter_rotulo_dispositivo(numero_dispositivo):
 def chamar_gemini_com_retry(prompt, max_tentativas=2):
     gemini_key = st.secrets.get("GEMINI_API_KEY", os.getenv("GEMINI_API_KEY"))
     if not gemini_key or not genai:
-        return None, "⚠️ A chave da API do Gemini (GEMINI_API_KEY) não está configurada."
+        return None, "⚠️ A chave da API do Gemini (GEMINI_API_KEY) não está configurada ou a biblioteca google-genai não foi carregada."
 
     tentativa = 0
     espera = 2
     while tentativa < max_tentativas:
         try:
-            if hasattr(genai, "Client"):
-                client = genai.Client(api_key=gemini_key)
-                response = client.models.generate_content(
-                    model="gemini-2.5-flash",
-                    contents=prompt
-                )
-                return response.text, None
-            else:
-                genai.configure(api_key=gemini_key)
-                model = genai.GenerativeModel("gemini-2.5-flash")
-                response = model.generate_content(prompt)
-                return response.text, None
+            client = genai.Client(api_key=gemini_key)
+            response = client.models.generate_content(
+                model="gemini-2.5-flash",
+                contents=prompt
+            )
+            return response.text, None
         except Exception as e:
             err_str = str(e)
             if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
@@ -724,7 +715,6 @@ def chamar_gemini_com_retry(prompt, max_tentativas=2):
     return None, "Limite de tentativas excedido no servidor do Gemini."
 
 def gerar_exemplo_pratico_gemini(dispositivo, texto_lei):
-    # Prompt idêntico ao modelo manual aprovado pelo utilizador para evitar respostas genéricas
     prompt = (
         "Crie um exemplo bem curto e direto (baseado estritamente no dispositivo legal abaixo). "
         "Apresente estritamente no formato exato:\n"
