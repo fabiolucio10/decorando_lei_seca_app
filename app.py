@@ -961,16 +961,11 @@ def record_answer(question_id, answer, cycle):
         idx = min(len(intervals)-1, hits-1)
         next_date = now + timedelta(days=intervals[idx])
 
-    if old:
-        conn.execute("""
-            UPDATE revisoes SET prioridade=?, proxima_revisao=?, erros=?, acertos=?
-            WHERE usuario_id=? AND questao_id=?
-        """, (priority, next_date.isoformat(), errors, hits, USER_ID, question_id))
-    else:
-        conn.execute("""
-            INSERT INTO revisoes(usuario_id, questao_id, prioridade, proxima_revisao, erros, acertos)
-            VALUES(?, ?, ?, ?, ?, ?)
-        """, (USER_ID, questao_id, priority, next_date.isoformat(), errors, hits))
+    # Utiliza INSERT OR REPLACE para atualizar ou inserir sem gerar erro de chave duplicada
+    conn.execute("""
+        INSERT OR REPLACE INTO revisoes(usuario_id, questao_id, prioridade, proxima_revisao, erros, acertos)
+        VALUES(?, ?, ?, ?, ?, ?)
+    """, (USER_ID, question_id, priority, next_date.isoformat(), errors, hits))
 
     conn.commit()
     conn.close()
@@ -1052,7 +1047,7 @@ if is_admin_user:
         "📝 Resolver Questões",
         "📊 Desempenho",
         "🔄 Revisões",
-        "🛡️️ Painel Admin"
+        "🛡 Painel Admin"
     ])
 else:
     tab1, tab2, tab3, tab4, tab5 = st.tabs([
@@ -1168,7 +1163,6 @@ with tab2:
                 if not filter_name:
                     st.error("Informe um nome para o seu caderno!")
                 else:
-                    # Exibe a mensagem/spinner de sincronização enquanto gera e estrutura
                     with st.spinner("Aguarde sincronização... Gerando questões e estruturando o caderno..."):
                         art_ids = [art_dict[k] for k in selected_arts]
                         f_id = save_filter(filter_name, d_id, l_id, art_ids, qtd_q)
