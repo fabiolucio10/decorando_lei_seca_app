@@ -17,6 +17,7 @@ try:
 except ImportError:
     openai = None
 
+# Suporte ao SDK atualizado google-genai e ao legado google.generativeai
 try:
     from google import genai
 except ImportError:
@@ -30,8 +31,10 @@ DB_FILE = APP_DIR / "decorando_lei.db"
 PDF_DIR = APP_DIR / "leis_importadas"
 PDF_DIR.mkdir(exist_ok=True)
 
+# Definição do e-mail de administrador exclusivo
 ADMIN_EMAIL = "fabiolucio277@gmail.com"
 
+# Configuração da página - Mantém a barra lateral sempre expandida por padrão
 st.set_page_config(
     page_title="Decorando Lei Seca",
     page_icon="⚖",
@@ -39,6 +42,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
+# Estilização CSS aprimorada para justificar os textos e alinhar o layout
 st.markdown("""
     <style>
     #MainMenu {visibility: hidden;}
@@ -53,10 +57,12 @@ st.markdown("""
     button[title="Gerenciar aplicativo"] {display: none !important;}
     div[class^="stActionButton"] {display: none !important;}
     
+    /* Garante alinhamento justificado e legibilidade perfeita dos enunciados e citações */
     .stMarkdown, p, div[data-testid="stMarkdownContainer"] {
         text-align: justify !important;
     }
     
+    /* Garante que o botão de alternar/expandir a sidebar permaneça sempre visível */
     [data-testid="stSidebarCollapseButton"] {display: block !important; visibility: visible !important;}
     [data-testid="stHeader"] {background-color: transparent !important; z-index: 999;}
     </style>
@@ -835,6 +841,7 @@ def generate_questions_for_articles(discipline_id, law_id, article_ids, qtd_tota
                         gabarito = 0
                         explicacao = gerar_explicacao_humana(numero_dispositivo, text, False, tipo_troca, modified_text)
             else:
+                logging.warning("Biblioteca ou Chave do Gemini (GEMINI_API_KEY) não configurada.")
                 if is_correct:
                     enunciado = f"De acordo com o **{rotulo_dispositivo}**:\n\n\"{text}\""
                     gabarito = 1
@@ -1263,7 +1270,7 @@ with tab3:
                         st.error("❌ Resposta Incorreta!")
                     st.markdown(f"{q['explicacao']}")
 
-                    if st.button("Próxima Questão ➡️️", key=f"next_{q_id}"):
+                    if st.button("Próxima Questão ➡️", key=f"next_{q_id}"):
                         st.session_state["q_index"] += 1
                         st.rerun()
 
@@ -1301,12 +1308,23 @@ with tab5:
 
     if due > 0:
         conn = db()
+        agora_str = datetime.now().isoformat()
         revs = conn.execute("""
             SELECT q.* FROM revisoes r
             JOIN questoes q ON q.id = r.questao_id
             WHERE r.usuario_id = ? AND r.proxima_revisao <= ?
+            ORDER BY r.proxima_revisao ASC
             LIMIT 1
-        """, (USER_ID, datetime.now().isoformat())).fetchone()
+        """, (USER_ID, agora_str)).fetchone()
+        
+        if not revs:
+            revs = conn.execute("""
+                SELECT q.* FROM revisoes r
+                JOIN questoes q ON q.id = r.questao_id
+                WHERE r.usuario_id = ?
+                LIMIT 1
+            """, (USER_ID,)).fetchone()
+            
         conn.close()
 
         if revs:
@@ -1316,25 +1334,27 @@ with tab5:
             st.markdown(f"**Dispositivo:** {num_disp}")
 
             is_subdevice = any(tag in num_disp.lower() for tag in ["§", "parágrafo", "inciso", "alínea", "alinea"]) or re.search(r'\b(I|II|III|IV|V|VI|VII|VIII|IX|X|XI|XII|XIII|XIV|XV|XVI|XVII|XVIII|XIX|XX)\b', num_disp)
-            if is_subdevice:
+            if is_subdevice and "artigo_id" in revs.keys() and revs["artigo_id"]:
                 caput_text = obter_texto_caput(revs["artigo_id"])
                 if caput_text:
                     st.info(f"📜 **Artigo Principal (Caput):**\n\n\"{caput_text}\"")
 
             st.markdown(revs["enunciado"])
             
-            rev_q_id = revs["id"]
-            resp_rev = st.radio("A sua resposta:", ["Certo", "Errado"], key=f"rev_ans_{rev_q_id}")
+            q_id_rev = revs["id"]
+            resp_rev = st.radio("A sua resposta:", ["Certo", "Errado"], key=f"rev_ans_{q_id_rev}")
             
-            if st.button("Enviar Resposta da Revisão", key=f"btn_rev_{rev_q_id}"):
+            if st.button("Enviar Resposta da Revisão", key=f"btn_rev_{q_id_rev}"):
                 val = 1 if resp_rev == "Certo" else 0
-                acertou = record_answer(rev_q_id, val, cycle=2)
+                acertou = record_answer(q_id_rev, val, cycle=2)
                 if acertou:
                     st.success("✨ Excelente! Próxima revisão agendada.")
                 else:
                     st.error("❌ Errou! Ela voltará para revisão.")
                 st.markdown(f"{revs['explicacao']}")
                 st.rerun()
+        else:
+            st.info("Nenhuma questão detalhada encontrada para revisão neste momento.")
     else:
         st.success("Tudo em dia! Não há revisões pendentes para hoje.")
 
