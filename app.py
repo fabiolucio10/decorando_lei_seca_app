@@ -42,7 +42,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Estilização CSS corrigida - Mantém o botão de expandir a barra lateral (sidebar) visível
+# Estilização CSS aprimorada para justificar os textos e alinhar o layout
 st.markdown("""
     <style>
     #MainMenu {visibility: hidden;}
@@ -56,6 +56,11 @@ st.markdown("""
     button[title="Manage app"] {display: none !important;}
     button[title="Gerenciar aplicativo"] {display: none !important;}
     div[class^="stActionButton"] {display: none !important;}
+    
+    /* Garante alinhamento justificado e legibilidade perfeita dos enunciados e citações */
+    .stMarkdown, p, div[data-testid="stMarkdownContainer"] {
+        text-align: justify !important;
+    }
     
     /* Garante que o botão de alternar/expandir a sidebar permaneça sempre visível */
     [data-testid="stSidebarCollapseButton"] {display: block !important; visibility: visible !important;}
@@ -286,7 +291,6 @@ if not st.session_state["logged_in"]:
 USER_ID = st.session_state["user_id"]
 USERNAME = st.session_state["username"]
 
-# Identificação segura de administrador
 is_admin_user = bool(USERNAME and USERNAME.strip().lower() == ADMIN_EMAIL)
 
 with st.sidebar:
@@ -298,7 +302,6 @@ with st.sidebar:
         st.rerun()
     st.divider()
 
-    # O Painel de Administração na Sidebar (atalho rápido)
     if is_admin_user:
         st.subheader("⚙ Atalho Admin")
         with st.expander("👥 Gerir Utilizadores", expanded=False):
@@ -678,7 +681,7 @@ def obter_rotulo_dispositivo(numero_dispositivo):
 
     if "alínea" in num_lower or "alinea" in num_lower:
         return f"Alínea ({numero_dispositivo})"
-    elif "§" in numero_dispositivo or "parágrafo" in num_lower or "paragrafo" in num_lower:
+    elif "§" in num_lower or "parágrafo" in num_lower or "paragrafo" in num_lower:
         return f"Parágrafo ({numero_dispositivo})"
     elif "inciso" in num_lower or re.search(r'\b(I|II|III|IV|V|VI|VII|VIII|IX|X|XI|XII|XIII|XIV|XV|XVI|XVII|XVIII|XIX|XX)\b', numero_dispositivo):
         return f"Inciso ({numero_dispositivo})"
@@ -815,20 +818,19 @@ def generate_questions_for_articles(discipline_id, law_id, article_ids, qtd_tota
                     if hasattr(genai, "Client"):
                         client = genai.Client(api_key=gemini_key)
                         response = client.models.generate_content(
-                            model="models/gemini-3.8-flash",  # <--- ATUALIZADO AQUI
+                            model="models/gemini-3.8-flash",
                             contents=prompt
                         )
                         enunciado = response.text
                     else:
                         genai.configure(api_key=gemini_key)
-                        model = genai.GenerativeModel("models/gemini-3.8-flash")  # <--- ATUALIZADO AQUI
+                        model = genai.GenerativeModel("models/gemini-3.8-flash")
                         response = model.generate_content(prompt)
                         enunciado = response.text
                         
                     gabarito = 1 if is_correct else 0
                     explicacao = gerar_explicacao_humana(numero_dispositivo, text, is_correct)
                 except Exception as e:
-                    # Log de erro interno silencioso sem poluir a tela
                     logging.warning(f"Erro na API Gemini: {e}. Aplicando motor de regra padrão.")
                     if is_correct:
                         enunciado = f"De acordo com o **{rotulo_dispositivo}**:\n\n\"{text}\""
@@ -840,7 +842,7 @@ def generate_questions_for_articles(discipline_id, law_id, article_ids, qtd_tota
                         gabarito = 0
                         explicacao = gerar_explicacao_humana(numero_dispositivo, text, False, tipo_troca, modified_text)
             else:
-                logging.warning("Biblioteca ou Chave do Gemini (GEMINI_API_KEY) não configurada no Streamlit/secrets ou variáveis de ambiente.")
+                logging.warning("Biblioteca ou Chave do Gemini (GEMINI_API_KEY) não configurada.")
                 if is_correct:
                     enunciado = f"De acordo com o **{rotulo_dispositivo}**:\n\n\"{text}\""
                     gabarito = 1
@@ -968,7 +970,7 @@ def record_answer(question_id, answer, cycle):
         conn.execute("""
             INSERT INTO revisoes(usuario_id, questao_id, prioridade, proxima_revisao, erros, acertos)
             VALUES(?, ?, ?, ?, ?, ?)
-        """, (USER_ID, question_id, priority, next_date.isoformat(), errors, hits))
+        """, (USER_ID, questao_id, priority, next_date.isoformat(), errors, hits))
 
     conn.commit()
     conn.close()
@@ -1041,7 +1043,6 @@ def stats():
 
 st.title("⚖ Decorando Lei Seca")
 
-# Definição dinâmica das abas com base no status de administrador
 is_admin_user = bool(USERNAME and USERNAME.strip().lower() == ADMIN_EMAIL)
 
 if is_admin_user:
@@ -1051,7 +1052,7 @@ if is_admin_user:
         "📝 Resolver Questões",
         "📊 Desempenho",
         "🔄 Revisões",
-        "🛡️ Painel Admin"
+        "🛡️️ Painel Admin"
     ])
 else:
     tab1, tab2, tab3, tab4, tab5 = st.tabs([
@@ -1098,7 +1099,7 @@ with tab1:
 
             law_id = add_law(disc_id, law_title, uploaded_file.name)
             qtd = parse_and_store_pdf(file_path, law_id)
-            st.success(f"Lei processada com sucesso! {qtd} artigos importados. Reimporte ou gere novos cadernos para aplicar os ajustes.")
+            st.success(f"Lei processada com sucesso! {qtd} artigos importados.")
 
     st.divider()
     st.subheader("🗑 Leis Cadastradas por Disciplina")
@@ -1147,7 +1148,7 @@ with tab2:
             total_arts_selecionados = len(selected_arts) if selected_arts else len(articles)
             sugestao_qtd = max(total_arts_selecionados * 2, 10)
             
-            st.info(f"💡 **Sugestão do Sistema:** Esta lei/seleção possui **{total_arts_selecionados} artigo(s)/dispositivo(s)**. Artigos extensos serão divididos automaticamente em caput, incisos, parágrafos e alíneas quando necessário.")
+            st.info(f"💡 **Sugestão do Sistema:** Esta lei/seleção possui **{total_arts_selecionados} artigo(s)/dispositivo(s)**.")
 
             qtd_q = st.number_input(
                 "4. Quantidade de questões para este filtro:",
@@ -1167,13 +1168,15 @@ with tab2:
                 if not filter_name:
                     st.error("Informe um nome para o seu caderno!")
                 else:
-                    art_ids = [art_dict[k] for k in selected_arts]
-                    f_id = save_filter(filter_name, d_id, l_id, art_ids, qtd_q)
-                    qtd_geradas = generate_questions_for_articles(d_id, l_id, art_ids, qtd_q, filter_id=f_id, motor_ia=motor_ia)
+                    # Exibe a mensagem/spinner de sincronização enquanto gera e estrutura
+                    with st.spinner("Aguarde sincronização... Gerando questões e estruturando o caderno..."):
+                        art_ids = [art_dict[k] for k in selected_arts]
+                        f_id = save_filter(filter_name, d_id, l_id, art_ids, qtd_q)
+                        qtd_geradas = generate_questions_for_articles(d_id, l_id, art_ids, qtd_q, filter_id=f_id, motor_ia=motor_ia)
                     st.success(f"Caderno '{filter_name}' criado com sucesso! {qtd_geradas} questões geradas.")
 
     st.divider()
-    st.subheader("🗑️️ Meus Cadernos / Filtros Salvos por Disciplina")
+    st.subheader("🗑 Meus Cadernos / Filtros Salvos por Disciplina")
     meus_filtros = get_saved_filters()
     
     if meus_filtros:
@@ -1336,7 +1339,6 @@ with tab5:
     else:
         st.success("Tudo em dia! Não há revisões pendentes para hoje.")
 
-# Se o utilizador for administrador, renderiza a aba completa do Painel Admin em destaque na tela
 if is_admin_user:
     with tab_admin:
         st.header("🛡 Painel de Controlo do Administrador")
