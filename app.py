@@ -689,7 +689,6 @@ def obter_rotulo_dispositivo(numero_dispositivo):
         return f"Artigo ({numero_dispositivo})"
 
 def chamar_gemini_com_retry(prompt, max_tentativas=2):
-    """Executa a chamada ao Gemini com suporte a google-genai atualizado e retry automático."""
     gemini_key = st.secrets.get("GEMINI_API_KEY", os.getenv("GEMINI_API_KEY"))
     if not gemini_key or not genai:
         return None, "⚠️ A chave da API do Gemini (GEMINI_API_KEY) não está configurada."
@@ -726,64 +725,40 @@ def chamar_gemini_com_retry(prompt, max_tentativas=2):
 
 def gerar_exemplo_pratico_gemini(dispositivo, texto_lei):
     prompt = (
-        "Com base estritamente na letra da lei abaixo, crie de forma objetiva e prática "
-        "um exemplo do dia a dia que ilustre perfeitamente a aplicação deste dispositivo legal.\n\n"
+        "Você é um assistente especializado em direito e concursos públicos. "
+        "Com base estritamente no dispositivo legal abaixo, crie um exemplo prático, "
+        "curto e direto do dia a dia (semelhante a um cenário policial ou administrativo real) "
+        "que ilustre a sua aplicação de forma simples e didática.\n\n"
         f"Dispositivo: {dispositivo}\n"
-        f"Texto da Lei: {texto_lei}"
+        f"Texto da Lei: {texto_lei}\n\n"
+        "Estruture a resposta em duas linhas curtas:\n"
+        "- O Cenário: [exemplo prático]\n"
+        "- Na Prática: [como a lei se aplica nesta situação]"
     )
+    
     resposta, erro = chamar_gemini_com_retry(prompt)
     if resposta:
         return resposta
     
     return (
-        "A aplicação prática deste dispositivo ocorre nas rotinas e atos oficiais de investigação criminal "
-        "da polícia judiciária, visando garantir a legalidade, a segurança jurídica e a padronização dos procedimentos no inquérito policial."
+        f"**O Cenário:** A autoridade competente atua na aplicação das normas do {dispositivo}.\n"
+        f"**Na Prática:** O procedimento deve seguir rigorosamente os ditames legais para garantir a validade dos atos."
     )
 
 def gerar_explicacao_humana(art_num, texto_original, foi_correto=False, tipo_troca=None, texto_modificado=None):
-    txt_lower = texto_original.lower()
-
-    if "sinal" in txt_lower or "estação de cobertura" in txt_lower or "radiofrequência" in txt_lower:
-        situacao_real = "Em uma investigação de sequestro, a polícia requisita às operadoras de telefonia o sinal da antena de celular utilizada pelo suspeito para localizar a região onde a vítima está mantida em cativeiro."
-        aplicacao_regra = f"• **Aplicação do {art_num}:**\n  - O ofício enviado à operadora deve conter a identificação da unidade de polícia judiciária responsável.\n  - Fornece apenas a localização aproximada (antena/ERB), sem dar acesso ao conteúdo das conversas."
-        objetivo_regra = "Agilizar a localização geográfica de vítimas/suspeitos sem violar o sigilo do conteúdo das chamadas sem ordem do juiz."
-    elif "remessa" in txt_lower or "instituto de identificação" in txt_lower:
-        situacao_real = "Ao concluir o inquérito de um crime e enviá-lo para a Vara Criminal responsável, a autoridade policial envia um comunicado ao Instituto de Identificação e Estatística."
-        aplicacao_regra = f"• **Aplicação do {art_num}:**\n  - O comunicado deve conter os dados do investigado, o crime cometido e o juízo para o qual os autos foram distribuídos."
-        objetivo_regra = "Registrar o crime e o local do processo no histórico criminal do investigado."
-    elif "prazo" in txt_lower or "esgotado" in txt_lower:
-        situacao_real = "Um prazo legal de investigação ou diligência especial chega ao fim e nenhuma prorrogação foi solicitada formalmente."
-        aplicacao_regra = f"• **Aplicação do {art_num}:**\n  - A autoridade deve encerrar a medida imediatamente e apresentar o relatório das diligências efetuadas."
-        objetivo_regra = "Forçar o encerramento imediato da medida, impedindo prazos indefinidos ou abusivos na persecução penal."
-    elif "dados" in txt_lower or "informações cadastrais" in txt_lower:
-        situacao_real = "Em investigações de crimes graves (como tráfico de pessoas), a polícia precisa identificar rapidamente a qualificação dos envolvidos."
-        aplicacao_regra = f"• **Aplicação do {art_num}:**\n  - Delegado ou Promotor requisitam dados cadastrais (nome, CPF, endereço) diretamente a órgãos ou empresas."
-        objetivo_regra = "Obter qualificação básica de suspeitos com agilidade e sem burocracia desnecessária."
-    else:
-        situacao_real = "A aplicação prática deste dispositivo ocorre nas rotinas e atos oficiais de investigação criminal da polícia judiciária."
-        aplicacao_regra = f"• **Aplicação do {art_num}:**\n  - O dispositivo fixa procedimentos formais obrigatórios a serem respeitados pelas autoridades."
-        objetivo_regra = "Garantir a legalidade, a segurança jurídica e a padronização dos procedimentos no inquérito policial."
-
     if foi_correto:
         status_txt = "O item está **CORRETO**."
-        detalhe_erro = f"O enunciado reproduz com exatidão o disposto na legislação."
+        detalhe_erro = "O enunciado reproduz com exatidão o disposto na legislação."
         resumo_erro_bloco = ""
     else:
         status_txt = "O item está **ERRADO**."
-        detalhe_erro = f"O enunciado alterou a regra legal."
+        detalhe_erro = "O enunciado alterou a regra legal."
         resumo_erro_bloco = f"\n⚠️ **Pegadinha da Questão:** Alteração mediante **{tipo_troca or 'modificação de termos'}**."
 
     explicacao_formatada = f"""💡 **Gabarito e Justificativa:** {status_txt} {detalhe_erro}{resumo_erro_bloco}
 
 📖 **Texto Correto da Lei Seca:**
 > "{texto_original}"
-
-📌 **Exemplo Prático da Vida Real:**
-{situacao_real}
-
-{aplicacao_regra}
-
-**Objetivo:** {objetivo_regra}
 """
     return explicacao_formatada
 
