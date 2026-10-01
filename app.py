@@ -30,6 +30,9 @@ DB_FILE = APP_DIR / "decorando_lei.db"
 PDF_DIR = APP_DIR / "leis_importadas"
 PDF_DIR.mkdir(exist_ok=True)
 
+# Definição do e-mail de administrador exclusivo
+ADMIN_EMAIL = "fabiolucio277@gmail.com"
+
 # Configuração da página - Mantém a barra lateral sempre expandida por padrão
 st.set_page_config(
     page_title="Decorando Lei Seca",
@@ -183,7 +186,8 @@ def init_db():
     except sqlite3.OperationalError:
         pass
 
-    conn.execute("UPDATE usuarios SET autorizado = 1 WHERE LOWER(TRIM(username)) = 'fabiolucio277@gmail.com'")
+    # Garante permissão automática apenas para o administrador
+    conn.execute("UPDATE usuarios SET autorizado = 1 WHERE LOWER(TRIM(username)) = ?", (ADMIN_EMAIL,))
     conn.commit()
     conn.close()
 
@@ -192,8 +196,13 @@ init_db()
 def cadastrar_usuario(username, senha, autorizado=0):
     conn = db()
     u_clean = username.strip().lower()
-    if u_clean == "fabiolucio277@gmail.com":
+    
+    # Restrição: Apenas fabiolucio277@gmail.com é aprovado automaticamente
+    if u_clean == ADMIN_EMAIL:
         autorizado = 1
+    else:
+        autorizado = 0
+
     try:
         conn.execute(
             "INSERT INTO usuarios (username, senha, autorizado, criado_em) VALUES (?, ?, ?, ?)",
@@ -276,6 +285,9 @@ if not st.session_state["logged_in"]:
 USER_ID = st.session_state["user_id"]
 USERNAME = st.session_state["username"]
 
+# Identificação segura de administrador
+is_admin_user = bool(USERNAME and USERNAME.strip().lower() == ADMIN_EMAIL)
+
 with st.sidebar:
     st.markdown(f"👤 Usuário: **{USERNAME}**")
     if st.button("🚪 Sair / Logout"):
@@ -285,8 +297,8 @@ with st.sidebar:
         st.rerun()
     st.divider()
 
-    # Tratamento reforçado com .strip() para evitar falhas por espaços em branco
-    if USERNAME and USERNAME.strip().lower() == "fabiolucio277@gmail.com":
+    # O Painel de Administração surge APENAS para o administrador
+    if is_admin_user:
         st.subheader("⚙ Painel do Administrador")
         with st.expander("👥 Gerenciar e Autorizar Usuários", expanded=True):
             usuarios_cadastrados = listar_usuarios()
@@ -296,9 +308,9 @@ with st.sidebar:
                 st.markdown(f"**{u['username']}**")
                 c_status, c_del = st.columns([3, 1])
                 
-                is_admin = u['username'].strip().lower() == "fabiolucio277@gmail.com"
+                is_this_admin = u['username'].strip().lower() == ADMIN_EMAIL
                 
-                if is_admin:
+                if is_this_admin:
                     c_status.caption("👑 Administrador Principal")
                 else:
                     status_atual = bool(u['autorizado'])
@@ -1045,7 +1057,7 @@ def stats():
     conn.close()
     return total, hits, errors, pct, b_disc, b_filt, b_cont, due
 
-st.title("⚖️️ Decorando Lei Seca")
+st.title("⚖ Decorando Lei Seca")
 
 tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "📚 Importar Leis",
