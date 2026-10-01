@@ -686,33 +686,114 @@ def obter_rotulo_dispositivo(numero_dispositivo):
         return f"Artigo ({numero_dispositivo})"
 
 def chamar_gemini_com_retry(prompt, max_tentativas=2):
+    """
+    Consulta a Gemini API usando a Interactions API oficial e o
+    modelo Gemini 3.8 Flash.
+
+    A chamada é feita diretamente pelo endpoint oficial para evitar
+    incompatibilidade entre versões antigas/novas da SDK google-genai.
+    """
     gemini_key = st.secrets.get("GEMINI_API_KEY", os.getenv("GEMINI_API_KEY"))
-    if not gemini_key or not genai:
-        return None, "⚠️ A chave da API do Gemini (GEMINI_API_KEY) não está configurada ou a biblioteca google-genai não foi carregada."
+
+    if not gemini_key:
+        return None, "A chave da API do Gemini (GEMINI_API_KEY) não está configurada."
 
     tentativa = 0
     espera = 2
+
     while tentativa < max_tentativas:
         try:
-            client = genai.Client(api_key=gemini_key)
-            response = client.models.generate_content(
-                model="gemini-2.5-flash",
-                contents=prompt
+            import requests
+
+            url = "https://generativelanguage.googleapis.com/v1beta/interactions"
+            headers = {
+                "x-goog-api-key": gemini_key,
+                "Content-Type": "application/json",
+            }
+            payload = {
+                "model": "gemini-3.8-flash",
+                "input": prompt,
+                "generation_config": {
+                    "thinking_level": "medium"
+                },
+            }
+
+            response = requests.post(
+                url,
+                headers=headers,
+                json=payload,
+                timeout=90
             )
-            return response.text, None
+
+            if not response.ok:
+                try:
+                    erro_json = response.json()
+                    erro_msg = erro_json.get("error", {}).get("message")
+                    if erro_msg:
+                        return None, f"{response.status_code} {response.reason}: {erro_msg}"
+                except Exception:
+                    pass
+
+                return None, f"{response.status_code} {response.reason}: {response.text[:500]}"
+
+            data = response.json()
+
+            # A Interactions API normalmente devolve output_text.
+            texto = data.get("output_text")
+            if texto and str(texto).strip():
+                return str(texto).strip(), None
+
+            # Compatibilidade com respostas em blocos de saída.
+            blocos = data.get("output") or []
+            partes = []
+
+            for bloco in blocos:
+                if isinstance(bloco, dict):
+                    texto_bloco = bloco.get("text")
+                    if texto_bloco:
+                        partes.append(str(texto_bloco))
+
+                    content = bloco.get("content")
+                    if isinstance(content, list):
+                        for item in content:
+                            if isinstance(item, dict) and item.get("text"):
+                                partes.append(str(item["text"]))
+
+            texto = "\n".join(partes).strip()
+
+            if texto:
+                return texto, None
+
+            return None, "O Gemini respondeu, mas não retornou texto no campo de saída."
+
+        except requests.exceptions.Timeout:
+            tentativa += 1
+            if tentativa < max_tentativas:
+                time.sleep(espera)
+                espera *= 2
+                continue
+            return None, "Tempo limite excedido ao consultar o Gemini."
+
+        except requests.exceptions.RequestException as e:
+            return None, f"Erro de conexão com o Gemini: {e}"
+
         except Exception as e:
             err_str = str(e)
+
             if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
-                return None, "429 RESOURCE_EXHAUSTED"
-            
+                return None, "429 RESOURCE_EXHAUSTED: limite da API do Gemini atingido."
+
             if "503" in err_str or "UNAVAILABLE" in err_str or "high demand" in err_str:
                 tentativa += 1
                 if tentativa < max_tentativas:
                     time.sleep(espera)
                     espera *= 2
                     continue
+
             return None, err_str
+
     return None, "Limite de tentativas excedido no servidor do Gemini."
+
 
 def gerar_exemplo_pratico_gemini(dispositivo, texto_lei):
     """
@@ -726,9 +807,6 @@ def gerar_exemplo_pratico_gemini(dispositivo, texto_lei):
 
     if not gemini_key:
         return None, "A chave GEMINI_API_KEY não está configurada."
-
-    if genai is None:
-        return None, "A biblioteca google-genai não está instalada."
 
     dispositivo = (dispositivo or "").strip()
     texto_lei = (texto_lei or "").strip()
