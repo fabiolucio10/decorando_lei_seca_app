@@ -16,10 +16,14 @@ try:
 except ImportError:
     openai = None
 
+# Suporte ao SDK atualizado google-genai e ao legado google.generativeai
 try:
-    import google.generativeai as genai
+    from google import genai
 except ImportError:
-    genai = None
+    try:
+        import google.generativeai as genai
+    except ImportError:
+        genai = None
 
 APP_DIR = Path(__file__).parent
 DB_FILE = APP_DIR / "decorando_lei.db"
@@ -281,7 +285,7 @@ with st.sidebar:
     st.divider()
 
     if USERNAME.lower() == "fabiolucio277@gmail.com":
-        st.subheader("⚙️️ Painel do Administrador")
+        st.subheader("⚙ Painel do Administrador")
         with st.expander("👥 Gerenciar e Autorizar Usuários", expanded=False):
             usuarios_cadastrados = listar_usuarios()
             st.write(f"**Total de usuários:** {len(usuarios_cadastrados)}")
@@ -612,6 +616,10 @@ def get_saved_filters(discipline_id=None):
     return rows
 
 def obter_texto_caput(artigo_id):
+    """
+    Retorna o texto integral do caput até a primeira ocorrência de inciso,
+    parágrafo ou alínea, sem truncar frases intermediárias.
+    """
     if not artigo_id:
         return None
     conn = db()
@@ -621,13 +629,18 @@ def obter_texto_caput(artigo_id):
         texto_limpo = limpar_e_formatar_texto_lei(artigo["texto"])
         texto_normalizado = normalizar_estrutura_dispositivo(texto_limpo)
         
-        m = re.search(r'(?m)^(?:§\s*\d+º?|Parágrafo único\b|(?:I|II|III|IV|V|VI|VII|VIII|IX|X|XI|XII|XIII|XIV|XV|XVI|XVII|XVIII|XIX|XX)\s*-)', texto_normalizado, re.IGNORECASE)
+        # Procura o primeiro divisor estrutural
+        m = re.search(
+            r'(?m)^(?:§\s*\d+º?|Parágrafo único\b|(?:I|II|III|IV|V|VI|VII|VIII|IX|X|XI|XII|XIII|XIV|XV|XVI|XVII|XVIII|XIX|XX)\s*-)', 
+            texto_normalizado, 
+            re.IGNORECASE
+        )
         if m:
-            inicio = texto_normalizado[:m.start()].strip()
+            caput = texto_normalizado[:m.start()].strip()
         else:
-            inicio = texto_normalizado.strip()
+            caput = texto_normalizado.strip()
             
-        return inicio.strip()
+        return caput if caput else texto_normalizado.strip()
     return None
 
 def alterar_texto_para_errado(texto):
@@ -800,8 +813,6 @@ def generate_questions_for_articles(discipline_id, law_id, article_ids, qtd_tota
             gemini_key = st.secrets.get("GEMINI_API_KEY", os.getenv("GEMINI_API_KEY"))
             if gemini_key and genai:
                 try:
-                    genai.configure(api_key=gemini_key)
-                    model = genai.GenerativeModel("gemini-2.5-flash")
                     prompt = (
                         "Você é uma banca examinadora de concursos públicos. "
                         "Crie uma afirmação de Certo ou Errado focada estritamente no trecho da lei fornecido. "
@@ -810,8 +821,21 @@ def generate_questions_for_articles(discipline_id, law_id, article_ids, qtd_tota
                         f"Texto legal: {text}\n"
                         f"Gabarito pretendido: {'CERTO' if is_correct else 'ERRADO'}"
                     )
-                    response = model.generate_content(prompt)
-                    enunciado = response.text
+                    
+                    # Suporte para o novo SDK google.genai e o legado google.generativeai
+                    if hasattr(genai, "Client"):
+                        client = genai.Client(api_key=gemini_key)
+                        response = client.models.generate_content(
+                            model="gemini-2.5-flash",
+                            contents=prompt
+                        )
+                        enunciado = response.text
+                    else:
+                        genai.configure(api_key=gemini_key)
+                        model = genai.GenerativeModel("gemini-2.5-flash")
+                        response = model.generate_content(prompt)
+                        enunciado = response.text
+                        
                     gabarito = 1 if is_correct else 0
                     explicacao = gerar_explicacao_humana(numero_dispositivo, text, is_correct)
                 except Exception as e:
@@ -826,7 +850,7 @@ def generate_questions_for_articles(discipline_id, law_id, article_ids, qtd_tota
                         gabarito = 0
                         explicacao = gerar_explicacao_humana(numero_dispositivo, text, False, tipo_troca, modified_text)
             else:
-                st.warning("Biblioteca ou Chave do Gemini (GEMINI_API_KEY) não configurada.")
+                st.warning("Biblioteca ou Chave do Gemini (GEMINI_API_KEY) não configurada no Streamlit/secrets ou variáveis de ambiente.")
                 if is_correct:
                     enunciado = f"De acordo com o **{rotulo_dispositivo}**:\n\n\"{text}\""
                     gabarito = 1
