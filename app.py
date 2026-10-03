@@ -205,13 +205,19 @@ def init_db():
     except sqlite3.OperationalError:
         logging.exception("Falha na migração da tabela filtros_salvos.")
 
+    # Correção robusta: tratamento seguro para garantir a existência da coluna 'autorizado'
     try:
         conn.execute("ALTER TABLE usuarios ADD COLUMN autorizado INTEGER DEFAULT 0")
+        conn.commit()
     except sqlite3.OperationalError:
         pass
 
-    conn.execute("UPDATE usuarios SET autorizado = 1 WHERE LOWER(TRIM(username)) = ?", (ADMIN_EMAIL,))
-    conn.commit()
+    try:
+        conn.execute("UPDATE usuarios SET autorizado = 1 WHERE LOWER(TRIM(username)) = ?", (ADMIN_EMAIL,))
+        conn.commit()
+    except Exception as e:
+        logging.exception("Erro ao atualizar admin: %s", e)
+
     conn.close()
 
 init_db()
@@ -222,8 +228,6 @@ def cadastrar_usuario(username, senha, autorizado=0):
     
     if u_clean == ADMIN_EMAIL:
         autorizado = 1
-    else:
-        autorizado = 0
 
     try:
         conn.execute(
@@ -716,10 +720,6 @@ def obter_rotulo_dispositivo(numero_dispositivo):
         return f"Artigo ({numero_dispositivo})"
 
 def chamar_gemini_com_retry(prompt, max_tentativas=3):
-    """
-    Função robusta para chamar a API oficial do Google Gemini com tentativas automáticas (retry)
-    e suporte a chave de API via st.secrets ou st.secrets["GOOGLE_API_KEY"] / os.getenv.
-    """
     if not genai:
         return None, "Biblioteca 'google-genai' não instalada."
 
@@ -736,8 +736,6 @@ def chamar_gemini_com_retry(prompt, max_tentativas=3):
         return None, "Chave de API do Gemini não configurada nos segredos ou variáveis de ambiente."
 
     client = genai.Client(api_key=api_key)
-    
-    # Modelos recomendados em ordem de preferência
     modelos_candidatos = ["gemini-2.5-flash", "gemini-1.5-flash", "gemini-2.5-pro"]
 
     for tentativa in range(1, max_tentativas + 1):
@@ -751,12 +749,10 @@ def chamar_gemini_com_retry(prompt, max_tentativas=3):
                     return response.text.strip(), None
             except Exception as e:
                 erro_str = str(e)
-                # Se for erro de quota excedida ou modelo indisponível, tenta o próximo modelo/tentativa
                 if "429" in erro_str or "RESOURCE_EXHAUSTED" in erro_str or "NotFound" in erro_str:
                     time.sleep(1)
                     continue
                 else:
-                    # Para outros erros, aguarda um curto período e tenta novamente
                     time.sleep(2 * tentativa)
                     continue
         time.sleep(2)
