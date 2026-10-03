@@ -186,10 +186,6 @@ def init_db():
     );
     """)
     
-    # Compatibilidade com versões anteriores do aplicativo:
-    # algumas versões chegaram a criar filtros_salvos com "discipline_id",
-    # enquanto a estrutura atual usa "disciplina_id".
-    # Corrigimos o banco automaticamente sem apagar os cadernos existentes.
     try:
         colunas_filtros = {
             row["name"]
@@ -207,9 +203,6 @@ def init_db():
                 "ALTER TABLE filtros_salvos ADD COLUMN disciplina_id INTEGER"
             )
     except sqlite3.OperationalError:
-        # A tabela normalmente já existe com a estrutura correta.
-        # Se o SQLite não permitir alguma operação de migração, a estrutura
-        # original continua preservada e o erro ficará registrado no log.
         logging.exception("Falha na migração da tabela filtros_salvos.")
 
     try:
@@ -595,12 +588,6 @@ def get_articles(law_id):
     return rows
 
 def save_filter(name, discipline_id, law_id, article_ids, qtd_questoes):
-    """
-    Salva um caderno/filtro.
-
-    IMPORTANTE: a tabela filtros_salvos foi criada com a coluna
-    disciplina_id. O INSERT precisa usar exatamente esse nome.
-    """
     conn = db()
     art_str = ",".join(map(str, article_ids))
 
@@ -728,23 +715,61 @@ def obter_rotulo_dispositivo(numero_dispositivo):
     else:
         return f"Artigo ({numero_dispositivo})"
 
-def gerar_exemplo_pratico_local(dispositivo, texto_lei):
+def chamar_gemini_com_retry(prompt, max_tentativas=3):
     """
-    Gera um exemplo prático LOCAL, sem API externa.
+    Função robusta para chamar a API oficial do Google Gemini com tentativas automáticas (retry)
+    e suporte a chave de API via st.secrets ou st.secrets["GOOGLE_API_KEY"] / os.getenv.
+    """
+    if not genai:
+        return None, "Biblioteca 'google-genai' não instalada."
 
-    A regra é construída exclusivamente a partir do dispositivo legal já
-    armazenado no banco. Não usa Gemini, OpenAI, internet, chave de API ou
-    qualquer serviço pago/gratuito sujeito a quota.
-    """
+    api_key = None
+    try:
+        api_key = st.secrets.get("GOOGLE_API_KEY") or st.secrets.get("GEMINI_API_KEY")
+    except Exception:
+        pass
+    
+    if not api_key:
+        api_key = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
+
+    if not api_key:
+        return None, "Chave de API do Gemini não configurada nos segredos ou variáveis de ambiente."
+
+    client = genai.Client(api_key=api_key)
+    
+    # Modelos recomendados em ordem de preferência
+    modelos_candidatos = ["gemini-2.5-flash", "gemini-1.5-flash", "gemini-2.5-pro"]
+
+    for tentativa in range(1, max_tentativas + 1):
+        for modelo in modelos_candidatos:
+            try:
+                response = client.models.generate_content(
+                    model=modelo,
+                    contents=prompt,
+                )
+                if response and response.text:
+                    return response.text.strip(), None
+            except Exception as e:
+                erro_str = str(e)
+                # Se for erro de quota excedida ou modelo indisponível, tenta o próximo modelo/tentativa
+                if "429" in erro_str or "RESOURCE_EXHAUSTED" in erro_str or "NotFound" in erro_str:
+                    time.sleep(1)
+                    continue
+                else:
+                    # Para outros erros, aguarda um curto período e tenta novamente
+                    time.sleep(2 * tentativa)
+                    continue
+        time.sleep(2)
+
+    return None, "Não foi possível obter resposta da API Gemini após várias tentativas."
+
+def gerar_exemplo_pratico_local(dispositivo, texto_lei):
     dispositivo = (dispositivo or "").strip()
     texto_lei = limpar_e_formatar_texto_lei(texto_lei or "").strip()
 
     if not dispositivo or not texto_lei:
         return None, "Não foi possível identificar o dispositivo e o texto legal da questão."
 
-    # O texto do dispositivo é preservado e usado como fundamento do caso.
-    # Os modelos abaixo apenas contextualizam a regra; não acrescentam
-    # artigo, prazo, exceção ou requisito jurídico que não esteja no texto.
     t = texto_lei.rstrip(".")
     tl = t.lower()
 
@@ -768,7 +793,6 @@ def gerar_exemplo_pratico_local(dispositivo, texto_lei):
         frase = f"João encontra-se em uma situação concreta que corresponde à hipótese prevista pelo {dispositivo}. Ao analisar o caso, a regra deve ser aplicada exatamente como está escrita no dispositivo: \"{t}.\""
 
     return frase, None
-
 
 def gerar_explicacao_humana(art_num, texto_original, foi_correto=False, tipo_troca=None, texto_modificado=None):
     if foi_correto:
@@ -1271,8 +1295,6 @@ with tab3:
             st.session_state["q_index"] = 0
             st.session_state["answered_q"] = {}
 
-            # Limpa exemplos gerados anteriormente para não misturar respostas
-            # de outro caderno/questão.
             for key in list(st.session_state.keys()):
                 if key.startswith("exemplo_pratico_") or key.startswith("exemplo_pratico_erro_"):
                     del st.session_state[key]
@@ -1341,8 +1363,6 @@ with tab3:
                     exemplo_salvo = st.session_state.get(f"exemplo_pratico_{q_id}")
                     erro_exemplo = st.session_state.get(f"exemplo_pratico_erro_{q_id}")
 
-                    # Este botão só aparece depois que a questão foi respondida.
-                    # A geração é 100% local: não consulta Gemini nem qualquer API.
                     if st.button(
                         "💡 Exemplo Prático da Regra",
                         key=f"exemplo_pratico_btn_{q_id}",
