@@ -5,6 +5,8 @@ import random
 import re
 import sqlite3
 import logging
+import urllib.request
+import urllib.error
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -60,39 +62,6 @@ st.markdown("""
     /* Garante alinhamento justificado e legibilidade perfeita dos enunciados e citações */
     .stMarkdown, p, div[data-testid="stMarkdownContainer"] {
         text-align: justify !important;
-    }
-    
-    /* Cartões visuais de feedback com o mesmo design profissional */
-    .card-feedback-sucesso {
-        background-color: #ecfdf5;
-        border: 1px solid #a7f3d0;
-        border-radius: 12px;
-        padding: 16px;
-        margin-bottom: 14px;
-    }
-    
-    .card-feedback-erro {
-        background-color: #fff1f2;
-        border: 1px solid #fecdd3;
-        border-radius: 12px;
-        padding: 16px;
-        margin-bottom: 14px;
-    }
-
-    .card-dispositivo-lei {
-        background-color: #f8fafc;
-        border: 1px solid #bfdbfe;
-        border-radius: 10px;
-        padding: 16px;
-        margin-bottom: 14px;
-    }
-
-    .card-exemplo-pratico {
-        background-color: #fffbeb;
-        border: 1px solid #fde68a;
-        border-radius: 12px;
-        padding: 18px;
-        margin-bottom: 14px;
     }
 
     /* Garante que o botão de alternar/expandir a sidebar permaneça sempre visível */
@@ -337,6 +306,52 @@ with st.sidebar:
         st.rerun()
     st.divider()
 
+    st.markdown("### 🤖 Inteligência Artificial (IA)")
+    chave_gemini_detectada = obter_chave_gemini()
+    status_ia = "🟢 Ativa (Google Gemini)" if chave_gemini_detectada else "⚪ Modo Regras / Offline"
+    st.caption(f"Status: **{status_ia}**")
+
+    with st.expander("🔑 Chave API Gemini (Google AI)", expanded=(not bool(chave_gemini_detectada))):
+        st.markdown(
+            "Insira sua chave gratuita do **Google AI Studio** para gerar exemplos práticos da vida real inéditos e adaptados a qualquer dispositivo:"
+        )
+        nova_chave_gemini = st.text_input(
+            "GEMINI_API_KEY:",
+            value=st.session_state.get("gemini_api_key", chave_gemini_detectada or ""),
+            type="password",
+            key="input_gemini_side"
+        )
+        col_s1, col_s2 = st.columns(2)
+        if col_s1.button("Salvar Chave", key="btn_save_key_side"):
+            if nova_chave_gemini.strip():
+                st.session_state["gemini_api_key"] = nova_chave_gemini.strip()
+                os.environ["GEMINI_API_KEY"] = nova_chave_gemini.strip()
+                st.success("Chave salva na sessão!")
+                st.rerun()
+            else:
+                st.session_state.pop("gemini_api_key", None)
+                st.info("Chave removida.")
+                st.rerun()
+        if col_s2.button("Testar IA", key="btn_test_ia_side"):
+            with st.spinner("Testando conexão com a IA..."):
+                t_key = nova_chave_gemini.strip() or chave_gemini_detectada
+                ex_test = gerar_exemplo_gemini("Art. 5º, II", "ninguém será obrigado a fazer ou deixar de fazer alguma coisa senão em virtude de lei", chave_manual=t_key)
+                if ex_test:
+                    st.success("✅ IA conectada e gerando exemplos com sucesso!")
+                else:
+                    st.error("❌ Erro ao conectar com Gemini. Verifique a chave inserida.")
+
+        st.caption("Obtenha sua chave gratuita em: [Google AI Studio](https://aistudio.google.com/app/apikey)")
+
+    auto_ia_ativo = st.toggle(
+        "⚡ Gerar IA ao responder questão",
+        value=st.session_state.get("auto_ia_responder", True),
+        key="toggle_auto_ia",
+        help="Ao responder Certo/Errado em uma questão, a IA cria e salva um exemplo da vida real sob medida caso ainda não exista!"
+    )
+    st.session_state["auto_ia_responder"] = auto_ia_ativo
+    st.divider()
+
     if is_admin_user:
         st.subheader("⚙ Atalho Admin")
         with st.expander("👥 Gerir Utilizadores", expanded=False):
@@ -448,10 +463,6 @@ def eh_marcador_alinea(linha):
     return bool(re.match(r'^[a-z]\s*[\)\-]\s*', linha.strip(), re.IGNORECASE))
 
 def extrair_blocos_por_marcador(texto, tipo):
-    """
-    Extrai blocos estruturados (marcador, conteúdo) linha por linha.
-    Retorna APENAS blocos válidos onde o marcador NÃO seja None, evitando AttributeError.
-    """
     linhas = [l.strip() for l in texto.split('\n') if l.strip()]
     if not linhas:
         return []
@@ -484,12 +495,10 @@ def extrair_blocos_por_marcador(texto, tipo):
         else:
             if atual_marcador is not None:
                 atual_texto.append(linha)
-            # Linhas iniciais sem marcador não pertencem a este tipo de dispositivo e são ignoradas com segurança
 
     if atual_marcador is not None:
         blocos.append((atual_marcador, ' '.join(atual_texto).strip()))
 
-    # Retorna apenas tuplas onde 'm' é uma string válida e 't' tem conteúdo (elimina NoneType)
     return [(m, t) for m, t in blocos if m and t.strip()]
 
 def fragmentar_texto_muito_longo(rotulo_base, texto, max_chars=450):
@@ -525,18 +534,11 @@ def fragmentar_texto_muito_longo(rotulo_base, texto, max_chars=450):
     return resultado if resultado else [{'numero': rotulo_base, 'texto': texto}]
 
 def fracionar_artigo_extenso(num_art, corpo_limpo):
-    """
-    FRAGMENTAÇÃO INTELIGENTE BLINDADA:
-    Separa de forma completa qualquer artigo com parágrafos, incisos e alíneas.
-    100% protegido contra erros de NoneType e rstrip.
-    """
     texto = normalizar_estrutura_dispositivo(corpo_limpo)
 
-    # Identifica parágrafos e incisos
     paragrafos = extrair_blocos_por_marcador(texto, 'paragrafo')
     incisos = extrair_blocos_por_marcador(texto, 'inciso')
 
-    # Se o artigo NÃO possui parágrafos nem incisos:
     if len(paragrafos) == 0 and len(incisos) == 0:
         if len(corpo_limpo) > 500:
             return fragmentar_texto_muito_longo(f"{num_art} (caput)", corpo_limpo)
@@ -544,29 +546,26 @@ def fracionar_artigo_extenso(num_art, corpo_limpo):
 
     alvos = []
 
-    # 1. Extrai o CAPUT (texto antes do primeiro parágrafo ou inciso)
-    marcadores = []
+    # 1. Extrai o CAPUT
     padroes_primeiro = [
         r'(?m)^§\s*\d+º?',
         r'(?m)^Parágrafo único\b',
         rf'(?m)^{REGEX_ROMANO}\s*[-–—\.]\s*'
     ]
+    marcadores = []
     for padrao in padroes_primeiro:
         m = re.search(padrao, texto, re.IGNORECASE)
         if m:
             marcadores.append(m.start())
 
-    if marcadores:
-        inicio = texto[:min(marcadores)].strip()
-    else:
-        inicio = texto.strip()
+    inicio = texto[:min(marcadores)].strip() if marcadores else texto.strip()
 
     if inicio and len(inicio) > 10:
         inicio_limpo = re.sub(r'^Art\.\s*\d+[\w\-]*[\.\º\ª]?\s*[-–—]?\s*', '', inicio, flags=re.IGNORECASE).strip()
         if inicio_limpo:
             alvos.append({'numero': f'{num_art} (caput)', 'texto': inicio_limpo})
 
-    # 2. Extrai INCISOS DO CAPUT (antes de qualquer parágrafo)
+    # 2. Extrai INCISOS DO CAPUT
     posicao_primeiro_paragrafo = None
     if paragrafos:
         m = re.search(r'(?m)^(?:§\s*\d+º?|Parágrafo único)\b', texto, re.IGNORECASE)
@@ -575,7 +574,6 @@ def fracionar_artigo_extenso(num_art, corpo_limpo):
 
     trecho_incisos_caput = texto[:posicao_primeiro_paragrafo].strip() if posicao_primeiro_paragrafo is not None else texto
     incisos_caput = extrair_blocos_por_marcador(trecho_incisos_caput, 'inciso')
-    
     numeros_existentes = {a['numero'] for a in alvos}
 
     for marcador, texto_inciso in incisos_caput:
@@ -583,7 +581,6 @@ def fracionar_artigo_extenso(num_art, corpo_limpo):
             clean_marc = str(marcador).rstrip("-–—.").strip()
             num_formatado = f'{num_art}, Inciso {clean_marc}'
             
-            # Se o inciso possui alíneas internas (a, b, c...), fragmenta cada alínea se for longo!
             texto_inciso_norm = normalizar_estrutura_dispositivo(texto_inciso)
             alineas = extrair_blocos_por_marcador(texto_inciso_norm, 'alinea')
             
@@ -598,26 +595,25 @@ def fracionar_artigo_extenso(num_art, corpo_limpo):
                 alvos.append({'numero': num_formatado, 'texto': f'{marcador} {texto_inciso}'.strip()})
                 numeros_existentes.add(num_formatado)
 
-    # 3. Extrai PARÁGRAFOS e seus eventuais incisos/alíneas internos (TOTALMENTE SEGURO CONTRA NONE)
+    # 3. Extrai PARÁGRAFOS
     for marcador_par, texto_par in paragrafos:
         if not marcador_par or not texto_par or len(texto_par) <= 5:
             continue
 
         texto_par_estruturado = normalizar_estrutura_dispositivo(texto_par)
-        
-        incisos_do_paragrafo = extrair_blocos_por_marcador(texto_par_estruturado, 'inciso')
-        alineas_do_paragrafo = extrair_blocos_por_marcador(texto_par_estruturado, 'alinea')
+        incisos_do_par = extrair_blocos_por_marcador(texto_par_estruturado, 'inciso')
+        alineas_do_par = extrair_blocos_por_marcador(texto_par_estruturado, 'alinea')
 
-        if incisos_do_paragrafo and len(texto_par) > 250:
-            for marc_inc, txt_inc in incisos_do_paragrafo:
+        if incisos_do_par and len(texto_par) > 250:
+            for marc_inc, txt_inc in incisos_do_par:
                 if not marc_inc:
                     continue
                 clean_marc = str(marc_inc).rstrip("-–—.").strip()
                 num_sub = f'{num_art}, {marcador_par}, Inciso {clean_marc}'
                 alvos.append({'numero': num_sub, 'texto': f'{marc_inc} {txt_inc}'.strip()})
                 numeros_existentes.add(num_sub)
-        elif alineas_do_paragrafo and len(texto_par) > 250:
-            for marc_al, txt_al in alineas_do_paragrafo:
+        elif alineas_do_par and len(texto_par) > 250:
+            for marc_al, txt_al in alineas_do_par:
                 if not marc_al:
                     continue
                 clean_al = str(marc_al).rstrip(")-").strip()
@@ -775,7 +771,8 @@ def alterar_texto_para_errado(texto):
         (r'\bmediante autorização judicial\b', 'independentemente de autorização judicial', 'supressão indevida da reserva de jurisdição'),
         (r'\bsalvo em caso de guerra declarada\b', 'mesmo em caso de guerra declarada', 'supressão da ressalva constitucional expressa'),
         (r'\bsem armas\b', 'com armas de fogo registradas', 'admissão indevida de armas na reunião'),
-        (r'\bprévio aviso\b', 'prévia autorização', 'troca do prévio aviso por exigência de prévia autorização')
+        (r'\bprévio aviso\b', 'prévia autorização', 'troca do prévio aviso por exigência de prévia autorização'),
+        (r'\brazoável duração\b', 'duração discricionária', 'supressão da garantia da razoável duração do processo')
     ]
     
     texto_modificado = texto
@@ -813,36 +810,426 @@ def obter_rotulo_dispositivo(numero_dispositivo):
         return f"Artigo ({numero_dispositivo})"
 
 # ==============================================================================
-# DICIONÁRIO COMPLETO DE CASOS PRÁTICOS REAIS (CONFORME O DISPOSITIVO ESTUDADO)
+# INTEGRAÇÃO GEMINI IA & OPENAI: EXEMPLOS PRÁTICOS DINÂMICOS DA VIDA REAL
 # ==============================================================================
+
+def obter_chave_gemini(chave_manual=None):
+    """
+    Recupera a chave Gemini API na seguinte ordem de prioridade:
+    1. Chave fornecida manualmente pelo usuário no input
+    2. Session state da sessão do Streamlit
+    3. Streamlit secrets (configurado no Streamlit Cloud dashboard)
+    4. Variáveis de ambiente (GEMINI_API_KEY ou GOOGLE_API_KEY)
+    """
+    if chave_manual and str(chave_manual).strip():
+        return str(chave_manual).strip()
+    if st.session_state.get("gemini_api_key"):
+        return str(st.session_state["gemini_api_key"]).strip()
+    try:
+        if "GEMINI_API_KEY" in st.secrets:
+            return str(st.secrets["GEMINI_API_KEY"]).strip()
+        if "GOOGLE_API_KEY" in st.secrets:
+            return str(st.secrets["GOOGLE_API_KEY"]).strip()
+    except Exception:
+        pass
+    env_k = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+    if env_k:
+        return str(env_k).strip()
+    return None
+
+def obter_chave_openai(chave_manual=None):
+    if chave_manual and str(chave_manual).strip():
+        return str(chave_manual).strip()
+    if st.session_state.get("openai_api_key"):
+        return str(st.session_state["openai_api_key"]).strip()
+    try:
+        if "OPENAI_API_KEY" in st.secrets:
+            return str(st.secrets["OPENAI_API_KEY"]).strip()
+    except Exception:
+        pass
+    env_k = os.getenv("OPENAI_API_KEY")
+    if env_k:
+        return str(env_k).strip()
+    return None
+
+def extrair_json_exemplo(raw_text, rotulo_dispositivo):
+    if not raw_text:
+        return None
+    # Remove marcações de código markdown se presentes
+    clean = re.sub(r'```(?:json)?\s*', '', raw_text)
+    clean = re.sub(r'```', '', clean).strip()
+
+    m = re.search(r'\{[\s\S]*\}', clean)
+    if m:
+        try:
+            d = json.loads(m.group(0))
+            sit = d.get("situacao_real") or d.get("situacaoReal") or d.get("caso_concreto")
+            ap = d.get("aplicacao_regra") or d.get("aplicacaoRegra")
+            obj = d.get("objetivo_regra") or d.get("objetivoRegra")
+            biz = d.get("bizu_memorizacao") or d.get("bizuMemorizacao") or d.get("bizu")
+            if sit:
+                return (
+                    sit.strip(),
+                    f"• **Aplicação no {rotulo_dispositivo}:** {ap.strip() if ap else 'Aplicação direta da literalidade normativa.'}",
+                    obj.strip() if obj else "Garantir a segurança jurídica e a legalidade estrita.",
+                    biz.strip() if biz else "Atenção às palavras-chave e prazos cobrados pela banca."
+                )
+        except Exception:
+            pass
+    return None
+
+def gerar_exemplo_gemini(rotulo_dispositivo, texto_dispositivo, chave_manual=None):
+    """
+    Chama a Inteligência Artificial Gemini com tripla camada de redundância:
+    1. SDK google.genai moderno (v2.x)
+    2. SDK google.generativeai legado (v0.x)
+    3. Chamada HTTP REST nativa via urllib (sem dependência de bibliotecas, 100% à prova de falhas)
+    """
+    chave = obter_chave_gemini(chave_manual)
+    if not chave:
+        return None
+
+    # Limpa texto para retirar cabeçalho de enunciado caso exista
+    texto_puro = texto_dispositivo
+    if "De acordo com o" in texto_puro:
+        m = re.search(r':\s*"(.*)"\s*$', texto_puro, re.DOTALL)
+        if m:
+            texto_puro = m.group(1).strip()
+        else:
+            partes = texto_puro.split("\n\n")
+            if len(partes) > 1:
+                texto_puro = partes[-1].strip('"\n ')
+
+    prompt = f"""Você é um jurista e professor de Direito para concursos públicos no Brasil.
+Dispositivo legal em estudo: {rotulo_dispositivo}
+Texto literal da Lei Seca: "{texto_puro}"
+
+Crie um exemplo prático e objetivo da vida real, extremamente claro e direto, demonstrando como esse dispositivo legal exato é aplicado na prática (em um tribunal, delegacia, repartição pública ou cotidiano do cidadão). Use nomes fictícios e uma narrativa simples de 2 a 3 frases.
+
+Responda EXCLUSIVAMENTE em formato JSON com as chaves:
+{{
+  "situacao_real": "Narrativa objetiva de 2 a 3 frases de um caso concreto real da vida cotidiana aplicando este dispositivo com nomes fictícios",
+  "aplicacao_regra": "Como a regra foi aplicada ao caso concreto",
+  "objetivo_regra": "Qual a finalidade protetiva ou jurídica da norma",
+  "bizu_memorizacao": "Uma dica rápida de memorização ou como as bancas de concurso tentam criar pegadinha neste dispositivo"
+}}"""
+
+    # Estratégia 1: SDK google.genai moderno
+    if genai and hasattr(genai, "Client"):
+        try:
+            client = genai.Client(api_key=chave)
+            resp = client.models.generate_content(
+                model="gemini-2.5-flash",
+                contents=prompt
+            )
+            res = extrair_json_exemplo(resp.text, rotulo_dispositivo)
+            if res:
+                return res
+        except Exception as e:
+            logging.info(f"Tentativa com google.genai falhou: {e}")
+
+    # Estratégia 2: SDK google.generativeai legado
+    if genai and hasattr(genai, "configure"):
+        try:
+            genai.configure(api_key=chave)
+            model = genai.GenerativeModel("gemini-1.5-flash")
+            resp = model.generate_content(prompt)
+            res = extrair_json_exemplo(resp.text, rotulo_dispositivo)
+            if res:
+                return res
+        except Exception as e:
+            logging.info(f"Tentativa com google.generativeai falhou: {e}")
+
+    # Estratégia 3: Chamada REST nativa via urllib (funciona em qualquer Python, sem dependência externa)
+    for model_name in ["gemini-2.5-flash", "gemini-1.5-flash", "gemini-2.0-flash"]:
+        try:
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={chave}"
+            headers = {"Content-Type": "application/json"}
+            payload = {
+                "contents": [{"parts": [{"text": prompt}]}],
+                "generationConfig": {"temperature": 0.2}
+            }
+            req = urllib.request.Request(
+                url,
+                data=json.dumps(payload).encode("utf-8"),
+                headers=headers,
+                method="POST"
+            )
+            with urllib.request.urlopen(req, timeout=12) as response:
+                result_raw = json.loads(response.read().decode("utf-8"))
+                candidate = result_raw.get("candidates", [])[0]["content"]["parts"][0]["text"]
+                res = extrair_json_exemplo(candidate, rotulo_dispositivo)
+                if res:
+                    return res
+        except Exception as e_rest:
+            logging.warning(f"Chamada REST com {model_name} falhou: {e_rest}")
+
+    return None
+
+def gerar_exemplo_openai(rotulo_dispositivo, texto_dispositivo, chave_manual=None):
+    chave = obter_chave_openai(chave_manual)
+    if not chave:
+        return None
+    try:
+        texto_puro = texto_dispositivo.strip('"\n ')
+        prompt = f"""Você é um jurista e professor de Direito para concursos públicos no Brasil.
+Dispositivo legal: {rotulo_dispositivo}
+Texto literal da Lei: "{texto_puro}"
+
+Crie um exemplo prático e objetivo da vida real (2 a 3 frases) com caso concreto aplicando a regra.
+Responda em JSON puro:
+{{
+  "situacao_real": "...",
+  "aplicacao_regra": "...",
+  "objetivo_regra": "...",
+  "bizu_memorizacao": "..."
+}}"""
+        url = "https://api.openai.com/v1/chat/completions"
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {chave}"
+        }
+        payload = {
+            "model": "gpt-4o-mini",
+            "messages": [{"role": "user", "content": prompt}],
+            "temperature": 0.2,
+            "response_format": {"type": "json_object"}
+        }
+        req = urllib.request.Request(url, data=json.dumps(payload).encode("utf-8"), headers=headers, method="POST")
+        with urllib.request.urlopen(req, timeout=12) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            content = data["choices"][0]["message"]["content"]
+            return extrair_json_exemplo(content, rotulo_dispositivo)
+    except Exception as e:
+        logging.warning(f"Erro OpenAI: {e}")
+        return None
+
+# ==============================================================================
+# MOTOR HEURÍSTICO CONTEXTUAL JURÍDICO (COBERTURA TOTAL - NUNCA GERA TEXTO GENÉRICO)
+# ==============================================================================
+
+def gerar_exemplo_dinamico_heuristico(art_num, texto_original):
+    """
+    Analisa sintaticamente o texto do dispositivo legal para extrair atores, verbos,
+    prazos e vedações, construindo um exemplo com personagens e caso concreto específico,
+    garantindo que mesmo sem internet/IA o usuário NUNCA receba uma resposta estática vazia.
+    """
+    txt = texto_original.strip()
+    txt_lower = txt.lower()
+
+    # Detecta prazos específicos
+    m_prazo = re.search(r'(\d+)\s*\(([^)]+)\)\s*(dias|horas|meses|anos)', txt, re.IGNORECASE)
+    if not m_prazo:
+        m_prazo = re.search(r'(\d+)\s*(dias|horas|meses|anos)', txt, re.IGNORECASE)
+    
+    prazo_str = m_prazo.group(0) if m_prazo else None
+
+    # Detecta se é proibição, dever ou faculdade
+    eh_vedacao = any(w in txt_lower for w in ["vedado", "proibido", "não poderá", "não haverá", "inadmissível", "é vedada"])
+    eh_obrigacao = any(w in txt_lower for w in ["deverá", "obrigatório", "compete", "incumbe", "é obrigado"])
+    eh_faculdade = any(w in txt_lower for w in ["poderá", "facultado", "faculdade", "a critério"])
+
+    # Identifica o ator principal provável
+    ator = "O cidadão Pedro"
+    if any(w in txt_lower for w in ["servidor", "cargo público", "função pública", "investidura"]):
+        ator = "O servidor público Marcos"
+    elif any(w in txt_lower for w in ["juiz", "magistrado", "tribunal", "judiciário"]):
+        ator = "O juiz titular da comarca"
+    elif any(w in txt_lower for w in ["polícia", "policial", "delegado", "autoridade policial"]):
+        ator = "A autoridade policial em investigação"
+    elif any(w in txt_lower for w in ["preso", "apenado", "reeducando", "pena", "detento"]):
+        ator = "O custodiado Lucas"
+    elif any(w in txt_lower for w in ["presidente", "ministro", "executivo"]):
+        ator = "A autoridade do Poder Executivo"
+    elif any(w in txt_lower for w in ["empresa", "fornecedor", "consumidor", "contratada"]):
+        ator = "A sociedade empresária contratada"
+
+    # Constrói narrativa personalizada baseada no conteúdo
+    if eh_vedacao:
+        situacao = f"Em uma situação prática, uma autoridade tentou impor determinada exigência a {ator}. Contudo, por força expressa do {art_num}, a conduta foi barrada imediatamente por configurar vedação legal expressa."
+        aplicacao = f"• **Aplicação no {art_num}:** Impede atos arbitrários ao estabelecer proibição imperativa que vincula todos os órgãos públicos e particulares."
+        objetivo = "Garantir a preservação dos direitos fundamentais e evitar abusos de poder pelo Estado."
+        bizu = f"Pegadinha de banca: costumam trocar a vedação por permissão condicional ou criar exceções inexistentes neste dispositivo ({art_num})."
+    elif eh_obrigacao:
+        if prazo_str:
+            situacao = f"{ator} foi intimado a cumprir uma determinação formal no prazo legal improrrogável de {prazo_str}. Caso o ato não seja praticado nesse lapso temporal, opera-se a preclusão e perda da faculdade processual/administrativa."
+            aplicacao = f"• **Aplicação no {art_num}:** Impõe o cumprimento cogente no prazo estrito de {prazo_str}."
+            objetivo = "Assegurar a celeridade, a marcha regular do procedimento e a segurança jurídica."
+            bizu = f"A banca costuma alterar o prazo de '{prazo_str}' por outro valor similar para induzir o candidato ao erro."
+        else:
+            situacao = f"Diante de um caso concreto perante a administração, {ator} exerceu pretensão amparada na norma, sendo o órgão competente obrigado a cumprir a diretriz por expressa determinação cogente."
+            aplicacao = f"• **Aplicação no {art_num}:** A regra possui caráter vinculante ('deverá'), não cabendo juízo de discricionariedade à autoridade."
+            objetivo = "Submeter todos os atos públicos ao império da legalidade estrita."
+            bizu = "A banca adora trocar o termo vinculante ('deverá') por faculdade discricionária ('poderá')."
+    elif eh_faculdade:
+        situacao = f"Analisando as circunstâncias de conveniência e oportunidade do caso, {ator} exerceu a prerrogativa prevista na lei de forma motivada, sem que houvesse ilegalidade na escolha discricionária."
+        aplicacao = f"• **Aplicação no {art_num}:** Confere faculdade legítima de atuação, respeitados os princípios gerais de proporcionalidade e razoabilidade."
+        objetivo = "Conferir flexibilidade técnica e discricionariedade regulada à aplicação prática."
+        bizu = "Cuidado com questões que afirmam ser 'obrigatória' uma conduta que a lei qualifica como mera faculdade."
+    else:
+        # Extrai os primeiros 100 caracteres do texto para contextualizar
+        resumo_regra = txt[:110] + "..." if len(txt) > 110 else txt
+        situacao = f"Em um litígio sob exame judicial, {ator} postulou a incidência direta desta regra: '{resumo_regra}'. O magistrado acolheu o pedido exatamente nos termos literais positivados."
+        aplicacao = f"• **Aplicação no {art_num}:** Subordina os atos da vida civil e pública à literalidade desta norma."
+        objetivo = "Assegurar a previsibilidade dos comportamentos sociais e a tutela jurisdicional efetiva."
+        bizu = f"Em provas de lei seca, a cobrança do {art_num} é literal: atente-se aos conectivos 'e/ou', às ressalvas ('salvo') e às condições expressas."
+
+    return situacao, aplicacao, objetivo, bizu
 
 def extrair_exemplo_objetivo_personalizado(art_num, texto_original):
     """
-    Analisa os termos jurídicos do artigo, inciso ou parágrafo específico
-    e constrói um exemplo prático, objetivo e memorável da vida real.
+    Biblioteca rica de casos práticos reais e contextualizados para todos os temas
+    de Direito Constitucional, Penal, Processual Penal e Administrativo.
     """
     txt = texto_original.lower()
+    art_lower = art_num.lower()
 
-    # Art. 5º, XVI - Direito de Reunião (O CASO DA IMAGEM 1 DO USUÁRIO!)
-    if any(k in txt for k in ["reunir", "reunião", "sem armas", "abertos ao público", "prévio aviso"]):
+    # Art. 5º, I - Igualdade entre homens e mulheres
+    if "art. 5" in art_lower and ("inciso i\b" in art_lower or "i -" in art_lower) or ("homens e mulheres são iguais" in txt):
         return (
-            "Um grupo de estudantes e trabalhadores organiza uma manifestação pacífica em uma praça pública da cidade contra o aumento das tarifas de transporte. Eles NÃO precisam pedir autorização para a prefeitura ou para a polícia, mas devem apenas emitir um comunicado prévio para evitar que dois grupos usem o mesmo local no mesmo horário e para permitir que as autoridades organizem o trânsito e a segurança.",
-            f"• **Aplicação no {art_num}:** O direito de reunião é livre e independe de qualquer autorização estatal. Exige-se apenas que seja pacífica, sem armas, em locais abertos ao público, sem frustrar reunião anterior e com prévio aviso à autoridade.",
-            "Impedir a censura prévia de governantes a manifestações populares e garantir a ordem pública concomitante.",
-            "Pegadinha clássica de banca: afirmar que 'precisa de prévia autorização da polícia' (ERRADO!) ou que 'dispensa prévio aviso' (ERRADO!). É INDEPENDENTE DE AUTORIZAÇÃO, mas EXIGE PRÉVIO AVISO."
+            "Um edital de concurso público para investigador policial fixou pontuação salarial distinta para homens e mulheres no mesmo cargo e com a mesma carga horária. Uma candidata impetrou mandado de segurança e anulou a cláusula com base na igualdade constitucional absoluta de direitos e obrigações.",
+            f"• **Aplicação no {art_num}:** Veda qualquer discriminação arbitrária de gênero na fixação de vencimentos e atribuições públicas.",
+            "Garantir a igualdade substancial e formal entre homens e mulheres no ordenamento brasileiro.",
+            "Diferenciações entre homens e mulheres só são válidas quando justificadas por critérios biológicos razoáveis (ex: teste de aptidão física adaptado ou licença-maternidade)."
         )
 
-    # Art. 5º, XLVII - Penas vedadas
-    if any(k in txt for k in ["pena de morte", "caráter perpétuo", "trabalhos forçados", "banimento", "cruéis"]):
+    # Art. 5º, II - Princípio da Legalidade
+    if "art. 5" in art_lower and ("inciso ii\b" in art_lower or "ii -" in art_lower) or ("virtude de lei" in txt and "obrigado a fazer" in txt):
         return (
-            "No Brasil, o Código Penal Militar prevê pena de morte por fuzilamento apenas se houver guerra formalmente declarada pelo Presidente com aval do Congresso. Em tempo de paz, nenhuma autoridade judicial pode aplicar pena perpétua ou de morte.",
-            f"• **Aplicação no {art_num}:** Impede penas desumanas ou perpétuas no sistema penal comum brasileiro.",
-            "Proteger a dignidade da pessoa humana e evitar punições irreversíveis e cruéis.",
-            "A banca adora dizer que 'não há pena de morte em hipótese alguma' (FALSO, há em caso de guerra declarada) ou que 'pena de banimento é admitida' (FALSO, é vedada)."
+            "Um fiscal municipal aplicou multa de trânsito a um motorista baseando-se unicamente em uma portaria interna da secretaria municipal, sem nenhuma previsão em lei formal aprovada pela Câmara. A Justiça anulou a sanção, pois ninguém é obrigado a cumprir dever que não decorra de lei formal.",
+            f"• **Aplicação no {art_num}:** Princípio da legalidade estrita — para o particular, tudo o que não é proibido por lei é permitido; já o poder público só pode agir onde a lei expressamente autoriza.",
+            "Proteger a esfera de autonomia e liberdade do cidadão contra imposições arbitrárias do Poder Executivo.",
+            "Para os cidadãos vigora a autonomia da vontade (fazer o que a lei não proíbe); para a Administração, vigora a legalidade estrita (fazer apenas o que a lei autoriza)."
+        )
+
+    # Art. 5º, III - Vedação à Tortura e Tratamento Desumano
+    if "art. 5" in art_lower and ("inciso iii\b" in art_lower or "iii -" in art_lower) or ("submetido a tortura" in txt or "tratamento desumano" in txt):
+        return (
+            "Policiais civis agrediram fisicamente e ameaçaram um suspeito durante o interrogatório em delegacia para forçar uma confissão de roubo. O juiz declarou a nulidade absoluta da confissão, determinou a soltura imediata do réu e ordenou a instauração de ação penal contra os agentes por crime inafiançável de tortura.",
+            f"• **Aplicação no {art_num}:** Proibição absoluta e indelegável de tortura ou tratamento cruel, independentemente da gravidade do crime investigado.",
+            "Salvaguardar a dignidade da pessoa humana e a integridade física de qualquer indivíduo perante o aparato estatal.",
+            "O direito de não ser torturado é absoluto no Brasil — não admite exceções nem mesmo em estado de defesa, sítio ou guerra declarada."
+        )
+
+    # Art. 5º, IV - Livre Manifestação do Pensamento e Vedação ao Anonimato
+    if "art. 5" in art_lower and ("inciso iv\b" in art_lower or "iv -" in art_lower) or ("manifestação do pensamento" in txt and "vedado o anonimato" in txt):
+        return (
+            "Um cidadão publicou em rede social críticas severas à gestão de um prefeito, assinando com seu nome civil real e CPF. O prefeito pediu a censura do post, mas a Justiça negou porque a manifestação é livre quando identificada, ressalvado eventual pedido de indenização caso comprovada calúnia.",
+            f"• **Aplicação no {art_num}:** Protege a livre crítica e o debate público, proibindo estritamente denúncias anônimas como único fundamento de sanções estatais.",
+            "Promover o pluralismo político e garantir que a liberdade de expressão não seja usada de forma covarde para difamação anônima.",
+            "A banca adora dizer que 'o anonimato é admitido em certas hipóteses' (ERRADO! O anonimato é taxativamente VEDADO pela CF)."
+        )
+
+    # Art. 5º, V - Direito de Resposta
+    if "art. 5" in art_lower and ("inciso v\b" in art_lower or "v -" in art_lower) or ("direito de resposta" in txt):
+        return (
+            "Um telejornal noticiou incorretamente que um empresário local participava de fraude tributária. O empresário obteve na Justiça o direito de veicular sua resposta no mesmo horário e com o mesmo tempo do telejornal, além de receber indenização pecuniária por danos morais à sua imagem comercial.",
+            f"• **Aplicação no {art_num}:** Garante o contraditório social através de resposta proporcional ao agravo, cumulável com indenização material e moral.",
+            "Restaurar a verdade pública sobre a honra do indivíduo ofendido pelos meios de comunicação.",
+            "O direito de resposta é PROPORCIONAL AO AGRAVO e CUMULÁVEL com indenização por dano material, moral ou à imagem."
+        )
+
+    # Art. 5º, VI, VII, VIII - Liberdade Religiosa e Escusa de Consciência
+    if any(k in txt for k in ["liberdade de consciência e de crença", "livre exercício dos cultos", "escusa de consciência", "prestação alternativa"]):
+        return (
+            "Um jovem adventista convocado para o alistamento militar obrigatório declarou que suas convicções religiosas impedem o porte de armas e o serviço militar aos sábados. As Forças Armadas foram obrigadas a conferir-lhe prestação de serviço alternativo em atividades civis durante os dias úteis.",
+            f"• **Aplicação no {art_num}:** Protege a liberdade religiosa e garante que ninguém será privado de direitos por convicção de fé se cumprir a prestação alternativa fixada em lei.",
+            "Assegurar a laicidade do Estado e a convivência plural de todas as crenças e filosofias.",
+            "A perda de direitos políticos só ocorre se o indivíduo invocar escusa de consciência E se RECUSAR a cumprir a prestação alternativa fixada em lei (CF, Art. 15, IV)."
+        )
+
+    # Art. 5º, IX, X - Intimidade, Vida Privada, Honra e Imagem
+    if any(k in txt for k in ["intimidade", "vida privada", "honra e a imagem", "indenização pelo dano material ou moral"]):
+        return (
+            "Um hospital privado teve seu banco de dados invadido e fotos íntimas de prontuários cirúrgicos de pacientes vazaram na internet por negligência na segurança digital. Uma paciente acionou o hospital e foi indenizada em R$ 80.000 por violação direta à sua intimidade e honra.",
+            f"• **Aplicação no {art_num}:** Tutela a esfera privada e impõe responsabilidade civil com dever de reparação por violação da imagem.",
+            "Preservar a intimidade do indivíduo contra intromissões indevidas de particulares ou do poder estatal.",
+            "São invioláveis a intimidade, a vida privada, a honra e a imagem das pessoas, assegurado o direito à indenização pelo dano material ou moral decorrente de sua violação."
+        )
+
+    # Art. 5º, XI - Inviolabilidade de domicílio
+    if "xi" in art_lower or any(k in txt for k in ["domicílio", "casa é asilo", "inviolável"]):
+        return (
+            "Policiais desconfiam de entorpecentes em uma residência. À noite, eles não podem entrar sem autorização do morador, a não ser em flagrante delito, desastre ou para prestar socorro. Durante o dia, podem cumprir mandado judicial mesmo sem permissão do residente.",
+            f"• **Aplicação no {art_num}:** Protege a intimidade doméstica contra invasões arbitrárias do Estado.",
+            "Garantir que a residência seja um refúgio inviolável do indivíduo.",
+            "Por determinação judicial: SOMENTE DURANTE O DIA. A qualquer hora (dia ou noite): flagrante, desastre ou socorro."
+        )
+
+    # Art. 5º, XII - Sigilo de correspondência e telefônico
+    if "xii" in art_lower or any(k in txt for k in ["sigilo da correspondência", "comunicações telegráficas", "dados e das comunicações telefônicas"]):
+        return (
+            "A polícia realizou escuta telefônica de um investigado por homicídio com base apenas em ordem do delegado, sem prévia autorização judicial. O juiz declarou a gravação ilícita e ordenou o desentranhamento do processo, pois a interceptação telefônica exige estrita reserva de jurisdição.",
+            f"• **Aplicação no {art_num}:** Comunicações telefônicas só podem ser interceptadas por ordem judicial, para fins de investigação criminal ou instrução processual penal.",
+            "Preservar a intimidade das conversas e evitar espionagem estatal sem controle de magistrado.",
+            "Interceptação telefônica: SOMENTE por ordem judicial, para investigação criminal ou processo penal (NUNCA para processo civil ou administrativo)."
+        )
+
+    # Art. 5º, XVI - Direito de Reunião
+    if "xvi" in art_lower or any(k in txt for k in ["reunir", "reunião", "sem armas", "abertos ao público", "prévio aviso"]):
+        return (
+            "Estudantes e trabalhadores organizam passeata pacífica em praça pública contra o aumento da tarifa de transporte. Eles NÃO precisam pedir permissão ao prefeito ou ao comandante da PM; basta aviso prévio à autoridade para organizar o trânsito e evitar sobreposição com outro evento marcado.",
+            f"• **Aplicação no {art_num}:** O direito de reunião independe de autorização do Poder Público; requer apenas que seja pacífica, sem armas e com aviso prévio.",
+            "Impedir a censura governamental a manifestações cívicas e garantir a harmonia com o trânsito da cidade.",
+            "Pegadinha clássica: 'exige prévia autorização da polícia' (ERRADO!). É INDEPENDENTE de autorização, mas EXIGE PRÉVIO AVISO."
+        )
+
+    # Art. 5º, XVII a XXI - Direito de Associação
+    if any(k in txt for k in ["associação", "associar-se", "dissolução compulsória", "suspensão de suas atividades"]):
+        return (
+            "Um grupo de moradores funda uma associação de bairro sem pedir licença à prefeitura. Meses depois, o prefeito tentou fechar a entidade por decreto. A Justiça declarou o decreto nulo: a dissolução de associação exige decisão judicial com trânsito em julgado.",
+            f"• **Aplicação no {art_num}:** A criação de associações independe de autorização estatal, e sua dissolução forçada exige ordem judicial transitada em julgado.",
+            "Garantir a autonomia da sociedade civil contra o arbítrio governamental.",
+            "Para SUSPENDER atividades da associação: basta decisão judicial simples. Para DISSOLVER compulsoriamente: EXIGE TRÂNSITO EM JULGADO."
+        )
+
+    # Art. 5º, XXII a XXVI - Propriedade, Desapropriação e Pequena Propriedade Rural
+    if any(k in txt for k in ["direito de propriedade", "função social", "desapropriação por necessidade", "pequena propriedade rural", "requisição administrativa"]):
+        return (
+            "Um pequeno agricultor cultiva milho em sítio familiar de 20 hectares para subsistência de sua família. Ele contraiu dívida para comprar sementes e o banco pediu a penhora da terra. O juiz negou a penhora com base no Art. 5º, XXVI, pois a pequena propriedade rural trabalhada pela família é impenhorável por dívidas produtivas.",
+            f"• **Aplicação no {art_num}:** Protege o patrimônio mínimo de sobrevivência da família camponesa contra execuções bancárias.",
+            "Fomentar a agricultura familiar e assegurar a dignidade e o trabalho no campo.",
+            "Pequena propriedade rural: trabalhada pela família + dívida da atividade produtiva = IMPENHORÁVEL."
+        )
+
+    # Art. 5º, XXXVIII - Tribunal do Júri
+    if "xxxviii" in art_lower or any(k in txt for k in ["tribunal do júri", "plenitude de defesa", "sigilo das votações", "soberania dos veredictos", "crimes dolosos contra a vida"]):
+        return (
+            "Um indivíduo é acusado de homicídio tentado após desferir facadas em um vizinho em briga de bar. O juiz togado não pode condená-lo sozinho no mérito: ele profere pronúncia e remete o acusado a julgamento perante 7 jurados populares no Tribunal do Júri.",
+            f"• **Aplicação no {art_num}:** Competência constitucional privativa do Júri para julgar crimes dolosos contra a vida (homicídio, infanticídio, aborto, induzimento ao suicídio).",
+            "Garantir o julgamento de crimes contra a vida por pares da própria sociedade com soberania de veredicto.",
+            "O Tribunal do Júri julga apenas crimes DOLOSOS contra a vida (latrocínio, embora envolva morte, é crime contra o patrimônio julgado por juiz singular, Súmula 603 do STF)."
+        )
+
+    # Art. 5º, XXXIX, XL - Legalidade Penal e Irretroatividade
+    if any(k in txt for k in ["não há crime sem lei anterior", "não há pena sem prévia", "lei penal não retroagirá", "salvo para beneficiar o réu"]):
+        return (
+            "Um indivíduo foi condenado a 4 anos por um crime. Meses após a sentença, o Congresso aprovou nova lei reduzindo a pena do mesmo delito para 2 anos. O juiz da execução penal aplicou a nova lei retroativamente, reduzindo a pena do condenado para 2 anos de forma imediata.",
+            f"• **Aplicação no {art_num}:** A lei penal mais benéfica sempre retroage para alcançar fatos e processos anteriores, inclusive já transitados em julgado.",
+            "Impedir que o Estado mantenha penas mais gravosas quando a própria sociedade reduziu o rigor punitivo.",
+            "A lei penal NÃO retroage, SALVO para beneficiar o réu (novatio legis in mellius ou abolitio criminis retroagem SEMPRE)."
+        )
+
+    # Art. 5º, XLII, XLIII, XLIV - Racismo, 3T+H e Grupos Armados
+    if any(k in txt for k in ["prática do racismo", "tortura", "tráfico ilícito de entorpecentes", "terrorismo", "hediondos", "grupos armados"]):
+        return (
+            "Um homem profere ofensas racistas contra atendente de loja em shopping. Ele é preso em flagrante. O delegado não pode arbitrar fiança, e o advogado sabe que a ação penal não prescreverá mesmo se passarem 20 anos, pois racismo é inafiançável e imprescritível.",
+            f"• **Aplicação no {art_num}:** Racismo e Ação de grupos armados são INAFIANÇÁVEIS e IMPRESCRITÍVEIS. Já os 3T+H (tortura, tráfico, terrorismo e hediondos) são inafiançáveis e insuscetíveis de graça/anistia (mas prescrevem!).",
+            "Combater com o mais alto rigor constitucional a discriminação racial e os crimes mais hediondos.",
+            "Mnemônico de ouro: RACISMO e GRUPOS ARMADOS = RAÇUDOS = IMPRESCRITÍVEIS e INAFIANÇÁVEIS. 3T+H = INAFIANÇÁVEIS e INSUSCETÍVEIS de graça/anistia."
+        )
+
+    # Art. 5º, XLVII - Penas vedadas (Morte, Perpétua, Banimento, Cruéis, Trabalhos forçados)
+    if "xlvii" in art_lower or any(k in txt for k in ["de morte", "pena de morte", "guerra declarada", "caráter perpétuo", "perpétu", "trabalhos forçados", "banimento", "cruéis", "não haverá penas"]):
+        return (
+            "No Brasil, o Código Penal Militar prevê pena de morte por fuzilamento apenas se houver guerra formalmente declarada pelo Presidente com autorização do Congresso Nacional. Em tempo de paz, nenhuma autoridade judicial pode aplicar pena de morte ou de caráter perpétuo.",
+            f"• **Aplicação no {art_num}:** Impede punições desumanas, cruéis ou perpétuas no sistema penal brasileiro comum.",
+            "Proteger a dignidade da pessoa humana e evitar punições estatais irreversíveis e cruéis.",
+            "Banca adora dizer que 'não há pena de morte em hipótese alguma' (FALSO, há em caso de guerra declarada) ou que 'pena de banimento é permitida' (FALSO, é expressamente vedada)."
         )
 
     # Art. 5º, XLVIII - Estabelecimentos distintos
-    if any(k in txt for k in ["estabelecimentos distintos", "natureza do delito", "sexo do apenado"]):
+    if "xlviii" in art_lower or any(k in txt for k in ["estabelecimentos distintos", "natureza do delito", "sexo do apenado"]):
         return (
             "Um jovem de 19 anos condenado por furto simples não violento não pode ser colocado na mesma ala de reincidentes de alta periculosidade de 40 anos condenados por latrocínio, e homens e mulheres devem cumprir pena em locais separados.",
             f"• **Aplicação no {art_num}:** O Estado deve individualizar a execução penal conforme o sexo, a idade e a natureza do delito.",
@@ -850,17 +1237,8 @@ def extrair_exemplo_objetivo_personalizado(art_num, texto_original):
             "Critérios constitucionais de separação: natureza do delito, idade e sexo do apenado."
         )
 
-    # Art. 5º, LI / LII - Extradição
-    if any(k in txt for k in ["extradit", "brasileiro nato", "naturalizado"]):
-        return (
-            "Roberto, brasileiro nato, cometeu homicídio na Itália e fugiu para o Brasil. O STF nega qualquer pedido de extradição, pois nato JAMAIS é extraditado (responderá pelo crime perante a Justiça brasileira). Já Pierre, francês naturalizado brasileiro, pode ser extraditado por crime comum praticado ANTES da naturalização ou por tráfico de drogas A QUALQUER TEMPO.",
-            f"• **Aplicação no {art_num}:** Garante imunidade absoluta de extradição ao brasileiro nato e fixa os 2 casos estritos do naturalizado.",
-            "Proteger os nacionais da jurisdição punitiva estrangeira em território nacional.",
-            "Nato NUNCA é extraditado. Naturalizado pode em 2 casos: crime comum ANTES da naturalização OU tráfico de entorpecentes a qualquer tempo."
-        )
-
     # Art. 5º, L - Presidiárias e amamentação
-    if any(k in txt for k in ["presidiária", "amamenta", "filhos"]):
+    if " l" in art_lower or any(k in txt for k in ["presidiária", "amamenta", "filhos durante o período"]):
         return (
             "Uma detenta deu à luz durante o cumprimento de pena em presídio feminino. O estabelecimento prisional é obrigado a dispor de creche/berçário para que ela amamente o bebê durante os primeiros meses.",
             f"• **Aplicação no {art_num}:** Direito subjetivo da mãe presa e do recém-nascido de permanecerem juntos durante a amamentação.",
@@ -868,26 +1246,35 @@ def extrair_exemplo_objetivo_personalizado(art_num, texto_original):
             "O direito protege a criança e não pode sofrer corte por falta disciplinar da mãe."
         )
 
-    # Art. 5º, LXXIX - Proteção de dados digitais
-    if any(k in txt for k in ["dados pessoais", "meios digitais"]):
+    # Art. 5º, LI / LII - Extradição
+    if "li" in art_lower or "lii" in art_lower or any(k in txt for k in ["extradit", "brasileiro nato", "naturalizado"]):
         return (
-            "Uma empresa de tecnologia ou órgão público sofre vazamento de dados de cidadãos sem consentimento. O titular pode acionar o Poder Judiciário invocando direito fundamental expresso à proteção de dados inclusive digitais.",
-            f"• **Aplicação no {art_num}:** Eleva a privacidade digital ao patamar de cláusula pétrea fundamental autônoma (EC 115).",
-            "Resguardar a autodeterminação informativa no ambiente cibernético moderno.",
-            "Incluído pela Emenda 115/2022 como garantia individual fundamental expressa."
+            "Roberto, brasileiro nato, cometeu homicídio na Itália e fugiu para o Brasil. O STF nega qualquer pedido de extradição, pois nato JAMAIS é extraditado (responderá pelo crime perante a Justiça brasileira). Já Pierre, francês naturalizado brasileiro, pode ser extraditado por crime comum praticado ANTES da naturalização ou por tráfico de drogas A QUALQUER TEMPO.",
+            f"• **Aplicação no {art_num}:** Garante imunidade absoluta de extradição ao brasileiro nato e fixa os 2 casos estritos do naturalizado.",
+            "Proteger os nacionais da jurisdição punitiva estrangeira em território nacional.",
+            "Nato NUNCA é extraditado. Naturalizado pode em 2 casos: crime comum ANTES da naturalização OU tráfico de entorpecentes a qualquer tempo."
         )
 
-    # Art. 5º, XI - Inviolabilidade de domicílio
-    if any(k in txt for k in ["domicílio", "casa é asilo", "inviolável"]):
+    # Art. 5º, LVI - Provas ilícitas
+    if "lvi" in art_lower or any(k in txt for k in ["provas obtidas por meios ilícitos", "inadmissíveis"]):
         return (
-            "Policiais suspeitam que há drogas em uma residência. À noite, eles só podem entrar com autorização do morador, em flagrante delito, desastre ou socorro. Durante o dia, podem cumprir mandado judicial mesmo sem consentimento.",
-            f"• **Aplicação no {art_num}:** Protege a intimidade doméstica contra invasões arbitrárias do Estado.",
-            "Garantir que a residência seja um refúgio inviolável do indivíduo.",
-            "Por determinação judicial: SOMENTE DURANTE O DIA. A qualquer hora (dia ou noite): flagrante, desastre ou socorro."
+            "Investigadores invadiram um escritório sem mandado judicial à noite e fotografaram planilhas de propina. Na ação penal, o juiz declarou a prova nula de pleno direito e mandou trancar o processo, pois provas colhidas por meio ilícito não podem fundamentar condenação.",
+            f"• **Aplicação no {art_num}:** Teoria dos frutos da árvore envenenada: a prova ilícita contamina todas as demais provas que dela derivarem exclusivamente.",
+            "Desestimular autoridades a violarem direitos fundamentais na busca por evidências penais.",
+            "São inadmissíveis no processo as provas obtidas por meios ilícitos (CF, Art. 5º, LVI)."
+        )
+
+    # Art. 5º, LVII - Presunção de inocência
+    if "lvii" in art_lower or any(k in txt for k in ["transitou em julgado", "culpado", "presunção de inocência", "trânsito em julgado"]):
+        return (
+            "Um réu foi condenado em 1ª e 2ª instâncias, mas recorreu ao STJ e STF. Ele não pode ser tratado como culpado nem ter o nome lançado no rol dos culpados antes da decisão final irrecorrível.",
+            f"• **Aplicação no {art_num}:** Presunção constitucional de não culpabilidade até o trânsito em julgado de sentença penal condenatória.",
+            "Evitar que o Estado aplique estigmas e consequências definitivas antes do esgotamento recursal.",
+            "Ninguém será considerado culpado até o TRÂNSITO EM JULGADO de sentença penal condenatória."
         )
 
     # Art. 5º, LXVII - Prisão civil por dívida
-    if any(k in txt for k in ["prisão civil", "alimentícia", "depositário infiel"]):
+    if "lxvii" in art_lower or any(k in txt for k in ["prisão civil", "alimentícia", "depositário infiel"]):
         return (
             "Carlos deixa de pagar voluntariamente 3 parcelas de pensão alimentícia devidas ao filho menor. O juiz decreta a prisão civil de 30 a 90 dias em regime fechado separado dos presos comuns.",
             f"• **Aplicação no {art_num}:** Apenas a obrigação alimentar enseja prisão civil hoje. O depositário infiel não pode mais ser preso (Súmula Vinculante 25).",
@@ -895,7 +1282,7 @@ def extrair_exemplo_objetivo_personalizado(art_num, texto_original):
             "Na letra da CF: pensão e depositário infiel. Na prática e jurisprudência (SV 25): apenas devedor de alimentos."
         )
 
-    # Art. 5º, LXVIII a LXXIII - Remédios Constitucionais
+    # Art. 5º, LXVIII a LXXIII - Remédios Constitucionais (HC, MS, HD, Ação Popular)
     if any(k in txt for k in ["habeas corpus", "locomoção", "liberdade de ir e vir"]):
         return (
             "Um cidadão tem prisão preventiva decretada por autoridade incompetente. O advogado impetra habeas corpus diretamente no Tribunal para expedição imediata de alvará de soltura.",
@@ -928,26 +1315,35 @@ def extrair_exemplo_objetivo_personalizado(art_num, texto_original):
             "É personalíssimo (apenas sobre dados do próprio impetrante) e EXIGE prévia recusa administrativa (Súmula 2 do STJ)."
         )
 
-    # Art. 5º, LVII - Presunção de inocência
-    if any(k in txt for k in ["transitou em julgado", "culpado", "presunção de inocência"]):
+    # Art. 5º, LXXVIII - Razoável duração do processo e celeridade
+    if "lxxviii" in art_lower or any(k in txt for k in ["razoável duração", "celeridade", "tramitação"]):
         return (
-            "Um réu foi condenado em 1ª e 2ª instâncias, mas recorreu ao STJ e STF. Ele não pode ser tratado como culpado nem ter o nome lançado no rol dos culpados antes da decisão final irrecorrível.",
-            f"• **Aplicação no {art_num}:** Presunção constitucional de não culpabilidade até o trânsito em julgado de sentença penal condenatória.",
-            "Evitar que o Estado aplique estigmas e consequências definitivas antes do esgotamento recursal.",
-            "Ninguém será considerado culpado até o TRÂNSITO EM JULGADO de sentença penal condenatória."
+            "Um cidadão aguarda há mais de 10 anos a decisão final em um processo administrativo de aposentadoria no INSS sem qualquer complexidade que justifique tamanha demora. Diante da inércia desproporcional, ele impetra mandado de segurança exigindo conclusão imediata e pleiteia indenização por danos morais.",
+            f"• **Aplicação no {art_num}:** Garante a qualquer jurisdicionado o direito a um processo sem dilações indevidas, tanto judicial quanto administrativo.",
+            "Evitar que a morosidade e lentidão do Estado resultem em denegação prática de justiça.",
+            "Atenção: a garantia se aplica a processos JUDICIAIS e ADMINISTRATIVOS (banca adora restringir a 'apenas judiciais')."
+        )
+
+    # Art. 5º, LXXIX - Proteção de dados digitais
+    if "lxxix" in art_lower or any(k in txt for k in ["dados pessoais", "meios digitais"]):
+        return (
+            "Uma empresa de tecnologia ou órgão público sofre vazamento de dados de cidadãos sem consentimento. O titular pode acionar o Poder Judiciário invocando direito fundamental expresso à proteção de dados inclusive digitais.",
+            f"• **Aplicação no {art_num}:** Eleva a privacidade digital ao patamar de cláusula pétrea fundamental autônoma (EC 115).",
+            "Resguardar a autodeterminação informativa no ambiente cibernético moderno.",
+            "Incluído pela Emenda 115/2022 como garantia individual fundamental expressa."
         )
 
     # Art. 84 - Competências do Presidente
-    if any(k in txt for k in ["competência privativa", "decretar", "sancionar", "vetar", "indulto"]):
+    if "84" in art_lower or any(k in txt for k in ["competência privativa do presidente", "sancionar, promulgar", "decretar o estado de defesa"]):
         return (
-            "O Presidente da República edita um decreto autônomo extinguindo cargos públicos federais que se encontram vagos, sem criar novas despesas nem órgãos públicos.",
+            "O Presidente da República edita um decreto autônomo extinguindo cargos públicos federais que se encontram vagos, sem criar novas despesas nem órgãos públicos (Art. 84, VI, 'b').",
             f"• **Aplicação no {art_num}:** Exercício de competências privativas privativas do Chefe do Executivo da União.",
             "Harmonizar o equilíbrio republicano de freios e contrapesos.",
             "Atenção aos incisos que admitem DELEGAÇÃO: VI (decreto autônomo), XII (indulto) e XXV (prover cargos federais nos termos da lei)."
         )
 
     # Art. 37 - Administração Pública e Concursos
-    if any(k in txt for k in ["concurso público", "acumulação remunerada", "investidura em cargo"]):
+    if "37" in art_lower or any(k in txt for k in ["administração pública", "concurso público", "acumulação remunerada", "investidura em cargo"]):
         return (
             "Um médico concursado do SUS é aprovado para outro cargo de médico em hospital municipal. Como há compatibilidade de horários, ele pode acumular os dois cargos de profissional de saúde regulamentada.",
             f"• **Aplicação no {art_num}:** Exceção constitucional permitida à regra geral que proíbe acumulação de cargos públicos.",
@@ -955,16 +1351,14 @@ def extrair_exemplo_objetivo_personalizado(art_num, texto_original):
             "Acumulações permitidas se houver compatibilidade: 2 de professor; 1 de professor com 1 técnico/científico; 2 privativos de profissionais de saúde."
         )
 
-    # Exemplo contextual padrão enriquecido
-    return (
-        f"Na prática jurídica cotidiana, as autoridades públicas e os tribunais aplicam este dispositivo ({art_num}) para vincular formalmente as decisões judiciais e administrativas aos limites estritos do texto da lei.",
-        f"• **Aplicação no {art_num}:** Impõe cumprimento cogente da literalidade normativa, vedando interpretações que distorçam as regras expressas da legislação.",
-        "Assegurar a legalidade estrita, a previsibilidade dos atos públicos e a segurança jurídica aos cidadãos.",
-        "Atenção redobrada da banca em trocar termos cogentes ('deverá') por facultativos ('poderá') e inverter regras por exceções."
-    )
+    # Se não caiu em nenhum caso tabelado, usa o motor heurístico dinâmico contextual!
+    return gerar_exemplo_dinamico_heuristico(art_num, texto_original)
 
-def gerar_explicacao_humana(art_num, texto_original, foi_correto=False, tipo_troca=None, texto_modificado=None):
-    situacao_real, aplicacao_regra, objetivo_regra, bizu_memorizacao = extrair_exemplo_objetivo_personalizado(art_num, texto_original)
+def gerar_explicacao_humana(art_num, texto_original, foi_correto=False, tipo_troca=None, texto_modificado=None, exemplo_customizado=None, foi_ia=False, nome_ia="Gemini IA"):
+    if exemplo_customizado and len(exemplo_customizado) == 4:
+        situacao_real, aplicacao_regra, objetivo_regra, bizu_memorizacao = exemplo_customizado
+    else:
+        situacao_real, aplicacao_regra, objetivo_regra, bizu_memorizacao = extrair_exemplo_objetivo_personalizado(art_num, texto_original)
 
     if foi_correto:
         status_txt = "O item está **CORRETO**."
@@ -973,9 +1367,10 @@ def gerar_explicacao_humana(art_num, texto_original, foi_correto=False, tipo_tro
     else:
         status_txt = "O item está **ERRADO**."
         detalhe_erro = "O enunciado promoveu alteração indevida da regra legal."
-        resumo_erro_bloco = f"<br>⚠️ <strong>Pegadinha da Questão:</strong> {tipo_troca or 'Substituição de palavra-chave ou prazo legal'}."
+        resumo_erro_bloco = f"<br>⚠️ <strong>Pegadinha da Questão:</strong> {tipo_troca or 'Substituição de palavra-chave, prazo ou conectivo legal'}."
 
-    # HTML formatado exatamente idêntico ao modelo da Imagem 2 (com cores, bordas e destaque visual)
+    tag_ia = f'<span style="background-color: #fef3c7; color: #b45309; padding: 2px 8px; border-radius: 6px; font-size: 11px; font-weight: 600; margin-left: 8px;">✨ Gerado com {nome_ia}</span>' if foi_ia else '<span style="background-color: #eff6ff; color: #1d4ed8; padding: 2px 8px; border-radius: 6px; font-size: 11px; font-weight: 600; margin-left: 8px;">⚖️ Exemplo Prático da Lei</span>'
+
     card_dispositivo_html = f"""
     <div style="background-color: #f8fafc; border: 1px solid #bfdbfe; border-radius: 10px; padding: 15px; margin-bottom: 14px;">
         <div style="font-weight: 600; color: #1e3a8a; font-size: 13.5px; margin-bottom: 6px;">📖 Dispositivo Literal da Lei Seca ({art_num})</div>
@@ -987,7 +1382,11 @@ def gerar_explicacao_humana(art_num, texto_original, foi_correto=False, tipo_tro
 
     card_exemplo_html = f"""
     <div style="background-color: #fffbeb; border: 1px solid #fde68a; border-radius: 12px; padding: 18px; margin-bottom: 14px;">
-        <div style="font-weight: 700; color: #78350f; font-size: 14px; margin-bottom: 10px;">💡 Exemplo Prático e Objetivo da Vida Real</div>
+        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px;">
+            <div style="font-weight: 700; color: #78350f; font-size: 14px;">
+                💡 Exemplo Prático e Objetivo da Vida Real {tag_ia}
+            </div>
+        </div>
         <div style="color: #1f2937; line-height: 1.6; font-size: 13px;">
             <p style="margin-bottom: 8px;"><strong>Situação Concreta:</strong> {situacao_real}</p>
             <p style="margin-bottom: 8px;"><strong>Aplicação Prática:</strong> {aplicacao_regra}</p>
@@ -1009,10 +1408,10 @@ def gerar_explicacao_humana(art_num, texto_original, foi_correto=False, tipo_tro
     return explicacao_formatada
 
 # ==============================================================================
-# GERAÇÃO DE QUESTÕES COM FRAGMENTAÇÃO
+# GERAÇÃO DE QUESTÕES COM FRAGMENTAÇÃO E SUPORTE REAL AO GEMINI
 # ==============================================================================
 
-def generate_questions_for_articles(discipline_id, law_id, article_ids, qtd_total, filter_id=None, motor_ia="⚙️ Regra Padrão"):
+def generate_questions_for_articles(discipline_id, law_id, article_ids, qtd_total, filter_id=None, motor_ia="♊ Gemini IA (Recomendado)", chave_ia_manual=None, progress_callback=None):
     conn = db()
     if article_ids:
         placeholders = ",".join("?" * len(article_ids))
@@ -1043,6 +1442,12 @@ def generate_questions_for_articles(discipline_id, law_id, article_ids, qtd_tota
     generated = 0
     now = datetime.now().isoformat()
 
+    usar_gemini = "Gemini" in motor_ia
+    usar_openai = "OpenAI" in motor_ia
+    
+    # Cache em memória para não repetir chamadas de IA sobre o mesmo artigo/dispositivo
+    cache_ia = {}
+
     for i in range(qtd_total):
         alvo = alvos[i % len(alvos)]
         art = alvo["art"]
@@ -1051,15 +1456,58 @@ def generate_questions_for_articles(discipline_id, law_id, article_ids, qtd_tota
         text = limpar_e_formatar_texto_lei(alvo["texto"])
         is_correct = random.choice([True, False])
 
+        if progress_callback:
+            try:
+                progress_callback((i + 1) / qtd_total, f"Processando questão {i+1} de {qtd_total}: {rotulo_dispositivo}...")
+            except Exception:
+                pass
+
+        exemplo_ia = None
+        chave_cache = (numero_dispositivo, text[:80])
+
+        if usar_gemini:
+            if chave_cache in cache_ia:
+                exemplo_ia = cache_ia[chave_cache]
+            else:
+                exemplo_ia = gerar_exemplo_gemini(rotulo_dispositivo, text, chave_manual=chave_ia_manual)
+                if exemplo_ia:
+                    cache_ia[chave_cache] = exemplo_ia
+        elif usar_openai:
+            if chave_cache in cache_ia:
+                exemplo_ia = cache_ia[chave_cache]
+            else:
+                exemplo_ia = gerar_exemplo_openai(rotulo_dispositivo, text, chave_manual=chave_ia_manual)
+                if exemplo_ia:
+                    cache_ia[chave_cache] = exemplo_ia
+
+        foi_ia_utilizada = bool(exemplo_ia is not None)
+        nome_ia = "Gemini IA" if usar_gemini else ("OpenAI" if usar_openai else "Inteligência Artificial")
+
         if is_correct:
             enunciado = f"De acordo com o **{rotulo_dispositivo}**:\n\n\"{text}\""
             gabarito = 1
-            explicacao = gerar_explicacao_humana(numero_dispositivo, text, True)
+            explicacao = gerar_explicacao_humana(
+                numero_dispositivo,
+                text,
+                foi_correto=True,
+                exemplo_customizado=exemplo_ia,
+                foi_ia=foi_ia_utilizada,
+                nome_ia=nome_ia
+            )
         else:
             modified_text, tipo_troca = alterar_texto_para_errado(text)
             enunciado = f"De acordo com o **{rotulo_dispositivo}**:\n\n\"{modified_text}\""
             gabarito = 0
-            explicacao = gerar_explicacao_humana(numero_dispositivo, text, False, tipo_troca, modified_text)
+            explicacao = gerar_explicacao_humana(
+                numero_dispositivo,
+                text,
+                foi_correto=False,
+                tipo_troca=tipo_troca,
+                texto_modificado=modified_text,
+                exemplo_customizado=exemplo_ia,
+                foi_ia=foi_ia_utilizada,
+                nome_ia=nome_ia
+            )
 
         try:
             conn.execute("""
@@ -1305,20 +1753,49 @@ with tab2:
             
             motor_ia = st.radio(
                 "5. Selecione o Motor para Geração de Questões:",
-                ["⚙️ Regra Padrão", "🦙 Ollama (Local)", "🤖 OpenAI (Nuvem)", "♊ Gemini (Nuvem)"]
+                ["♊ Gemini IA (Recomendado - Exemplos Reais sob Medida)", "⚙️ Regra Padrão / Motor Contextual Integrado", "🤖 OpenAI (Nuvem)"],
+                index=0
             )
+
+            chave_atual = obter_chave_gemini()
+            chave_informada_caderno = None
+            if "Gemini" in motor_ia:
+                if not chave_atual:
+                    st.warning("⚠️ Nenhuma chave Gemini detectada. Insira abaixo para ativar a IA em todas as questões ou use o motor contextual.")
+                    chave_informada_caderno = st.text_input(
+                        "🔑 Chave Gemini API (Google AI Studio):",
+                        type="password",
+                        key="gemini_caderno_input",
+                        help="Obtenha grátis em aistudio.google.com/app/apikey"
+                    )
+                    if chave_informada_caderno.strip():
+                        st.session_state["gemini_api_key"] = chave_informada_caderno.strip()
+                else:
+                    st.success("🟢 Inteligência Artificial (Gemini) pronta para criar casos práticos reais sob medida!")
 
             filter_name = st.text_input("6. Nome do seu Caderno / Filtro:")
 
-            if st.button("Salvar Caderno e Gerar Questões"):
+            if st.button("Salvar Caderno e Gerar Questões", type="primary"):
                 if not filter_name:
                     st.error("Informe um nome para o seu caderno!")
                 else:
-                    with st.spinner("Aguarde sincronização... Gerando questões fragmentadas e estruturando o caderno..."):
-                        art_ids = [art_dict[k] for k in selected_arts]
-                        f_id = save_filter(filter_name, d_id, l_id, art_ids, qtd_q)
-                        qtd_geradas = generate_questions_for_articles(d_id, l_id, art_ids, qtd_q, filter_id=f_id, motor_ia=motor_ia)
-                    st.success(f"Caderno '{filter_name}' criado com sucesso! {qtd_geradas} questões fragmentadas geradas.")
+                    chave_usar = chave_informada_caderno or chave_atual
+                    prog_bar = st.progress(0, text="Iniciando motor de fragmentação e IA...")
+                    
+                    def atualizar_progresso(pct, texto):
+                        prog_bar.progress(min(max(pct, 0.0), 1.0), text=texto)
+
+                    art_ids = [art_dict[k] for k in selected_arts]
+                    f_id = save_filter(filter_name, d_id, l_id, art_ids, qtd_q)
+                    qtd_geradas = generate_questions_for_articles(
+                        d_id, l_id, art_ids, qtd_q,
+                        filter_id=f_id,
+                        motor_ia=motor_ia,
+                        chave_ia_manual=chave_usar,
+                        progress_callback=atualizar_progresso
+                    )
+                    prog_bar.progress(1.0, text="Concluído com sucesso!")
+                    st.success(f"🎉 Caderno '{filter_name}' criado com sucesso! {qtd_geradas} questões fragmentadas geradas com exemplos objetivos.")
 
     st.divider()
     st.subheader("🗑 Meus Cadernos / Filtros Salvos por Disciplina")
@@ -1343,7 +1820,7 @@ with tab2:
                         st.rerun()
 
 # ==============================================================================
-# RESOLVER QUESTÕES (FORMATADO COMO A IMAGEM 2)
+# RESOLVER QUESTÕES (FORMATADO COMO A IMAGEM 2 E COM SUPORTE AO GEMINI AO VIVO)
 # ==============================================================================
 
 with tab3:
@@ -1430,11 +1907,44 @@ with tab3:
                             "acertou": acertou,
                             "resposta": resp
                         }
+
+                        # Auto-geração com IA ao vivo ao responder, caso ainda não tenha IA e esteja configurada
+                        chave_ia = obter_chave_gemini()
+                        auto_gerar = st.session_state.get("auto_ia_responder", True)
+                        explicacao_atual = q["explicacao"] or ""
+                        ja_tem_ia = ("✨ Gerado com Gemini IA" in explicacao_atual) or ("✨ Gerado com OpenAI" in explicacao_atual)
+
+                        if chave_ia and auto_gerar and not ja_tem_ia:
+                            texto_limpo_lei = q["enunciado"]
+                            if "De acordo com o" in texto_limpo_lei:
+                                linhas = texto_limpo_lei.split("\n\n")
+                                if len(linhas) > 1:
+                                    texto_limpo_lei = linhas[-1].strip('"\n ')
+
+                            novo_ex_ia = gerar_exemplo_gemini(rotulo_formatado, texto_limpo_lei, chave_manual=chave_ia)
+                            if novo_ex_ia:
+                                nova_exp = gerar_explicacao_humana(
+                                    num_disp,
+                                    texto_limpo_lei,
+                                    foi_correto=(val == q["gabarito"]),
+                                    tipo_troca=None if q["gabarito"] == 1 else "Alteração indevida da literalidade legal",
+                                    exemplo_customizado=novo_ex_ia,
+                                    foi_ia=True,
+                                    nome_ia="Gemini IA"
+                                )
+                                st.session_state[f"custom_explicacao_{q_id}"] = nova_exp
+                                try:
+                                    conn_u = db()
+                                    conn_u.execute("UPDATE questoes SET explicacao = ? WHERE id = ?", (nova_exp, q_id))
+                                    conn_u.commit()
+                                    conn_u.close()
+                                except Exception:
+                                    pass
                         st.rerun()
                 else:
                     dados_resp = st.session_state["answered_q"][q_id]
                     
-                    # RENDERIZAÇÃO VISUAL IDÊNTICA À IMAGEM 2 (COM CARTÕES E CORES MODERNAS)
+                    # RENDERIZAÇÃO VISUAL EM CARTÕES MODERNOS
                     if dados_resp["acertou"]:
                         card_status_html = f"""
                         <div style="background-color: #ecfdf5; border: 1px solid #a7f3d0; border-radius: 12px; padding: 15px; margin-bottom: 14px; display: flex; align-items: center; gap: 12px;">
@@ -1457,11 +1967,52 @@ with tab3:
                         """
                     
                     st.markdown(card_status_html, unsafe_allow_html=True)
-                    st.markdown(q['explicacao'], unsafe_allow_html=True)
+                    
+                    # Se o usuário pediu para a IA gerar um novo exemplo ao vivo nesta questão:
+                    explicacao_exibir = st.session_state.get(f"custom_explicacao_{q_id}", q['explicacao'])
+                    st.markdown(explicacao_exibir, unsafe_allow_html=True)
 
-                    if st.button("Próxima Questão ➡️", key=f"next_{q_id}"):
-                        st.session_state["q_index"] += 1
-                        st.rerun()
+                    c_btn_ia, c_btn_prox = st.columns([1, 1])
+                    with c_btn_ia:
+                        if st.button("✨ Gerar / Atualizar com IA (Gemini)", key=f"btn_ai_{q_id}"):
+                            chave_ia = obter_chave_gemini()
+                            if not chave_ia:
+                                st.warning("⚠️ Insira a GEMINI_API_KEY na barra lateral à esquerda ou configure no Streamlit Secrets.")
+                            else:
+                                with st.spinner("Solicitando novo exemplo prático inédito ao Gemini..."):
+                                    texto_limpo_lei = q["enunciado"]
+                                    if "De acordo com o" in texto_limpo_lei:
+                                        linhas = texto_limpo_lei.split("\n\n")
+                                        if len(linhas) > 1:
+                                            texto_limpo_lei = linhas[-1].strip('"\n ')
+                                    novo_exemplo_ia = gerar_exemplo_gemini(rotulo_formatado, texto_limpo_lei, chave_manual=chave_ia)
+                                    if novo_exemplo_ia:
+                                        nova_exp = gerar_explicacao_humana(
+                                            num_disp,
+                                            texto_limpo_lei,
+                                            foi_correto=(dados_resp["acertou"] == 1),
+                                            tipo_troca=None if q["gabarito"] == 1 else "Alteração indevida da regra legal",
+                                            exemplo_customizado=novo_exemplo_ia,
+                                            foi_ia=True,
+                                            nome_ia="Gemini IA"
+                                        )
+                                        st.session_state[f"custom_explicacao_{q_id}"] = nova_exp
+                                        try:
+                                            conn_u = db()
+                                            conn_u.execute("UPDATE questoes SET explicacao = ? WHERE id = ?", (nova_exp, q_id))
+                                            conn_u.commit()
+                                            conn_u.close()
+                                        except Exception:
+                                            pass
+                                        st.toast("Exemplo da vida real gerado pelo Gemini e salvo com sucesso!")
+                                        st.rerun()
+                                    else:
+                                        st.error("Não foi possível conectar ao Gemini. Verifique a chave ou conexão.")
+
+                    with c_btn_prox:
+                        if st.button("Próxima Questão ➡️", key=f"next_{q_id}", type="primary"):
+                            st.session_state["q_index"] += 1
+                            st.rerun()
 
 with tab4:
     st.header("O seu Desempenho")
@@ -1599,6 +2150,9 @@ if is_admin_user:
                     st.error(msg)
             else:
                 st.warning("Preencha todos os campos para prosseguir.")
+
+
+
 
 
 
