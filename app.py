@@ -5,6 +5,7 @@ import random
 import re
 import sqlite3
 import logging
+import textwrap
 import urllib.request
 import urllib.error
 from datetime import datetime, timedelta
@@ -75,7 +76,73 @@ st.markdown("""
     /* Garante que o botão de alternar/expandir a sidebar permaneça sempre visível */
     [data-testid="stSidebarCollapseButton"] {display: block !important; visibility: visible !important;}
     [data-testid="stHeader"] {background-color: transparent !important; z-index: 999;}
-    </style>
+
+    /* ==================== CARTÕES DA QUESTÃO ==================== */
+    .questao-estudo-wrapper { margin: 10px 0 18px 0; }
+    .questao-ref-card {
+        background: linear-gradient(135deg, #eff6ff, #f8fafc);
+        border: 1px solid #bfdbfe;
+        border-left: 5px solid #2563eb;
+        border-radius: 12px;
+        padding: 13px 16px;
+        margin-bottom: 9px;
+    }
+    .questao-ref-label {
+        color: #1d4ed8;
+        font-size: 11px;
+        font-weight: 800;
+        letter-spacing: .5px;
+        margin-bottom: 5px;
+    }
+    .questao-ref-text {
+        color: #1e3a8a;
+        font-size: 13.5px;
+        line-height: 1.55;
+        font-weight: 650;
+    }
+    .questao-comando-card {
+        background: #f5f3ff;
+        border: 1px solid #ddd6fe;
+        border-left: 5px solid #7c3aed;
+        border-radius: 12px;
+        padding: 13px 16px;
+        margin-bottom: 9px;
+    }
+    .questao-comando-label {
+        color: #6d28d9;
+        font-size: 11px;
+        font-weight: 800;
+        letter-spacing: .5px;
+        margin-bottom: 5px;
+    }
+    .questao-comando-text {
+        color: #4c1d95;
+        font-size: 13.5px;
+        line-height: 1.6;
+        font-weight: 600;
+    }
+    .questao-assertiva-card {
+        background: #ffffff;
+        border: 2px solid #93c5fd;
+        border-radius: 14px;
+        padding: 18px 20px;
+        box-shadow: 0 2px 8px rgba(30, 64, 175, .07);
+    }
+    .questao-assertiva-label {
+        color: #0f766e;
+        font-size: 11px;
+        font-weight: 800;
+        letter-spacing: .5px;
+        margin-bottom: 8px;
+    }
+    .questao-assertiva-text {
+        color: #172033;
+        font-size: 17px;
+        line-height: 1.7;
+        font-weight: 650;
+        text-align: left;
+    }
+        </style>
 """, unsafe_allow_html=True)
 
 # Regex universal para algarismos romanos de I até CCC (1 a 300+), cobrindo com precisão V, X, L, XLV, etc.
@@ -772,6 +839,64 @@ def obter_rotulo_dispositivo(numero_dispositivo):
     # Remove aninhamentos repetitivos como "Inciso (Art. 5º, Inciso XLIX)"
     s = re.sub(r'^(?:Inciso|Parágrafo|Alínea|Artigo)\s*\((.+)\)$', r'\1', s, flags=re.IGNORECASE)
     return s
+
+
+def renderizar_enunciado_estudo(enunciado, num_disp=None):
+    """
+    Renderiza o enunciado em cartões visuais, sem alterar o conteúdo da questão.
+    O texto salvo no banco continua no mesmo formato; apenas a apresentação é melhorada.
+    """
+    if not enunciado:
+        return
+
+    texto = str(enunciado).strip()
+
+    # Extrai referência normativa, comando e assertiva do formato atual.
+    linhas = [linha.strip() for linha in texto.splitlines() if linha.strip()]
+    referencia = ""
+    comando = ""
+    assertiva = ""
+
+    if linhas:
+        referencia = re.sub(r'\*\*', '', linhas[0]).strip()
+
+    m = re.search(r'À luz da literalidade.*?(?:\n\n|\n|$)', texto, flags=re.IGNORECASE | re.DOTALL)
+    if m:
+        comando = re.sub(r'\s+', ' ', m.group(0)).strip()
+    else:
+        comando = "À luz da literalidade da legislação e do dispositivo legal em exame, julgue o item a seguir:"
+
+    m_assertiva = re.search(r'>\s*"([\s\S]*)"\s*$', texto)
+    if m_assertiva:
+        assertiva = m_assertiva.group(1).strip()
+    else:
+        # Fallback para questões antigas que eventualmente não estejam no formato esperado.
+        partes = texto.split('\n\n')
+        assertiva = partes[-1].strip().lstrip('> ').strip('"') if partes else texto
+
+    referencia = html.escape(referencia)
+    comando = html.escape(comando)
+    assertiva = html.escape(assertiva)
+
+    html_enunciado = f"""
+    <div class="questao-estudo-wrapper">
+        <div class="questao-ref-card">
+            <div class="questao-ref-label">📚 REFERÊNCIA NORMATIVA</div>
+            <div class="questao-ref-text">{referencia}</div>
+        </div>
+
+        <div class="questao-comando-card">
+            <div class="questao-comando-label">🎯 COMANDO DA QUESTÃO</div>
+            <div class="questao-comando-text">{comando}</div>
+        </div>
+
+        <div class="questao-assertiva-card">
+            <div class="questao-assertiva-label">⚖️ ITEM PARA JULGAMENTO</div>
+            <div class="questao-assertiva-text">“{assertiva}”</div>
+        </div>
+    </div>
+    """
+    st.markdown(textwrap.dedent(html_enunciado).strip(), unsafe_allow_html=True)
 
 def alterar_texto_para_errado(texto):
     """
@@ -1535,67 +1660,259 @@ def extrair_exemplo_objetivo_personalizado(art_num, texto_original):
     return gerar_exemplo_dinamico_heuristico(art_num, texto_original)
 
 def gerar_explicacao_humana(art_num, texto_original, foi_correto=False, tipo_troca=None, texto_modificado=None, exemplo_customizado=None, foi_ia=False, nome_ia="Gemini IA", caput_texto=None):
+    """
+    Monta a explicação pós-resposta em HTML visual.
+    Importante: textwrap.dedent() é aplicado antes do retorno para impedir que
+    o Streamlit interprete as linhas indentadas como bloco de código.
+    """
     if exemplo_customizado and len(exemplo_customizado) == 4:
         situacao_real, aplicacao_regra, objetivo_regra, bizu_memorizacao = exemplo_customizado
     else:
         situacao_real, aplicacao_regra, objetivo_regra, bizu_memorizacao = extrair_exemplo_objetivo_personalizado(art_num, texto_original)
 
     if foi_correto:
-        status_txt = "O item está **CORRETO**."
+        status_txt = "O item está CORRETO."
         detalhe_erro = "O enunciado reproduz com exatidão a literalidade da legislação."
         resumo_erro_bloco = ""
+        status_bg = "#ecfdf5"
+        status_border = "#86efac"
+        status_color = "#166534"
+        status_icon = "✓"
+        status_titulo = "Parabéns! Resposta correta!"
     else:
-        status_txt = "O item está **ERRADO**."
+        status_txt = "O item está ERRADO."
         detalhe_erro = "O enunciado promoveu alteração indevida da regra legal."
-        resumo_erro_bloco = f"<br>⚠️ <strong>Pegadinha da Questão:</strong> {tipo_troca or 'Substituição de palavra-chave, prazo ou conectivo legal'}."
+        pegadinha = tipo_troca or "Substituição de palavra-chave, prazo ou conectivo legal"
+        resumo_erro_bloco = f"""
+        <div class="resultado-pegadinha">
+            ⚠️ <strong>Pegadinha da questão:</strong> {html.escape(str(pegadinha))}
+        </div>
+        """
+        status_bg = "#fff1f2"
+        status_border = "#fda4af"
+        status_color = "#9f1239"
+        status_icon = "✕"
+        status_titulo = "Resposta incorreta! Atenção aos detalhes!"
 
-    tag_ia = f'<span style="background-color: #fef3c7; color: #b45309; padding: 2px 8px; border-radius: 6px; font-size: 11px; font-weight: 600; margin-left: 8px;">✨ Gerado com {nome_ia}</span>' if foi_ia else '<span style="background-color: #eff6ff; color: #1d4ed8; padding: 2px 8px; border-radius: 6px; font-size: 11px; font-weight: 600; margin-left: 8px;">⚖️ Exemplo Prático da Lei</span>'
+    tag_ia = (
+        f'<span class="ia-badge">✨ Gerado com {html.escape(str(nome_ia))}</span>'
+        if foi_ia
+        else '<span class="exemplo-badge">⚖️ Exemplo prático da lei</span>'
+    )
+
+    texto_original_html = html.escape(str(texto_original or "").strip())
+    situacao_html = html.escape(str(situacao_real or "").strip())
+    aplicacao_html = html.escape(str(aplicacao_regra or "").strip())
+    objetivo_html = html.escape(str(objetivo_regra or "").strip())
+    bizu_html = html.escape(str(bizu_memorizacao or "").strip())
 
     bloco_caput = ""
     if caput_texto and str(caput_texto).strip() and str(caput_texto).strip() != str(texto_original).strip():
         bloco_caput = f"""
-        <div style="margin-top: 10px; padding-top: 8px; border-top: 1px dashed #cbd5e1; font-size: 12.5px; color: #475569;">
-            <span style="font-weight: 600; color: #1e3a8a;">📜 Contexto do Artigo Principal (Caput de Origem):</span><br>
-            <span style="font-style: italic;">"{str(caput_texto).strip()}"</span>
+        <div class="caput-contexto">
+            <div class="caput-titulo">📜 Contexto do Artigo Principal — Caput de Origem</div>
+            <div class="caput-texto">“{html.escape(str(caput_texto).strip())}”</div>
         </div>
         """
 
-    card_dispositivo_html = f"""
-    <div style="background-color: #f8fafc; border: 1px solid #bfdbfe; border-radius: 10px; padding: 15px; margin-bottom: 14px;">
-        <div style="font-weight: 600; color: #1e3a8a; font-size: 13.5px; margin-bottom: 6px;">📖 Dispositivo Literal da Lei Seca ({art_num})</div>
-        <div style="color: #334155; font-style: italic; border-left: 3px solid #3b82f6; padding-left: 12px; line-height: 1.5; font-size: 13px;">
-            "{texto_original}"
+    html_resultado = f"""
+    <style>
+        .resultado-status {{
+            background: {status_bg};
+            border: 1px solid {status_border};
+            border-radius: 14px;
+            padding: 16px 18px;
+            margin: 16px 0 14px 0;
+            color: {status_color};
+        }}
+        .resultado-status-top {{
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }}
+        .resultado-icone {{
+            width: 34px;
+            height: 34px;
+            min-width: 34px;
+            border-radius: 50%;
+            background: {status_color};
+            color: white;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 800;
+            font-size: 18px;
+        }}
+        .resultado-titulo {{
+            font-size: 16px;
+            font-weight: 800;
+            margin-bottom: 3px;
+        }}
+        .resultado-sub {{
+            font-size: 13px;
+            line-height: 1.5;
+        }}
+        .resultado-pegadinha {{
+            margin-top: 12px;
+            padding: 10px 12px;
+            background: rgba(255,255,255,.75);
+            border-radius: 9px;
+            font-size: 12.5px;
+        }}
+        .lei-card {{
+            background: #f8fbff;
+            border: 1px solid #bfdbfe;
+            border-radius: 14px;
+            padding: 18px;
+            margin: 14px 0;
+        }}
+        .lei-card-titulo {{
+            color: #1d4ed8;
+            font-size: 14px;
+            font-weight: 800;
+            margin-bottom: 10px;
+        }}
+        .lei-card-texto {{
+            background: white;
+            border-left: 5px solid #3b82f6;
+            border-radius: 8px;
+            padding: 13px 15px;
+            color: #334155;
+            font-size: 14px;
+            line-height: 1.65;
+            font-style: italic;
+        }}
+        .caput-contexto {{
+            margin-top: 14px;
+            padding: 12px 14px;
+            background: #eff6ff;
+            border: 1px dashed #93c5fd;
+            border-radius: 10px;
+        }}
+        .caput-titulo {{
+            color: #1e3a8a;
+            font-size: 12.5px;
+            font-weight: 800;
+            margin-bottom: 5px;
+        }}
+        .caput-texto {{
+            color: #475569;
+            font-size: 12.5px;
+            line-height: 1.55;
+            font-style: italic;
+        }}
+        .exemplo-card {{
+            background: #fffbeb;
+            border: 1px solid #fcd34d;
+            border-radius: 14px;
+            padding: 18px;
+            margin: 14px 0;
+        }}
+        .exemplo-titulo {{
+            color: #92400e;
+            font-size: 14px;
+            font-weight: 800;
+            margin-bottom: 12px;
+        }}
+        .ia-badge, .exemplo-badge {{
+            display: inline-block;
+            margin-left: 7px;
+            padding: 3px 8px;
+            border-radius: 7px;
+            font-size: 10.5px;
+            font-weight: 700;
+            vertical-align: middle;
+        }}
+        .ia-badge {{
+            background: #fef3c7;
+            color: #b45309;
+        }}
+        .exemplo-badge {{
+            background: #dbeafe;
+            color: #1d4ed8;
+        }}
+        .exemplo-bloco {{
+            background: rgba(255,255,255,.72);
+            border-radius: 10px;
+            padding: 11px 13px;
+            margin: 8px 0;
+            color: #374151;
+            font-size: 13px;
+            line-height: 1.6;
+        }}
+        .exemplo-label {{
+            color: #78350f;
+            font-weight: 800;
+            display: block;
+            margin-bottom: 3px;
+        }}
+        .bizu-card {{
+            margin-top: 12px;
+            padding: 12px 14px;
+            background: #fff7ed;
+            border: 1px solid #fed7aa;
+            border-radius: 10px;
+            color: #9a3412;
+            font-size: 13px;
+            line-height: 1.55;
+        }}
+        .gabarito-label {{
+            font-size: 12px;
+            font-weight: 800;
+            text-transform: uppercase;
+            letter-spacing: .3px;
+            opacity: .8;
+        }}
+    </style>
+
+    <div class="resultado-status">
+        <div class="resultado-status-top">
+            <div class="resultado-icone">{status_icon}</div>
+            <div>
+                <div class="resultado-titulo">✨ {status_titulo}</div>
+                <div class="resultado-sub">
+                    <span class="gabarito-label">Gabarito oficial:</span>
+                    <strong>{"CERTO" if foi_correto else "ERRADO"}</strong>
+                    &nbsp;•&nbsp; {html.escape(status_txt)}
+                </div>
+            </div>
         </div>
+        <div class="resultado-sub" style="margin-top:10px;">💡 {html.escape(detalhe_erro)}</div>
+        {resumo_erro_bloco}
+    </div>
+
+    <div class="lei-card">
+        <div class="lei-card-titulo">📖 DISPOSITIVO LITERAL DA LEI SECA — {html.escape(str(art_num))}</div>
+        <div class="lei-card-texto">“{texto_original_html}”</div>
         {bloco_caput}
     </div>
-    """
 
-    card_exemplo_html = f"""
-    <div style="background-color: #fffbeb; border: 1px solid #fde68a; border-radius: 12px; padding: 18px; margin-bottom: 14px;">
-        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px;">
-            <div style="font-weight: 700; color: #78350f; font-size: 14px;">
-                💡 Exemplo Prático e Objetivo da Vida Real {tag_ia}
-            </div>
+    <div class="exemplo-card">
+        <div class="exemplo-titulo">💡 EXEMPLO PRÁTICO E OBJETIVO DA VIDA REAL {tag_ia}</div>
+
+        <div class="exemplo-bloco">
+            <span class="exemplo-label">👤 Situação concreta</span>
+            {situacao_html}
         </div>
-        <div style="color: #1f2937; line-height: 1.6; font-size: 13px;">
-            <p style="margin-bottom: 8px;"><strong>Situação Concreta:</strong> {situacao_real}</p>
-            <p style="margin-bottom: 8px;"><strong>Aplicação Prática:</strong> {aplicacao_regra}</p>
-            <p style="margin-bottom: 8px;"><strong>Objetivo da Regra:</strong> {objetivo_regra}</p>
-            <div style="margin-top: 10px; padding-top: 8px; border-top: 1px solid #fef3c7; color: #92400e; font-weight: 600;">
-                🎯 <strong>Bizu de Memorização:</strong> {bizu_memorizacao}
-            </div>
+
+        <div class="exemplo-bloco">
+            <span class="exemplo-label">⚙️ Aplicação prática</span>
+            {aplicacao_html}
+        </div>
+
+        <div class="exemplo-bloco">
+            <span class="exemplo-label">🎯 Objetivo da regra</span>
+            {objetivo_html}
+        </div>
+
+        <div class="bizu-card">
+            🧠 <strong>BIZU DE MEMORIZAÇÃO</strong><br>
+            {bizu_html}
         </div>
     </div>
     """
 
-    explicacao_formatada = f"""
-    <div style="margin-bottom: 10px; font-size: 13.5px;">
-        💡 <strong>Gabarito e Justificativa:</strong> {status_txt} {detalhe_erro}{resumo_erro_bloco}
-    </div>
-    {card_dispositivo_html}
-    {card_exemplo_html}
-    """
-    return explicacao_formatada
+    return textwrap.dedent(html_resultado).strip()
 
 # ==============================================================================
 # GERAÇÃO DE QUESTÕES COM FRAGMENTAÇÃO, NEXO JURÍDICO E SUPORTE GEMINI
@@ -2177,9 +2494,17 @@ with tab3:
                     caput_text = obter_texto_caput(q["artigo_id"])
                     if caput_text:
                         with st.expander("📜 Contexto: Artigo Principal (Caput)", expanded=False):
-                            st.write(f"_{caput_text}_")
+                            st.markdown(
+                                f"""
+                                <div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:10px;padding:12px 14px;color:#334155;line-height:1.6;">
+                                    <div style="font-weight:800;color:#1e3a8a;margin-bottom:6px;">📜 Texto do Caput</div>
+                                    <div style="font-style:italic;">“{html.escape(str(caput_text))}”</div>
+                                </div>
+                                """,
+                                unsafe_allow_html=True
+                            )
 
-                st.markdown(q["enunciado"])
+                renderizar_enunciado_estudo(q["enunciado"], num_disp=num_disp)
 
                 q_id = q["id"]
                 ja_respondida = q_id in st.session_state["answered_q"]
@@ -2256,7 +2581,10 @@ with tab3:
                     
                     # Se o usuário pediu para a IA gerar um novo exemplo ao vivo nesta questão:
                     explicacao_exibir = st.session_state.get(f"custom_explicacao_{q_id}", q['explicacao'])
-                    st.markdown(explicacao_exibir, unsafe_allow_html=True)
+                    # Corrige também explicações antigas já salvas no banco que possuem indentação.
+                    # Sem dedent, o Streamlit pode interpretar o HTML como bloco de código.
+                    explicacao_html = textwrap.dedent(str(explicacao_exibir or "")).strip()
+                    st.markdown(explicacao_html, unsafe_allow_html=True)
 
                     c_btn_ia, c_btn_prox = st.columns([1, 1])
                     with c_btn_ia:
@@ -2365,7 +2693,7 @@ with tab5:
                     with st.expander("📜 Contexto: Artigo Principal (Caput)", expanded=False):
                         st.write(f"_{caput_text}_")
 
-            st.markdown(revs["enunciado"])
+            renderizar_enunciado_estudo(revs["enunciado"], num_disp=num_disp)
             
             q_id_rev = revs["id"]
             resp_rev = st.radio("A sua resposta:", ["Certo", "Errado"], key=f"rev_ans_{q_id_rev}")
@@ -2435,6 +2763,10 @@ if is_admin_user:
                     st.error(msg)
             else:
                 st.warning("Preencha todos os campos para prosseguir.")
+
+
+
+
 
 
 
