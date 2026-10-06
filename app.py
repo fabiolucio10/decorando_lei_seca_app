@@ -78,8 +78,8 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# Regex universal para algarismos romanos de I até CCC (1 a 300+)
-REGEX_ROMANO = r'(?:M{0,4}(?:CM|CD|D?C{0,3})(?:XC|XL|L?X{0,3})(?:IX|IV|V?I{1,3}))'
+# Regex universal para algarismos romanos de I até CCC (1 a 300+), cobrindo com precisão V, X, L, XLV, etc.
+REGEX_ROMANO = r'(?=[MDCLXVI])M*(?:C[MD]|D?C{0,3})(?:X[CL]|L?X{0,3})(?:I[XV]|V?I{0,3})'
 
 def db():
     conn = sqlite3.connect(DB_FILE)
@@ -366,14 +366,14 @@ def normalizar_estrutura_dispositivo(texto):
     texto = re.sub(r'[ \t]+', ' ', texto)
 
     # Quebra linha antes de Parágrafos
-    texto = re.sub(r'\s+(§\s*\d+º?|Parágrafo único)\s*', r'\n\1 ', texto, flags=re.IGNORECASE)
+    texto = re.sub(r'(?:;|\.|\n|\s)\s*(§\s*\d+º?|Parágrafo único)\b', r'\n\1 ', texto, flags=re.IGNORECASE)
 
-    # Quebra linha antes de Incisos (suporta I até LXXIX e além!)
-    padrao_inciso = rf'\s+(?={REGEX_ROMANO}\s*[-–—\.]\s*)'
+    # Quebra linha antes de Incisos (suporta I até LXXIX e além, separando inclusive após ponto e vírgula)
+    padrao_inciso = rf'(?:;|\.|\n|\s)\s*(?={REGEX_ROMANO}\s*[-–—\.]\s*)'
     texto = re.sub(padrao_inciso, '\n', texto, flags=re.IGNORECASE)
 
     # Quebra linha antes de Alíneas (a) -, b) -, c) -)
-    texto = re.sub(r'\s+(?=[a-z]\s*[\)\-]\s*)', '\n', texto, flags=re.IGNORECASE)
+    texto = re.sub(r'(?:;|\.|\n|\s)\s*(?=[a-z]\s*[\)\-]\s*)', '\n', texto, flags=re.IGNORECASE)
 
     # Quebra linha antes de itens numéricos
     texto = re.sub(r'(?<=[;])\s+(?=\d+[\)\.-]\s*)', '\n', texto)
@@ -740,18 +740,27 @@ def conectar_caput_com_dispositivo(caput_texto, assertiva_limpa, rotulo_disposit
 
     return assertiva_limpa
 
+def formatar_nome_lei_contextual(nome_lei):
+    if not nome_lei:
+        return "Constituição Federal / Lei Seca"
+    nl = str(nome_lei).strip()
+    if re.match(r'^art(?:igo)?s?\.?\s*\d+', nl, re.IGNORECASE):
+        return f"Constituição Federal de 1988 ({nl})"
+    return nl
+
 def construir_enunciado_com_nexo(nome_lei, rotulo_dispositivo, assertiva_texto, caput_texto=None, num_art=None):
     """
     Monta o enunciado com apresentação contextualizada, nexo legal direto e citação em destaque.
     """
     ref_rotulo = obter_rotulo_dispositivo(rotulo_dispositivo)
+    lei_formatada = formatar_nome_lei_contextual(nome_lei)
     vinculo = ""
     if num_art and num_art not in ref_rotulo:
         vinculo = f" (pertencente ao {num_art})"
         
     enunciado = (
-        f"Com base na **{nome_lei}** e no disposto no **{ref_rotulo}**{vinculo}, "
-        f"julgue o item a seguir:\n\n"
+        f"**Referência Normativa:** {lei_formatada} — **{ref_rotulo}**{vinculo}\n\n"
+        f"À luz da literalidade da legislação e do dispositivo legal em exame, julgue o item a seguir:\n\n"
         f"> \"{assertiva_texto}\""
     )
     return enunciado
@@ -2426,6 +2435,7 @@ if is_admin_user:
                     st.error(msg)
             else:
                 st.warning("Preencha todos os campos para prosseguir.")
+
 
 
 
