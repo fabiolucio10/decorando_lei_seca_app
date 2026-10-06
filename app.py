@@ -27,7 +27,6 @@ try:
 except ImportError:
     openai = None
 
-# Suporte ao SDK atualizado google-genai e ao legado google.generativeai
 try:
     from google import genai
 except ImportError:
@@ -41,10 +40,8 @@ DB_FILE = APP_DIR / "decorando_lei.db"
 PDF_DIR = APP_DIR / "leis_importadas"
 PDF_DIR.mkdir(exist_ok=True)
 
-# Definição do e-mail de administrador exclusivo
 ADMIN_EMAIL = "fabiolucio277@gmail.com"
 
-# Configuração da página - Mantém a barra lateral sempre expandida por padrão
 st.set_page_config(
     page_title="Decorando Lei Seca",
     page_icon="⚖",
@@ -52,33 +49,19 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Estilização CSS aprimorada para justificar os textos e alinhar o layout em cartões modernos
 st.markdown("""
     <style>
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
     [data-testid="stAppDeployButton"] {display: none !important;}
-    .viewerBadge_container__1S-xd {display: none !important;}
-    [data-testid="stStatusWidget"] {display: none !important;}
-    div[class*="stAppToolbar"] {display: none !important;}
-    div[class*="viewerBadge"] {display: none !important;}
-    div[class*="styles_viewerBadge"] {display: none !important;}
-    button[title="Manage app"] {display: none !important;}
-    button[title="Gerenciar aplicativo"] {display: none !important;}
-    div[class^="stActionButton"] {display: none !important;}
-    
-    /* Garante alinhamento justificado e legibilidade perfeita dos enunciados e citações */
     .stMarkdown, p, div[data-testid="stMarkdownContainer"] {
         text-align: justify !important;
     }
-
-    /* Garante que o botão de alternar/expandir a sidebar permaneça sempre visível */
     [data-testid="stSidebarCollapseButton"] {display: block !important; visibility: visible !important;}
     [data-testid="stHeader"] {background-color: transparent !important; z-index: 999;}
     </style>
 """, unsafe_allow_html=True)
 
-# Regex universal para algarismos romanos de I até CCC (1 a 300+)
 REGEX_ROMANO = r'(?=[MDCLXVI])M*(?:C[MD]|D?C{0,3})(?:X[CL]|L?X{0,3})(?:I[XV]|V?I{0,3})'
 
 def db():
@@ -92,7 +75,6 @@ def hash_password(password):
 def limpar_e_formatar_texto_lei(texto):
     if not texto:
         return ""
-
     padroes_remover = [
         r'\((?:Redação|Incluído|Vigência|Regulamento|Vide)\s+dada?\s+pel[ao][^)]*\)',
         r'\((?:Incluído|Restabelecido|Acrescido)\s+pel[ao][^)]*\)',
@@ -101,13 +83,10 @@ def limpar_e_formatar_texto_lei(texto):
         r'DEL\d+compilado',
         r'\b\d+/\d+\b'
     ]
-    
     for padrao in padroes_remover:
         texto = re.sub(padrao, '', texto, flags=re.IGNORECASE)
-
     texto = re.sub(r'[ \t]+', ' ', texto)
     texto = re.sub(r'\n\s*\n', '\n', texto)
-
     return texto.strip()
 
 def init_db():
@@ -120,12 +99,10 @@ def init_db():
         autorizado INTEGER DEFAULT 0,
         criado_em TEXT NOT NULL
     );
-
     CREATE TABLE IF NOT EXISTS disciplinas (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         nome TEXT UNIQUE NOT NULL
     );
-
     CREATE TABLE IF NOT EXISTS leis (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         disciplina_id INTEGER NOT NULL,
@@ -134,7 +111,6 @@ def init_db():
         criado_em TEXT NOT NULL,
         FOREIGN KEY(disciplina_id) REFERENCES disciplinas(id)
     );
-
     CREATE TABLE IF NOT EXISTS artigos (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         lei_id INTEGER NOT NULL,
@@ -143,7 +119,6 @@ def init_db():
         texto TEXT NOT NULL,
         FOREIGN KEY(lei_id) REFERENCES leis(id)
     );
-
     CREATE TABLE IF NOT EXISTS filtros_salvos (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         usuario_id INTEGER,
@@ -157,7 +132,6 @@ def init_db():
         FOREIGN KEY(disciplina_id) REFERENCES disciplinas(id),
         FOREIGN KEY(lei_id) REFERENCES leis(id)
     );
-
     CREATE TABLE IF NOT EXISTS questoes (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         lei_id INTEGER NOT NULL,
@@ -174,7 +148,6 @@ def init_db():
         criada_em TEXT NOT NULL,
         FOREIGN KEY(filtro_id) REFERENCES filtros_salvos(id)
     );
-
     CREATE TABLE IF NOT EXISTS respostas (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         usuario_id INTEGER,
@@ -186,7 +159,6 @@ def init_db():
         FOREIGN KEY(usuario_id) REFERENCES usuarios(id),
         FOREIGN KEY(questao_id) REFERENCES questoes(id)
     );
-
     CREATE TABLE IF NOT EXISTS revisoes (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         usuario_id INTEGER,
@@ -200,12 +172,10 @@ def init_db():
         UNIQUE(usuario_id, questao_id)
     );
     """)
-    
     try:
         conn.execute("ALTER TABLE usuarios ADD COLUMN autorizado INTEGER DEFAULT 0")
     except sqlite3.OperationalError:
         pass
-
     conn.execute("UPDATE usuarios SET autorizado = 1 WHERE LOWER(TRIM(username)) = ?", (ADMIN_EMAIL,))
     conn.commit()
     conn.close()
@@ -215,12 +185,7 @@ init_db()
 def cadastrar_usuario(username, senha, autorizado=0):
     conn = db()
     u_clean = username.strip().lower()
-    
-    if u_clean == ADMIN_EMAIL:
-        autorizado = 1
-    else:
-        autorizado = 0
-
+    autorizado = 1 if u_clean == ADMIN_EMAIL else 0
     try:
         conn.execute(
             "INSERT INTO usuarios (username, senha, autorizado, criado_em) VALUES (?, ?, ?, ?)",
@@ -228,22 +193,10 @@ def cadastrar_usuario(username, senha, autorizado=0):
         )
         conn.commit()
         conn.close()
-        return True, "Cadastro realizado! Aguarde a liberação do administrador para acessar o sistema." if autorizado == 0 else "Utilizador criado e autorizado!"
+        return True, "Cadastro realizado com sucesso!"
     except sqlite3.IntegrityError:
         conn.close()
         return False, "Nome de utilizador já existe!"
-
-def alterar_status_autorizacao(user_id, status):
-    conn = db()
-    conn.execute("UPDATE usuarios SET autorizado = ? WHERE id = ?", (status, user_id))
-    conn.commit()
-    conn.close()
-
-def excluir_usuario(user_id):
-    conn = db()
-    conn.execute("DELETE FROM usuarios WHERE id = ?", (user_id,))
-    conn.commit()
-    conn.close()
 
 def listar_usuarios():
     conn = db()
@@ -268,36 +221,25 @@ if "logged_in" not in st.session_state:
 if not st.session_state["logged_in"]:
     st.title("⚖ Decorando Lei Seca")
     tab_login, tab_cadastro = st.tabs(["🔑 Entrar", "📝 Criar Conta"])
-
     with tab_login:
         u = st.text_input("Utilizador / E-mail", key="login_user")
         p = st.text_input("Palavra-passe", type="password", key="login_pass")
         if st.button("Entrar", type="primary"):
             user = autenticar_usuario(u, p)
-            if user:
-                if user["autorizado"] == 1:
-                    st.session_state["logged_in"] = True
-                    st.session_state["user_id"] = user["id"]
-                    st.session_state["username"] = user["username"]
-                    st.success(f"Bem-vindo, {user['username']}!")
-                    st.rerun()
-                else:
-                    st.warning("⚠️ A sua conta aguarda aprovação do administrador.")
+            if user and user["autorizado"] == 1:
+                st.session_state["logged_in"] = True
+                st.session_state["user_id"] = user["id"]
+                st.session_state["username"] = user["username"]
+                st.rerun()
             else:
-                st.error("Utilizador ou palavra-passe incorretos.")
-
+                st.error("Utilizador incorreto ou aguardando aprovação.")
     with tab_cadastro:
-        new_u = st.text_input("Escolha um Utilizador / E-mail", key="cad_user")
-        new_p = st.text_input("Escolha uma Palavra-passe", type="password", key="cad_pass")
-        if st.button("Cadastrar Conta"):
-            if new_u and new_p:
-                ok, msg = cadastrar_usuario(new_u, new_p, autorizado=0)
-                if ok:
-                    st.info(msg)
-                else:
-                    st.error(msg)
-            else:
-                st.warning("Preencha todos os campos.")
+        new_u = st.text_input("Utilizador / E-mail", key="cad_user")
+        new_p = st.text_input("Palavra-passe", type="password", key="cad_pass")
+        if st.button("Cadastrar"):
+            ok, msg = cadastrar_usuario(new_u, new_p)
+            if ok: st.success(msg)
+            else: st.error(msg)
     st.stop()
 
 USER_ID = st.session_state["user_id"]
@@ -327,94 +269,33 @@ def add_law(discipline_id, name, filename):
     conn.close()
     return law_id
 
-def delete_law(law_id):
-    conn = db()
-    conn.execute("DELETE FROM artigos WHERE lei_id = ?", (law_id,))
-    conn.execute("DELETE FROM leis WHERE id = ?", (law_id,))
-    conn.commit()
-    conn.close()
-
 def get_laws(discipline_id=None):
     conn = db()
     if discipline_id:
-        rows = conn.execute("""
-            SELECT l.*, d.nome as disciplina_nome 
-            FROM leis l 
-            JOIN disciplinas d ON d.id = l.disciplina_id 
-            WHERE l.disciplina_id=? 
-            ORDER BY d.nome, l.nome
-        """, (discipline_id,)).fetchall()
+        rows = conn.execute("SELECT l.*, d.nome as disciplina_nome FROM leis l JOIN disciplinas d ON d.id = l.disciplina_id WHERE l.disciplina_id=? ORDER BY l.nome", (discipline_id,)).fetchall()
     else:
-        rows = conn.execute("""
-            SELECT l.*, d.nome as disciplina_nome 
-            FROM leis l 
-            JOIN disciplinas d ON d.id = l.disciplina_id 
-            ORDER BY d.nome, l.nome
-        """).fetchall()
+        rows = conn.execute("SELECT l.*, d.nome as disciplina_nome FROM leis l JOIN disciplinas d ON d.id = l.disciplina_id ORDER BY l.nome").fetchall()
     conn.close()
     return rows
 
-def normalizar_estrutura_dispositivo(texto):
-    if not texto:
-        return ""
-    texto = texto.replace("\r", "\n")
-    texto = re.sub(r'[ \t]+', ' ', texto)
-    texto = re.sub(r'(?:;|\.|\n|\s)\s*(§\s*\d+º?|Parágrafo único)\b', r'\n\1 ', texto, flags=re.IGNORECASE)
-    padrao_inciso = rf'(?:;|\.|\n|\s)\s*(?={REGEX_ROMANO}\s*[-–—\.]\s*)'
-    texto = re.sub(padrao_inciso, '\n', texto, flags=re.IGNORECASE)
-    texto = re.sub(r'(?:;|\.|\n|\s)\s*(?=[a-z]\s*[\)\-]\s*)', '\n', texto, flags=re.IGNORECASE)
-    texto = re.sub(r'\n{2,}', '\n', texto)
-    return texto.strip()
-
-def obter_rotulo_dispositivo(numero_dispositivo):
-    if not numero_dispositivo:
-        return "Dispositivo da Lei"
-    s = str(numero_dispositivo).strip()
-    s = re.sub(r'^(?:Inciso|Parágrafo|Alínea|Artigo)\s*\((.+)\)$', r'\1', s, flags=re.IGNORECASE)
-    return s
-
-def fracionar_artigo_extenso(num_art, corpo_limpo):
-    texto = normalizar_estrutura_dispositivo(corpo_limpo)
-    return [{'numero': num_art, 'texto': corpo_limpo.strip()}]
-
 def parse_and_store_pdf(pdf_path, law_id):
+    if not fitz: return 0
     doc = fitz.open(pdf_path)
     full_text = "\n".join([page.get_text() for page in doc])
     doc.close()
-
     artigo_regex = re.compile(r'(?m)^(Art\.\s*\d+[\w\-]*[\.\º\ª]?)', re.IGNORECASE)
     partes = artigo_regex.split(full_text)
-    artigos_brutos = []
-
-    if len(partes) > 1:
-        for i in range(1, len(partes), 2):
-            num_art = partes[i].strip()
-            corpo_art = partes[i + 1] if (i + 1) < len(partes) else ""
-            corpo_limpo = limpar_e_formatar_texto_lei(corpo_art)
-            if corpo_limpo and len(corpo_limpo) > 10:
-                artigos_brutos.append((num_art, corpo_limpo))
-    else:
-        artigo_regex_alt = re.compile(r'(Art\.\s*\d+[\w\-]*[\.\º\ª]?)', re.IGNORECASE)
-        partes = artigo_regex_alt.split(full_text)
-        for i in range(1, len(partes), 2):
-            num_art = partes[i].strip()
-            corpo_art = partes[i + 1] if (i + 1) < len(partes) else ""
-            corpo_limpo = limpar_e_formatar_texto_lei(corpo_art)
-            if corpo_limpo and len(corpo_limpo) > 10:
-                artigos_brutos.append((num_art, corpo_limpo))
-
     conn = db()
-    quantidade = 0
-    for num_art, corpo_limpo in artigos_brutos:
-        conn.execute(
-            "INSERT INTO artigos(lei_id, numero, titulo, texto) VALUES(?,?,?,?)",
-            (law_id, num_art, num_art, corpo_limpo)
-        )
-        quantidade += 1
-
+    count = 0
+    for i in range(1, len(partes), 2):
+        num_art = partes[i].strip()
+        corpo = limpar_e_formatar_texto_lei(partes[i + 1] if (i + 1) < len(partes) else "")
+        if corpo:
+            conn.execute("INSERT INTO artigos(lei_id, numero, titulo, texto) VALUES(?,?,?,?)", (law_id, num_art, num_art, corpo))
+            count += 1
     conn.commit()
     conn.close()
-    return quantidade
+    return count
 
 def get_articles(law_id):
     conn = db()
@@ -429,316 +310,134 @@ def save_filter(name, discipline_id, law_id, article_ids, qtd_questoes):
         INSERT INTO filtros_salvos (usuario_id, nome, disciplina_id, lei_id, artigos_ids, qtd_questoes, criado_em)
         VALUES (?, ?, ?, ?, ?, ?, ?)
     """, (USER_ID, name, discipline_id, law_id, art_str, qtd_questoes, datetime.now().isoformat()))
-    filter_id = cur.lastrowid
+    f_id = cur.lastrowid
     conn.commit()
     conn.close()
-    return filter_id
+    return f_id
 
-def delete_filter(filter_id):
+def get_saved_filters():
     conn = db()
-    conn.execute("DELETE FROM questoes WHERE filtro_id = ?", (filter_id,))
-    conn.execute("DELETE FROM filtros_salvos WHERE id = ? AND usuario_id = ?", (filter_id, USER_ID))
-    conn.commit()
-    conn.close()
-
-def get_saved_filters(discipline_id=None):
-    conn = db()
-    if discipline_id:
-        rows = conn.execute("""
-            SELECT f.*, d.nome disciplina, l.nome lei
-            FROM filtros_salvos f
-            JOIN disciplinas d ON d.id = f.disciplina_id
-            JOIN leis l ON l.id = f.lei_id
-            WHERE f.usuario_id = ? AND f.disciplina_id = ?
-            ORDER BY d.nome, f.id DESC
-        """, (USER_ID, discipline_id)).fetchall()
-    else:
-        rows = conn.execute("""
-            SELECT f.*, d.nome disciplina, l.nome lei
-            FROM filtros_salvos f
-            JOIN disciplinas d ON d.id = f.disciplina_id
-            JOIN leis l ON l.id = f.lei_id
-            WHERE f.usuario_id = ?
-            ORDER BY d.nome, f.id DESC
-        """, (USER_ID,)).fetchall()
+    rows = conn.execute("SELECT f.*, d.nome disciplina, l.nome lei FROM filtros_salvos f JOIN disciplinas d ON d.id = f.disciplina_id JOIN leis l ON l.id = f.lei_id WHERE f.usuario_id = ? ORDER BY f.id DESC", (USER_ID,)).fetchall()
     conn.close()
     return rows
 
-def obter_chave_gemini(chave_manual=None):
-    if chave_manual and str(chave_manual).strip():
-        return str(chave_manual).strip()
-    if st.session_state.get("gemini_api_key"):
-        return str(st.session_state["gemini_api_key"]).strip()
-    try:
-        if "GEMINI_API_KEY" in st.secrets:
-            return str(st.secrets["GEMINI_API_KEY"]).strip()
-    except Exception:
-        pass
-    return os.getenv("GEMINI_API_KEY")
-
-def gerar_exemplo_gemini(rotulo_dispositivo, texto_dispositivo, chave_manual=None):
-    chave = obter_chave_gemini(chave_manual)
-    if not chave or not genai:
-        return None
-    try:
-        client = genai.Client(api_key=chave)
-        prompt = f"Crie um exemplo prático curto da vida real para o dispositivo {rotulo_dispositivo}: {texto_dispositivo} em JSON com chaves situacao_real, aplicacao_regra, objetivo_regra, bizu_memorizacao."
-        resp = client.models.generate_content(model="gemini-2.5-flash", contents=prompt)
-        m = re.search(r'\{[\s\S]*\}', resp.text)
-        if m:
-            d = json.loads(m.group(0))
-            return (d.get("situacao_real"), d.get("aplicacao_regra"), d.get("objetivo_regra"), d.get("bizu_memorizacao"))
-    except Exception:
-        pass
-    return None
-
-def record_answer(question_id, answer, cycle):
+def record_answer(q_id, ans):
     conn = db()
-    q = conn.execute("SELECT * FROM questoes WHERE id=?", (question_id,)).fetchone()
-    correct = int(answer == q["gabarito"])
-    now = datetime.now()
-    conn.execute("""
-        INSERT INTO respostas(usuario_id, questao_id, resposta, acertou, respondida_em, ciclo)
-        VALUES(?, ?, ?, ?, ?, ?)
-    """, (USER_ID, question_id, answer, correct, now.isoformat(), cycle))
+    q = conn.execute("SELECT * FROM questoes WHERE id=?", (q_id,)).fetchone()
+    correct = int(ans == q["gabarito"])
+    conn.execute("INSERT INTO respostas(usuario_id, questao_id, resposta, acertou, respondida_em, ciclo) VALUES(?,?,?,?,?,?)",
+                 (USER_ID, q_id, ans, correct, datetime.now().isoformat(), 1))
     conn.commit()
     conn.close()
     return correct
 
-def zerar_historico_dashboard():
-    conn = db()
-    conn.execute("DELETE FROM respostas WHERE usuario_id = ?", (USER_ID,))
-    conn.execute("DELETE FROM revisoes WHERE usuario_id = ?", (USER_ID,))
-    conn.commit()
-    conn.close()
-
-def stats():
-    conn = db()
-    total = conn.execute("SELECT COUNT(*) n FROM respostas WHERE usuario_id=?", (USER_ID,)).fetchone()["n"]
-    hits = conn.execute("SELECT COALESCE(SUM(acertou),0) n FROM respostas WHERE usuario_id=?", (USER_ID,)).fetchone()["n"]
-    errors = total - hits
-    pct = (hits / total * 100) if total else 0
-    
-    b_disc = pd.read_sql_query("""
-        SELECT d.nome disciplina,
-               COUNT(r.id) respondidas,
-               COALESCE(SUM(r.acertou),0) acertos,
-               COUNT(r.id)-COALESCE(SUM(r.acertou),0) erros,
-               ROUND(COALESCE(SUM(r.acertou),0)*100.0/COUNT(r.id),1) percentual
-        FROM respostas r
-        JOIN questoes q ON q.id=r.questao_id
-        JOIN disciplinas d ON d.id=q.disciplina_id
-        WHERE r.usuario_id = ?
-        GROUP BY d.id ORDER BY percentual
-    """, conn, params=(USER_ID,)) if pd else None
-
-    b_filt = pd.read_sql_query("""
-        SELECT f.nome filtro,
-               d.nome disciplina,
-               l.nome lei,
-               COUNT(r.id) respondidas,
-               COALESCE(SUM(r.acertou),0) acertos,
-               COUNT(r.id)-COALESCE(SUM(r.acertou),0) erros,
-               ROUND(COALESCE(SUM(r.acertou),0)*100.0/COUNT(r.id),1) percentual
-        FROM respostas r
-        JOIN questoes q ON q.id=r.questao_id
-        JOIN filtros_salvos f ON f.id=q.filtro_id
-        JOIN disciplinas d ON d.id=f.disciplina_id
-        JOIN leis l ON l.id=f.lei_id
-        WHERE r.usuario_id = ?
-        GROUP BY f.id ORDER BY r.id DESC
-    """, conn, params=(USER_ID,)) if pd else None
-
-    due = conn.execute("""
-        SELECT COUNT(*) n FROM revisoes
-        WHERE usuario_id = ? AND proxima_revisao <= ?
-    """, (USER_ID, datetime.now().isoformat())).fetchone()["n"]
-
-    conn.close()
-    return total, hits, errors, pct, b_disc, b_filt, due
-
-# ==============================================================================
-# INTERFACE PRINCIPAL DO STREAMLIT
-# ==============================================================================
-
 with st.sidebar:
-    st.markdown(f"👤 Utilizador: **{USERNAME}**")
-    if st.button("🚪 Sair / Logout"):
-        st.session_state["logged_in"] = False
-        st.session_state["user_id"] = None
-        st.session_state["username"] = None
+    st.markdown(f"👤 **{USERNAME}**")
+    if st.button("🚪 Sair"):
+        st.session_state.clear()
         st.rerun()
-    st.divider()
-
-    st.markdown("### 🤖 Inteligência Artificial")
-    key_det = obter_chave_gemini()
-    st.caption(f"Status: **{'🟢 Ativa' / key_det else '⚪ Offline'}**")
-
-    if is_admin_user:
-        st.subheader("⚙ Painel Admin")
-        with st.expander("Gerir Utilizadores"):
-            for u in listar_usuarios():
-                st.write(f"**{u['username']}**")
-                if u['username'].strip().lower() != ADMIN_EMAIL:
-                    if st.button(f"Excluir {u['username']}", key=f"del_u_{u['id']}"):
-                        excluir_usuario(u['id'])
-                        st.rerun()
 
 st.title("⚖ Decorando Lei Seca")
 
-if is_admin_user:
-    tab1, tab2, tab3, tab4, tab5, tab_admin = st.tabs([
-        "📚 Importar Leis",
-        "🎯 Criar Caderno / Filtro",
-        "📝 Resolver Questões",
-        "📊 Desempenho",
-        "🔄 Revisões",
-        "🛡 Painel Admin"
-    ])
-else:
-    tab1, tab2, tab3, tab4, tab5 = st.tabs([
-        "📚 Importar Leis",
-        "🎯 Criar Caderno / Filtro",
-        "📝 Resolver Questões",
-        "📊 Desempenho",
-        "🔄 Revisões"
-    ])
+tab1, tab2, tab3, tab4, tab5 = st.tabs(["📚 Importar Leis", "🎯 Criar Caderno", "📝 Resolver Questões", "📊 Desempenho", "🔄 Revisões"])
 
 with tab1:
     st.header("Importar Nova Lei (PDF)")
     discs = get_disciplines()
     disc_names = [d["nome"] for d in discs]
+    new_d = st.text_input("Nova Disciplina:")
+    if st.button("Adicionar Disciplina"):
+        if new_d:
+            add_discipline(new_d)
+            st.rerun()
     
-    col1, col2 = st.columns(2)
-    with col1:
-        new_disc = st.text_input("Nova Disciplina:")
-        if st.button("Cadastrar Disciplina"):
-            if new_disc:
-                add_discipline(new_disc)
-                st.success(f"Disciplina '{new_disc}' cadastrada!")
-                st.rerun()
-
-    with col2:
-        disc_sel = st.selectbox("Selecione a Disciplina:", [""] + disc_names, key="import_disc_sel")
-
-    law_title = st.text_input("Nome da Lei (ex: CF/88):")
-    uploaded_file = st.file_uploader("Ficheiro PDF", type=["pdf"])
-
-    if st.button("Processar e Salvar Lei"):
-        if not disc_sel:
-            st.error("Selecione uma disciplina!")
-        elif not law_title:
-            st.error("Informe o nome da lei!")
-        elif not uploaded_file:
-            st.error("Envie um PDF!")
-        else:
+    disc_sel = st.selectbox("Disciplina:", [""] + disc_names, key="sel_disc_imp")
+    law_title = st.text_input("Nome da Lei:")
+    up_file = st.file_uploader("PDF da Lei", type=["pdf"])
+    if st.button("Processar Lei"):
+        if disc_sel and law_title and up_file:
             d_id = [d["id"] for d in discs if d["nome"] == disc_sel][0]
-            file_path = PDF_DIR / uploaded_file.name
-            with open(file_path, "wb") as f:
-                f.write(uploaded_file.getbuffer())
-            law_id = add_law(d_id, law_title, uploaded_file.name)
-            qtd = parse_and_store_pdf(file_path, law_id)
-            st.success(f"Lei processada com sucesso! {qtd} artigos importados.")
+            f_path = PDF_DIR / up_file.name
+            with open(f_path, "wb") as f: f.write(up_file.getbuffer())
+            l_id = add_law(d_id, law_title, up_file.name)
+            qtd = parse_and_store_pdf(f_path, l_id)
+            st.success(f"Lei importada com {qtd} artigos!")
 
 with tab2:
-    st.header("Criar Caderno de Questões por Filtro")
+    st.header("Criar Caderno de Questões")
     discs = get_disciplines()
-    # CORREÇÃO DO ERRO: Utiliza dicionário mapeando nomes para IDs para evitar crash no selectbox
     disc_map = {d["nome"]: d["id"] for d in discs}
-    disc_list = [""] + list(disc_map.keys())
+    disc_choice = st.selectbox("Disciplina para Caderno:", [""] + list(disc_map.keys()), key="cb_disc_safe")
     
-    disc_sel_name = st.selectbox("Disciplina para Caderno:", disc_list, key="cb_disc_name")
-    
-    if disc_sel_name:
-        d_id = disc_map[disc_sel_name]
+    if disc_choice:
+        d_id = disc_map[disc_choice]
         laws = get_laws(d_id)
         law_map = {l["nome"]: l["id"] for l in laws}
-        law_list = [""] + list(law_map.keys())
+        law_choice = st.selectbox("Selecione a Lei:", [""] + list(law_map.keys()), key="cb_law_safe")
         
-        law_sel_name = st.selectbox("Selecione a Lei:", law_list, key="cb_law_name")
-        
-        if law_sel_name:
-            l_id = law_map[law_sel_name]
-            articles = get_articles(l_id)
-            art_dict = {f"{a['numero']} - {a['texto'][:50]}...": a["id"] for a in articles}
+        if law_choice:
+            l_id = law_map[law_choice]
+            arts = get_articles(l_id)
+            art_dict = {f"{a['numero']} - {a['texto'][:40]}...": a["id"] for a in arts}
+            sel_arts = st.multiselect("Artigos (vazio para todos):", list(art_dict.keys()))
+            qtd_q = st.number_input("Quantidade:", min_value=1, value=10)
+            f_name = st.text_input("Nome do Caderno:")
             
-            selected_arts = st.multiselect("Selecione os Artigos (vazio para todos):", list(art_dict.keys()))
-            qtd_q = st.number_input("Quantidade de Questões:", min_value=1, max_value=200, value=10)
-            filter_name = st.text_input("Nome do Caderno / Filtro:")
-
-            if st.button("Salvar Caderno e Gerar Questões", type="primary"):
-                if not filter_name:
-                    st.error("Dê um nome ao caderno!")
-                else:
-                    art_ids = [art_dict[k] for k in selected_arts] if selected_arts else [a["id"] for a in articles]
-                    f_id = save_filter(filter_name, d_id, l_id, art_ids, qtd_q)
-                    st.success(f"Caderno '{filter_name}' criado com sucesso!")
+            if st.button("Gerar Caderno"):
+                if f_name:
+                    art_ids = [art_dict[k] for k in sel_arts] if sel_arts else [a["id"] for a in arts]
+                    f_id = save_filter(f_name, d_id, l_id, art_ids, qtd_q)
+                    conn = db()
+                    for aid in art_ids[:qtd_q]:
+                        art_row = conn.execute("SELECT * FROM artigos WHERE id=?", (aid,)).fetchone()
+                        if art_row:
+                            conn.execute("INSERT INTO questoes(lei_id, artigo_id, disciplina_id, filtro_id, artigo_numero, enunciado, gabarito, explicacao, criada_em) VALUES(?,?,?,?,?,?,?,?,?)",
+                                         (l_id, aid, d_id, f_id, art_row["numero"], f"À luz da lei, julgue: \"{art_row['texto']}\"", 1, "Dispositivo correto conforme a literalidade da lei.", datetime.now().isoformat()))
+                    conn.commit()
+                    conn.close()
+                    st.success("Caderno gerado com sucesso!")
 
 with tab3:
     st.header("Resolver Questões")
-    saved_filters = get_saved_filters()
-    if not saved_filters:
-        st.info("Nenhum caderno criado ainda. Vá na aba 'Criar Caderno / Filtro'.")
-    else:
-        filter_map = {f"{f['nome']} ({f['disciplina']} - {f['lei'])": f["id"] for f in saved_filters}
-        sel_f_label = st.selectbox("Escolha o Caderno:", list(filter_map.keys()), key="res_cad_map")
-        f_id = filter_map[sel_f_label]
-
+    filters = get_saved_filters()
+    if filters:
+        f_map = {f"{f['nome']} ({f['disciplina']} - {f['lei'])": f["id"] for f in filters}
+        sel_f = st.selectbox("Escolha o Caderno:", list(f_map.keys()))
+        f_id = f_map[sel_f]
         conn = db()
-        questoes = conn.execute("SELECT * FROM questoes WHERE filtro_id=?", (f_id,)).fetchall()
+        qs = conn.execute("SELECT * FROM questoes WHERE filtro_id=?", (f_id,)).fetchall()
         conn.close()
-
-        if not questoes:
-            st.warning("Este caderno ainda não possui questões geradas.")
-        else:
-            if "q_idx" not in st.session_state:
-                st.session_state["q_idx"] = 0
-            
-            idx = st.session_state["q_idx"]
-            if idx >= len(questoes):
-                st.success("Você concluiu todas as questões deste caderno!")
-                if st.button("Recomeçar"):
-                    st.session_state["q_idx"] = 0
-                    st.rerun()
-            else:
-                q = questoes[idx]
-                st.markdown(f"**Dispositivo:** `{q['artigo_numero']}`")
+        if qs:
+            if "q_i" not in st.session_state: st.session_state["q_i"] = 0
+            idx = st.session_state["q_i"]
+            if idx < len(qs):
+                q = qs[idx]
+                st.markdown(f"**Artigo:** {q['artigo_numero']}")
                 st.markdown(q["enunciado"])
-                
-                resp = st.radio("Sua resposta:", ["Certo", "Errado"], key=f"ans_{q['id']}")
-                if st.button("Responder", type="primary"):
-                    val = 1 if resp == "Certo" else 0
-                    acertou = record_answer(q["id"], val, cycle=1)
-                    if acertou:
-                        st.success("✨ Resposta Correta!")
-                    else:
-                        st.error("❌ Resposta Incorreta!")
-                    st.markdown(q["explicacao"], unsafe_allow_html=True)
-                    if st.button("Próxima Questão ➡️"):
-                        st.session_state["q_idx"] += 1
+                ans = st.radio("Resposta:", ["Certo", "Errado"], key=f"ans_{q['id']}")
+                if st.button("Enviar Resposta"):
+                    res = record_answer(q["id"], 1 if ans == "Certo" else 0)
+                    if res: st.success("Correto!")
+                    else: st.error("Incorreto!")
+                    st.info(q["explicacao"])
+                    if st.button("Próxima ➡️"):
+                        st.session_state["q_i"] += 1
                         st.rerun()
+            else:
+                st.success("Caderno concluído!")
+                if st.button("Reiniciar"):
+                    st.session_state["q_i"] = 0
+                    st.rerun()
 
 with tab4:
-    st.header("Seu Desempenho")
-    tot, ac, err, pct, b_disc, b_filt, due = stats()
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Respondidas", tot)
-    c2.metric("Acertos", ac)
-    c3.metric("Erros", err)
-    c4.metric("Aproveitamento", f"{pct:.1f}%")
-    if st.button("Zerar Histórico"):
-        zerar_historico_dashboard()
-        st.success("Histórico zerado!")
-        st.rerun()
+    st.header("Desempenho")
+    conn = db()
+    tot = conn.execute(f"SELECT COUNT(*) n FROM respostas WHERE usuario_id={USER_ID}").fetchone()["n"]
+    ac = conn.execute(f"SELECT COALESCE(SUM(acertou),0) n FROM respostas WHERE usuario_id={USER_ID}").fetchone()["n"]
+    conn.close()
+    st.metric("Total Respondidas", tot)
+    st.metric("Acertos", ac)
 
 with tab5:
-    st.header("Revisão Espaçada")
-    tot, ac, err, pct, b_disc, b_filt, due = stats()
-    st.metric("Questões Pendentes", due)
-    st.info("Utilize os ciclos de questões para alimentar suas revisões.")
-
-if is_admin_user:
-    with tab_admin:
-        st.header("🛡 Painel Admin")
-        for u in listar_usuarios():
-            st.write(f"Utilizador: {u['username']} | Autorizado: {u['autorizado']}")
+    st.header("Revisões")
+    st.info("Acompanhe suas revisões espaçadas.")
