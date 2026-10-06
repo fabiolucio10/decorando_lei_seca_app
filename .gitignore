@@ -1,12 +1,6 @@
-node_modules/
-build/
-dist/
-coverage/
-.DS_Store
-*.log
-.env*
-!.env.example
-.streamlit/
-*.db
-__pycache__/
 .venv/
+__pycache__/
+*.pyc
+decorando_lei.db
+leis_importadas/
+.streamlit/secrets.toml
