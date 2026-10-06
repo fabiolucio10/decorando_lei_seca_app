@@ -1,0 +1,6 @@
+{
+  "name": "Decorando Lei Seca - Estudo Fragmentado",
+  "description": "Aplicativo para memorização e estudo de lei seca com fragmentação inteligente de artigos, incisos e parágrafos extensos, questões certo/errado e exemplos práticos objetivos.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
