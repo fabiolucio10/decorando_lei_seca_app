@@ -10,8 +10,16 @@ import urllib.error
 from datetime import datetime, timedelta
 from pathlib import Path
 
-import fitz  # PyMuPDF
-import pandas as pd
+try:
+    import fitz  # PyMuPDF
+except ImportError:
+    fitz = None
+
+try:
+    import pandas as pd
+except ImportError:
+    pd = None
+
 import streamlit as st
 
 try:
@@ -670,64 +678,298 @@ def obter_texto_caput(artigo_id):
         return caput if caput else texto_normalizado.strip()
     return None
 
-def alterar_texto_para_errado(texto):
-    substituicoes = [
-        (r'\bdeverá\b', 'poderá', 'troca de obrigação ("deverá") por faculdade ("poderá")'),
-        (r'\bpoderá\b', 'deverá', 'troca de faculdade ("poderá") por obrigação ("deverá")'),
-        (r'\b24 \(vinte e quatro\) horas\b', '48 (quarenta e oito) horas', 'alteração de prazo legal de 24h para 48h'),
-        (r'\b48 \(quarenta e oito\) horas\b', '24 (vinte e quatro) horas', 'alteração de prazo legal de 48h para 24h'),
-        (r'\b72 \(setenta e duas\) horas\b', '24 (vinte e quatro) horas', 'alteração de prazo legal de 72h para 24h'),
-        (r'\b12 \(doze\) horas\b', '24 (vinte e quatro) horas', 'alteração do prazo de 12h para 24h'),
-        (r'\b30 \(trinta\) dias\b', '15 (quinze) dias', 'alteração de prazo legal de 30 para 15 dias'),
-        (r'\b15 \(quinze\) dias\b', '30 (trinta) dias', 'alteração de prazo legal de 15 para 30 dias'),
-        (r'\bpermitido\b', 'vedado', 'inversão de permissão para proibição'),
-        (r'\bvedado\b', 'permitido', 'inversão de proibição para permissão'),
-        (r'\bexigido\b', 'dispensado', 'troca de exigência por dispensa legal'),
-        (r'\bdispensado\b', 'exigido', 'troca de dispensa por exigência indevida'),
-        (r'\bobrigatório\b', 'facultativo', 'troca de obrigatório por facultativo'),
-        (r'\bfacultativo\b', 'obrigatório', 'troca de facultativo por obrigatório'),
-        (r'\bindependentemente de autorização\b', 'mediante prévia autorização da autoridade', 'exigência indevida de autorização estatal'),
-        (r'\bindependentemente de autorização judicial\b', 'mediante prévia autorização judicial', 'exigência indevida de autorização judicial'),
-        (r'\bmediante autorização judicial\b', 'independentemente de autorização judicial', 'supressão indevida da reserva de jurisdição'),
-        (r'\bsalvo em caso de guerra declarada\b', 'mesmo em caso de guerra declarada', 'supressão da ressalva constitucional expressa'),
-        (r'\bsem armas\b', 'com armas de fogo registradas', 'admissão indevida de armas na reunião'),
-        (r'\bprévio aviso\b', 'prévia autorização', 'troca do prévio aviso por exigência de prévia autorização'),
-        (r'\brazoável duração\b', 'duração discricionária', 'supressão da garantia da razoável duração do processo')
-    ]
-    
-    texto_modificado = texto
-    tipo_troca = None
-    
-    for padrao, sub, descricao in substituicoes:
-        if re.search(padrao, texto_modificado, re.IGNORECASE):
-            texto_modificado = re.sub(padrao, sub, texto_modificado, count=1, flags=re.IGNORECASE)
-            tipo_troca = descricao
-            break
-            
-    if not tipo_troca:
-        if " não " in texto_modificado:
-            texto_modificado = texto_modificado.replace(" não ", " ", 1)
-            tipo_troca = 'supressão da negação "não"'
-        else:
-            words = texto_modificado.split()
-            if len(words) > 3:
-                words.insert(3, "não")
-                texto_modificado = " ".join(words)
-                tipo_troca = 'inserção indevida da negação "não"'
+# ==============================================================================
+# FORMATAÇÃO, NEXO GRAMATICAL E GERAÇÃO DE ASSERTIVAS (PADRÃO CEBRASPE / OAB)
+# ==============================================================================
 
-    return texto_modificado, tipo_troca
+def limpar_assertiva_dispositivo(texto):
+    """
+    Higieniza o texto bruto do dispositivo, removendo numerais romanos (ex: 'XLIX - '),
+    parágrafos ('§ 1º - ') e alíneas, ajustando maiúscula inicial e pontuação final.
+    """
+    if not texto:
+        return ""
+    t = texto.strip()
+    # Remove marcadores no início como "XLIX - ", "§ 1º - ", "Parágrafo único. ", "a) - "
+    t = re.sub(
+        rf'^(?:{REGEX_ROMANO}\s*[-–—\.]\s*|§\s*\d+º?\s*[-–—\.]?\s*|Parágrafo único\s*[-–—\.]?\s*|[a-z]\s*[\)\-]\s*)',
+        '',
+        t,
+        flags=re.IGNORECASE
+    ).strip()
+    # Remove pontuação residual no final como ;, : ou vírgula
+    t = re.sub(r'[\s;:,]+$', '', t).strip()
+    if not t:
+        return texto.strip()
+    # Garante primeira letra maiúscula e ponto final
+    t = t[0].upper() + t[1:]
+    if not t.endswith('.'):
+        t += '.'
+    return t
+
+def conectar_caput_com_dispositivo(caput_texto, assertiva_limpa, rotulo_dispositivo):
+    """
+    Quando um dispositivo (especialmente inciso) depende da oração principal do Caput
+    para ter sujeito, verbo e sentido completo (nexo sintático), realiza a ligação inteligente.
+    Ex: 'Compete privativamente ao Presidente da República:' + 'nomear e exonerar...'
+    -> 'Compete privativamente ao Presidente da República nomear e exonerar os Ministros de Estado.'
+    """
+    if not caput_texto or not assertiva_limpa:
+        return assertiva_limpa
+    
+    cap = caput_texto.strip()
+    
+    # 1. Art. 84 - Competências do Presidente
+    if re.search(r'compete\s+privativamente\s+ao\s+presidente\s+da\s+república', cap, re.IGNORECASE):
+        if not re.search(r'compete', assertiva_limpa, re.IGNORECASE):
+            verbo_ajustado = assertiva_limpa[0].lower() + assertiva_limpa[1:]
+            return f"Compete privativamente ao Presidente da República {verbo_ajustado}"
+            
+    # 2. Art. 37 - Princípios da Administração Pública
+    if re.search(r'administração\s+pública\s+direta\s+e\s+indireta.*obedecerá', cap, re.IGNORECASE):
+        if not re.search(r'administração|cargos|princípios', assertiva_limpa, re.IGNORECASE):
+            verbo_ajustado = assertiva_limpa[0].lower() + assertiva_limpa[1:]
+            return f"Na administração pública direta e indireta, {verbo_ajustado}"
+
+    # 3. Caput que termina com dois pontos e introduz enumeração direta curta
+    if cap.endswith(':') and len(cap) < 120:
+        cap_sem_dois_pontos = cap.rstrip(':').strip()
+        if not assertiva_limpa.lower().startswith(cap_sem_dois_pontos.lower()[:20]):
+            verbo_ajustado = assertiva_limpa[0].lower() + assertiva_limpa[1:]
+            return f"{cap_sem_dois_pontos} {verbo_ajustado}"
+
+    return assertiva_limpa
+
+def construir_enunciado_com_nexo(nome_lei, rotulo_dispositivo, assertiva_texto, caput_texto=None, num_art=None):
+    """
+    Monta o enunciado com apresentação contextualizada, nexo legal direto e citação em destaque.
+    """
+    ref_rotulo = obter_rotulo_dispositivo(rotulo_dispositivo)
+    vinculo = ""
+    if num_art and num_art not in ref_rotulo:
+        vinculo = f" (pertencente ao {num_art})"
+        
+    enunciado = (
+        f"Com base na **{nome_lei}** e no disposto no **{ref_rotulo}**{vinculo}, "
+        f"julgue o item a seguir:\n\n"
+        f"> \"{assertiva_texto}\""
+    )
+    return enunciado
 
 def obter_rotulo_dispositivo(numero_dispositivo):
-    num_lower = numero_dispositivo.lower()
+    if not numero_dispositivo:
+        return "Dispositivo da Lei"
+    s = str(numero_dispositivo).strip()
+    # Remove aninhamentos repetitivos como "Inciso (Art. 5º, Inciso XLIX)"
+    s = re.sub(r'^(?:Inciso|Parágrafo|Alínea|Artigo)\s*\((.+)\)$', r'\1', s, flags=re.IGNORECASE)
+    return s
 
-    if "alínea" in num_lower or "alinea" in num_lower:
-        return f"Alínea ({numero_dispositivo})"
-    elif "§" in num_lower or "parágrafo" in num_lower or "paragrafo" in num_lower:
-        return f"Parágrafo ({numero_dispositivo})"
-    elif "inciso" in num_lower or re.search(rf'\b{REGEX_ROMANO}\b', numero_dispositivo, re.IGNORECASE):
-        return f"Inciso ({numero_dispositivo})"
-    else:
-        return f"Artigo ({numero_dispositivo})"
+def alterar_texto_para_errado(texto):
+    """
+    Gera assertivas INCORRETAS com 100% de nexo sintático e jurídico,
+    reproduzindo as pegadinhas clássicas de bancas de concursos (Cebraspe/FGV/Vunesp/FCC).
+    NUNCA insere palavras de forma cega ou quebra a concordância verbal.
+    """
+    substituicoes = [
+        # Direitos dos Presos e Dignidade (Art. 5º, XLIX, XLVIII, L)
+        (
+            r'\brespeito à integridade física e moral\b',
+            'respeito à integridade física, sendo dispensada a tutela de sua integridade moral',
+            'restrição indevida: a CF/88 assegura expressamente o respeito à integridade física E moral dos presos'
+        ),
+        (
+            r'\bintegridade física e moral\b',
+            'integridade física, mas não à integridade moral',
+            'restrição indevida: a garantia constitucional abrange tanto a integridade física quanto a moral'
+        ),
+        (
+            r'\bé assegurado aos presos o respeito\b',
+            'é facultado à administração penitenciária restringir o respeito',
+            'troca indevida de garantia fundamental cogente por faculdade administrativa'
+        ),
+        (
+            r'\bestabelecimentos distintos, de acordo com a natureza do delito, a idade e o sexo\b',
+            'estabelecimentos unificados, independentemente da natureza do delito, idade ou sexo',
+            'supressão do critério constitucional de separação de presos por delito, idade e sexo'
+        ),
+        (
+            r'\bpermanecer com seus filhos durante o período de amamentação\b',
+            'permanecer com seus filhos apenas nos primeiros 15 dias de vida, vedada a amamentação no presídio',
+            'supressão da garantia constitucional da presidiária de amamentar seus filhos'
+        ),
+
+        # Penas Proibidas e Extradição (Art. 5º, XLVII, LI, LII)
+        (
+            r'\bsalvo em caso de guerra declarada\b',
+            'mesmo em caso de guerra declarada',
+            'supressão da única ressalva constitucional para a pena de morte no Brasil'
+        ),
+        (
+            r'\bnenhum brasileiro será extraditado, salvo o naturalizado\b',
+            'qualquer brasileiro, inclusive o nato, poderá ser extraditado por crime comum',
+            'violação da imunidade absoluta do brasileiro nato contra extradição'
+        ),
+        (
+            r'\bnenhum brasileiro será extraditado\b',
+            'o brasileiro nato poderá ser extraditado em caso de tráfico de drogas',
+            'o brasileiro nato NUNCA é extraditado, nem mesmo por tráfico de entorpecentes'
+        ),
+        (
+            r'\bnão será concedida extradição de estrangeiro por crime político ou de opinião\b',
+            'será admitida a extradição de estrangeiro por crime puramente político ou de opinião',
+            'violação da vedação expressa de extradição por crime político ou de opinião'
+        ),
+
+        # Provas Ilícitas, Devido Processo e Presunção de Inocência (Art. 5º, LIV, LVI, LVII)
+        (
+            r'\bsão inadmissíveis, no processo, as provas obtidas por meios ilícitos\b',
+            'são plenamente admissíveis no processo as provas obtidas por meios ilícitos, desde que úteis à verdade real',
+            'inversão da regra constitucional de inadmissibilidade absoluta das provas ilícitas'
+        ),
+        (
+            r'\bsão inadmissíveis\b',
+            'são admissíveis',
+            'inversão da vedação de provas ilícitas'
+        ),
+        (
+            r'\btrânsito em julgado de sentença penal condenatória\b',
+            'confirmação da condenação em julgamento de segundo grau',
+            'antecipação indevida da culpabilidade antes do trânsito em julgado'
+        ),
+        (
+            r'\btrânsito em julgado\b',
+            'decisão condenatória de primeira instância',
+            'violação do princípio da presunção de inocência'
+        ),
+        (
+            r'\bsem o devido processo legal\b',
+            'mediante processo sumário sem contraditório',
+            'supressão da garantia do devido processo legal'
+        ),
+        (
+            r'\bo civilmente identificado não será submetido a identificação criminal\b',
+            'o civilmente identificado será compulsoriamente submetido a identificação criminal em qualquer hipótese',
+            'violação da regra que dispensa identificação criminal de quem já possui identificação civil'
+        ),
+
+        # Prisão e Liberdade (Art. 5º, XI, LXVII, LXVIII, LXIX, LXXIII)
+        (
+            r'\bnão haverá prisão civil por dívida, salvo a do responsável pelo inadimplemento voluntário e inescusável de obrigação alimentícia e a do depositário infiel\b',
+            'é admitida a prisão civil por qualquer dívida bancária ou contratual inadimplida',
+            'generalização indevida da prisão civil, que só cabe para obrigação alimentícia'
+        ),
+        (
+            r'\bdurante o dia, por determinação judicial\b',
+            'a qualquer hora do dia ou da noite, por determinação da autoridade policial',
+            'violação da reserva de jurisdição e do limite diurno para cumprimento de mandado em domicílio'
+        ),
+        (
+            r'\bindependentemente de autorização\b',
+            'desde que previamente autorizada pelo órgão policial competente',
+            'exigência indevida de autorização para o direito constitucional de reunião'
+        ),
+        (
+            r'\bsem armas\b',
+            'ainda que os participantes portem armas de fogo registradas',
+            'admissão indevida de armas na reunião pacífica'
+        ),
+        (
+            r'\bprévio aviso à autoridade competente\b',
+            'prévia autorização judicial',
+            'a CF exige apenas prévio aviso, e não autorização judicial'
+        ),
+        (
+            r'\bqualquer cidadão é parte legítima para propor ação popular\b',
+            'qualquer pessoa jurídica ou estrangeiro não eleitor é parte legítima para propor ação popular',
+            'ação popular é remédio exclusivo de cidadão (pessoa física no gozo dos direitos políticos)'
+        ),
+        (
+            r'\bisen[ts]o de custas judiciais e do ônus da sucumbência\b',
+            'sujeito ao recolhimento prévio de custas judiciais e depósito recursal obrigatório',
+            'cobrança indevida em ação popular constitucionalmente gratuita'
+        ),
+        (
+            r'\bdireito líquido e certo\b',
+            'direito controvertido que demande perícia técnica e ampla dilação probatória',
+            'mandado de segurança exige prova pré-constituída e não admite dilação probatória'
+        ),
+        (
+            r'\bliberdade de locomoção\b',
+            'direito patrimonial ou funcional',
+            'habeas corpus destina-se exclusivamente a tutelar a liberdade de locomoção'
+        ),
+
+        # Prazos e Conectivos Legais Gerais
+        (r'\b24 \(vinte e quatro\) horas\b', '48 (quarenta e oito) horas', 'alteração indevida de prazo legal de 24h para 48h'),
+        (r'\b48 \(quarenta e oito\) horas\b', '24 (vinte e quatro) horas', 'alteração indevida de prazo legal de 48h para 24h'),
+        (r'\b72 \(setenta e duas\) horas\b', '24 (vinte e quatro) horas', 'alteração de prazo legal de 72h para 24h'),
+        (r'\b12 \(doze\) horas\b', '24 (vinte e quatro) horas', 'alteração de prazo legal de 12h para 24h'),
+        (r'\b30 \(trinta\) dias\b', '15 (quinze) dias', 'alteração indevida de prazo legal de 30 para 15 dias'),
+        (r'\b15 \(quinze\) dias\b', '30 (trinta) dias', 'alteração indevida de prazo legal de 15 para 30 dias'),
+        (r'\b120 \(cento e vinte\) dias\b', '60 (sessenta) dias', 'alteração do prazo decadencial do MS de 120 para 60 dias'),
+        (r'\bdeverá\b', 'poderá', 'troca de comando obrigatório ("deverá") por faculdade discricionária ("poderá")'),
+        (r'\bpoderá\b', 'deverá obrigatoriamente', 'troca de faculdade ("poderá") por imposição obrigatória'),
+        (r'\bpermitido\b', 'vedado', 'inversão de permissão legal para vedação'),
+        (r'\bvedado\b', 'permitido', 'inversão de proibição expressa para permissão'),
+        (r'\bvedada\b', 'permitida', 'inversão de proibição expressa para permissão'),
+        (r'\bexigido\b', 'dispensado', 'troca de exigência legal expressa por dispensa indevida'),
+        (r'\bdispensado\b', 'exigido', 'troca de dispensa legal por exigência indevida'),
+        (r'\bobrigatório\b', 'facultativo', 'troca de obrigatoriedade legal por facultatividade'),
+        (r'\bfacultativo\b', 'obrigatório', 'troca de faculdade legal por obrigatoriedade'),
+        (r'\bgratuito\b', 'oneroso, mediante pagamento de taxa', 'cobrança indevida em garantia constitucional gratuita'),
+        (r'\brazoável duração do processo\b', 'duração discricionária do processo', 'supressão da garantia da razoável duração processual')
+    ]
+
+    texto_modificado = texto
+    tipo_troca = None
+
+    for padrao, sub, desc in substituicoes:
+        if re.search(padrao, texto_modificado, re.IGNORECASE):
+            texto_modificado = re.sub(padrao, sub, texto_modificado, count=1, flags=re.IGNORECASE)
+            tipo_troca = desc
+            break
+
+    # Se não caiu em nenhuma substituição temática, aplica inversão sintática cirúrgica (com nexo garantido!)
+    if not tipo_troca:
+        inversoes_sintaticas = [
+            (r'^É assegurado\b', 'Não é assegurado', 'inversão do direito assegurado para negativa'),
+            (r'^São assegurados\b', 'Não são assegurados', 'inversão da garantia assegurada para negativa'),
+            (r'^É assegurada\b', 'Não é assegurada', 'inversão da garantia assegurada para negativa'),
+            (r'^São asseguradas\b', 'Não são asseguradas', 'inversão da garantia assegurada para negativa'),
+            (r'^São invioláveis\b', 'Não são invioláveis', 'supressão da inviolabilidade constitucional'),
+            (r'^É inviolável\b', 'Não é inviolável', 'supressão da inviolabilidade constitucional'),
+            (r'^É livre\b', 'Depende de autorização prévia', 'restrição indevida à liberdade constitucional'),
+            (r'^São livres\b', 'Dependem de autorização prévia', 'restrição indevida à liberdade constitucional'),
+            (r'^É vedad[oa]\b', 'É permitido', 'inversão da vedação para permissão'),
+            (r'^Não haverá\b', 'Será admitida a criação de', 'inversão da vedação constitucional expressa'),
+            (r'^Nenhum brasileiro\b', 'Qualquer brasileiro', 'supressão da garantia constitucional'),
+            (r'^Ninguém será\b', 'Qualquer pessoa poderá ser', 'supressão de garantia individual'),
+            (r'^Compete privativamente\b', 'Compete concorrentemente ao Poder Legislativo e', 'troca de competência privativa por concorrente'),
+            (r'\bnão será\b', 'será', 'supressão da partícula negativa "não"'),
+            (r'\bnão serão\b', 'serão', 'supressão da partícula negativa "não"'),
+            (r'\bnão pode\b', 'pode', 'supressão da vedação "não pode"'),
+            (r'\bnão podem\b', 'podem', 'supressão da vedação "não podem"'),
+            (r'\bnão deve\b', 'deve', 'supressão da proibição "não deve"')
+        ]
+        for padrao, sub, desc in inversoes_sintaticas:
+            if re.search(padrao, texto_modificado, re.IGNORECASE):
+                texto_modificado = re.sub(padrao, sub, texto_modificado, count=1, flags=re.IGNORECASE)
+                tipo_troca = desc
+                break
+
+    # Fallback de segurança com pegadinha real de concurso (NUNCA insere palavras no meio)
+    if not tipo_troca:
+        texto_limpo_ponto = texto_modificado.rstrip('.')
+        texto_modificado = f"{texto_limpo_ponto}, ressalvada decisão discricionária em sentido contrário da autoridade administrativa."
+        tipo_troca = 'criação de ressalva discricionária não prevista na literalidade da lei'
+
+    # Ajusta capitalização inicial
+    if texto_modificado:
+        texto_modificado = texto_modificado[0].upper() + texto_modificado[1:]
+        if not texto_modificado.endswith('.'):
+            texto_modificado += '.'
+
+    return texto_modificado, tipo_troca
 
 # ==============================================================================
 # INTEGRAÇÃO GEMINI IA & OPENAI: EXEMPLOS PRÁTICOS DINÂMICOS DA VIDA REAL
@@ -1157,6 +1399,15 @@ def extrair_exemplo_objetivo_personalizado(art_num, texto_original):
             "Critérios constitucionais de separação: natureza do delito, idade e sexo do apenado."
         )
 
+    # Art. 5º, XLIX - Integridade física e moral dos presos
+    if "xlix" in art_lower or any(k in txt for k in ["integridade física e moral", "assegurado aos presos", "respeito à integridade física"]):
+        return (
+            "Durante uma revista em unidade prisional, detentos imobilizados sofreram agressões verbais e físicas por agentes de segurança. O Ministério Público instaurou ação penal, pois a Constituição assegura que a privação de liberdade jamais retira do preso o direito ao respeito à sua integridade física e moral.",
+            f"• **Aplicação no {art_num}:** O Estado tem o dever indeclinável de custódia e garantia da incolumidade física e da dignidade moral dos apenados.",
+            "Impedir violências, torturas e desumanização no cárcere, preservando o princípio da dignidade da pessoa humana.",
+            "Pegadinha de prova: bancas costumam afirmar que 'apenas a integridade física é assegurada' ou que 'a garantia moral pode ser suspensa por sanção disciplinar'. FALSO! A garantia constitucional protege a integridade FÍSICA E MORAL do preso."
+        )
+
     # Art. 5º, L - Presidiárias e amamentação
     if " l" in art_lower or any(k in txt for k in ["presidiária", "amamenta", "filhos durante o período"]):
         return (
@@ -1274,7 +1525,7 @@ def extrair_exemplo_objetivo_personalizado(art_num, texto_original):
     # Se não caiu em nenhum caso tabelado, usa o motor heurístico dinâmico contextual!
     return gerar_exemplo_dinamico_heuristico(art_num, texto_original)
 
-def gerar_explicacao_humana(art_num, texto_original, foi_correto=False, tipo_troca=None, texto_modificado=None, exemplo_customizado=None, foi_ia=False, nome_ia="Gemini IA"):
+def gerar_explicacao_humana(art_num, texto_original, foi_correto=False, tipo_troca=None, texto_modificado=None, exemplo_customizado=None, foi_ia=False, nome_ia="Gemini IA", caput_texto=None):
     if exemplo_customizado and len(exemplo_customizado) == 4:
         situacao_real, aplicacao_regra, objetivo_regra, bizu_memorizacao = exemplo_customizado
     else:
@@ -1291,12 +1542,22 @@ def gerar_explicacao_humana(art_num, texto_original, foi_correto=False, tipo_tro
 
     tag_ia = f'<span style="background-color: #fef3c7; color: #b45309; padding: 2px 8px; border-radius: 6px; font-size: 11px; font-weight: 600; margin-left: 8px;">✨ Gerado com {nome_ia}</span>' if foi_ia else '<span style="background-color: #eff6ff; color: #1d4ed8; padding: 2px 8px; border-radius: 6px; font-size: 11px; font-weight: 600; margin-left: 8px;">⚖️ Exemplo Prático da Lei</span>'
 
+    bloco_caput = ""
+    if caput_texto and str(caput_texto).strip() and str(caput_texto).strip() != str(texto_original).strip():
+        bloco_caput = f"""
+        <div style="margin-top: 10px; padding-top: 8px; border-top: 1px dashed #cbd5e1; font-size: 12.5px; color: #475569;">
+            <span style="font-weight: 600; color: #1e3a8a;">📜 Contexto do Artigo Principal (Caput de Origem):</span><br>
+            <span style="font-style: italic;">"{str(caput_texto).strip()}"</span>
+        </div>
+        """
+
     card_dispositivo_html = f"""
     <div style="background-color: #f8fafc; border: 1px solid #bfdbfe; border-radius: 10px; padding: 15px; margin-bottom: 14px;">
         <div style="font-weight: 600; color: #1e3a8a; font-size: 13.5px; margin-bottom: 6px;">📖 Dispositivo Literal da Lei Seca ({art_num})</div>
         <div style="color: #334155; font-style: italic; border-left: 3px solid #3b82f6; padding-left: 12px; line-height: 1.5; font-size: 13px;">
             "{texto_original}"
         </div>
+        {bloco_caput}
     </div>
     """
 
@@ -1328,11 +1589,14 @@ def gerar_explicacao_humana(art_num, texto_original, foi_correto=False, tipo_tro
     return explicacao_formatada
 
 # ==============================================================================
-# GERAÇÃO DE QUESTÕES COM FRAGMENTAÇÃO E SUPORTE REAL AO GEMINI
+# GERAÇÃO DE QUESTÕES COM FRAGMENTAÇÃO, NEXO JURÍDICO E SUPORTE GEMINI
 # ==============================================================================
 
 def generate_questions_for_articles(discipline_id, law_id, article_ids, qtd_total, filter_id=None, motor_ia="♊ Gemini IA (Recomendado)", chave_ia_manual=None, progress_callback=None):
     conn = db()
+    lei_row = conn.execute("SELECT nome FROM leis WHERE id=?", (law_id,)).fetchone()
+    nome_lei = lei_row["nome"] if lei_row else "Legislação Aplicável"
+
     if article_ids:
         placeholders = ",".join("?" * len(article_ids))
         arts = conn.execute(f"SELECT * FROM artigos WHERE id IN ({placeholders}) ORDER BY id", article_ids).fetchall()
@@ -1347,11 +1611,13 @@ def generate_questions_for_articles(discipline_id, law_id, article_ids, qtd_tota
     for art in arts:
         texto_artigo = limpar_e_formatar_texto_lei(art["texto"])
         alvos_artigo = fracionar_artigo_extenso(art["numero"], texto_artigo)
+        caput_artigo = obter_texto_caput(art["id"])
         for alvo in alvos_artigo:
             alvos.append({
                 "art": art,
                 "numero": alvo["numero"],
-                "texto": alvo["texto"]
+                "texto": alvo["texto"],
+                "caput": caput_artigo
             })
 
     if not alvos:
@@ -1374,6 +1640,7 @@ def generate_questions_for_articles(discipline_id, law_id, article_ids, qtd_tota
         numero_dispositivo = alvo["numero"]
         rotulo_dispositivo = obter_rotulo_dispositivo(numero_dispositivo)
         text = limpar_e_formatar_texto_lei(alvo["texto"])
+        caput_texto = alvo.get("caput")
         is_correct = random.choice([True, False])
 
         if progress_callback:
@@ -1403,30 +1670,38 @@ def generate_questions_for_articles(discipline_id, law_id, article_ids, qtd_tota
         foi_ia_utilizada = bool(exemplo_ia is not None)
         nome_ia = "Gemini IA" if usar_gemini else ("OpenAI" if usar_openai else "Inteligência Artificial")
 
+        # Higieniza a assertiva: remove marcadores como "XLIX - ", ajusta maiúscula e ponto final
+        assertiva_base = limpar_assertiva_dispositivo(text)
+        # Realiza ligação sintática com o Caput caso a oração seja dependente
+        assertiva_com_nexo = conectar_caput_com_dispositivo(caput_texto, assertiva_base, rotulo_dispositivo)
+
         if is_correct:
-            enunciado = f"De acordo com o **{rotulo_dispositivo}**:\n\n\"{text}\""
+            assertiva_final = assertiva_com_nexo
             gabarito = 1
+            enunciado = construir_enunciado_com_nexo(nome_lei, rotulo_dispositivo, assertiva_final, caput_texto=caput_texto, num_art=art["numero"])
             explicacao = gerar_explicacao_humana(
                 numero_dispositivo,
                 text,
                 foi_correto=True,
                 exemplo_customizado=exemplo_ia,
                 foi_ia=foi_ia_utilizada,
-                nome_ia=nome_ia
+                nome_ia=nome_ia,
+                caput_texto=caput_texto
             )
         else:
-            modified_text, tipo_troca = alterar_texto_para_errado(text)
-            enunciado = f"De acordo com o **{rotulo_dispositivo}**:\n\n\"{modified_text}\""
+            assertiva_final, tipo_troca = alterar_texto_para_errado(assertiva_com_nexo)
             gabarito = 0
+            enunciado = construir_enunciado_com_nexo(nome_lei, rotulo_dispositivo, assertiva_final, caput_texto=caput_texto, num_art=art["numero"])
             explicacao = gerar_explicacao_humana(
                 numero_dispositivo,
                 text,
                 foi_correto=False,
                 tipo_troca=tipo_troca,
-                texto_modificado=modified_text,
+                texto_modificado=assertiva_final,
                 exemplo_customizado=exemplo_ia,
                 foi_ia=foi_ia_utilizada,
-                nome_ia=nome_ia
+                nome_ia=nome_ia,
+                caput_texto=caput_texto
             )
 
         try:
@@ -1918,11 +2193,9 @@ with tab3:
                         ja_tem_ia = ("✨ Gerado com Gemini IA" in explicacao_atual) or ("✨ Gerado com OpenAI" in explicacao_atual)
 
                         if chave_ia and auto_gerar and not ja_tem_ia:
-                            texto_limpo_lei = q["enunciado"]
-                            if "De acordo com o" in texto_limpo_lei:
-                                linhas = texto_limpo_lei.split("\n\n")
-                                if len(linhas) > 1:
-                                    texto_limpo_lei = linhas[-1].strip('"\n ')
+                            caput_text = obter_texto_caput(q["artigo_id"])
+                            trechos_aspas = re.findall(r'"([^"]+)"', q["enunciado"])
+                            texto_limpo_lei = trechos_aspas[-1] if trechos_aspas else q["enunciado"]
 
                             novo_ex_ia = gerar_exemplo_gemini(rotulo_formatado, texto_limpo_lei, chave_manual=chave_ia)
                             if novo_ex_ia:
@@ -1933,7 +2206,8 @@ with tab3:
                                     tipo_troca=None if q["gabarito"] == 1 else "Alteração indevida da literalidade legal",
                                     exemplo_customizado=novo_ex_ia,
                                     foi_ia=True,
-                                    nome_ia="Gemini IA"
+                                    nome_ia="Gemini IA",
+                                    caput_texto=caput_text
                                 )
                                 st.session_state[f"custom_explicacao_{q_id}"] = nova_exp
                                 try:
@@ -1983,11 +2257,9 @@ with tab3:
                                 st.warning("⚠️ Insira a GEMINI_API_KEY na barra lateral à esquerda ou configure no Streamlit Secrets.")
                             else:
                                 with st.spinner("Solicitando novo exemplo prático inédito ao Gemini..."):
-                                    texto_limpo_lei = q["enunciado"]
-                                    if "De acordo com o" in texto_limpo_lei:
-                                        linhas = texto_limpo_lei.split("\n\n")
-                                        if len(linhas) > 1:
-                                            texto_limpo_lei = linhas[-1].strip('"\n ')
+                                    caput_text = obter_texto_caput(q["artigo_id"])
+                                    trechos_aspas = re.findall(r'"([^"]+)"', q["enunciado"])
+                                    texto_limpo_lei = trechos_aspas[-1] if trechos_aspas else q["enunciado"]
                                     novo_exemplo_ia = gerar_exemplo_gemini(rotulo_formatado, texto_limpo_lei, chave_manual=chave_ia)
                                     if novo_exemplo_ia:
                                         nova_exp = gerar_explicacao_humana(
@@ -1997,7 +2269,8 @@ with tab3:
                                             tipo_troca=None if q["gabarito"] == 1 else "Alteração indevida da regra legal",
                                             exemplo_customizado=novo_exemplo_ia,
                                             foi_ia=True,
-                                            nome_ia="Gemini IA"
+                                            nome_ia="Gemini IA",
+                                            caput_texto=caput_text
                                         )
                                         st.session_state[f"custom_explicacao_{q_id}"] = nova_exp
                                         try:
@@ -2153,6 +2426,7 @@ if is_admin_user:
                     st.error(msg)
             else:
                 st.warning("Preencha todos os campos para prosseguir.")
+
 
 
 
