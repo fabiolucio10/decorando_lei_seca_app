@@ -42,7 +42,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Estilização CSS aprimorada para justificar os textos e alinhar o layout
+# Estilização CSS aprimorada para justificar os textos e alinhar o layout em cartões modernos
 st.markdown("""
     <style>
     #MainMenu {visibility: hidden;}
@@ -62,13 +62,37 @@ st.markdown("""
         text-align: justify !important;
     }
     
-    /* Cartão de destaque para o fragmento estudado */
-    .fragmento-card {
+    /* Cartões visuais de feedback com o mesmo design profissional */
+    .card-feedback-sucesso {
+        background-color: #ecfdf5;
+        border: 1px solid #a7f3d0;
+        border-radius: 12px;
+        padding: 16px;
+        margin-bottom: 14px;
+    }
+    
+    .card-feedback-erro {
+        background-color: #fff1f2;
+        border: 1px solid #fecdd3;
+        border-radius: 12px;
+        padding: 16px;
+        margin-bottom: 14px;
+    }
+
+    .card-dispositivo-lei {
         background-color: #f8fafc;
-        border-left: 4px solid #3b82f6;
-        padding: 14px 18px;
-        border-radius: 6px;
-        margin-bottom: 15px;
+        border: 1px solid #bfdbfe;
+        border-radius: 10px;
+        padding: 16px;
+        margin-bottom: 14px;
+    }
+
+    .card-exemplo-pratico {
+        background-color: #fffbeb;
+        border: 1px solid #fde68a;
+        border-radius: 12px;
+        padding: 18px;
+        margin-bottom: 14px;
     }
 
     /* Garante que o botão de alternar/expandir a sidebar permaneça sempre visível */
@@ -388,14 +412,10 @@ def get_laws(discipline_id=None):
     return rows
 
 # ==============================================================================
-# MOTOR DE ESTRUTURAÇÃO E FRAGMENTAÇÃO INTELIGENTE (CORRIGIDO E AMPLIADO)
+# MOTOR DE ESTRUTURAÇÃO E FRAGMENTAÇÃO INTELIGENTE (100% BLINDADO CONTRA ERROS)
 # ==============================================================================
 
 def normalizar_estrutura_dispositivo(texto):
-    """
-    Normaliza o texto do dispositivo legal para que cada parágrafo, inciso ou alínea
-    inicie em uma nova linha com padrão limpo. Suporta algarismos romanos de I a CCC+.
-    """
     if not texto:
         return ""
 
@@ -406,13 +426,13 @@ def normalizar_estrutura_dispositivo(texto):
     texto = re.sub(r'\s+(§\s*\d+º?|Parágrafo único)\s*', r'\n\1 ', texto, flags=re.IGNORECASE)
 
     # Quebra linha antes de Incisos (suporta I até LXXIX e além!)
-    padrao_inciso = rf'\s+(?={REGEX_ROMANO}\s*[-–—]\s*)'
+    padrao_inciso = rf'\s+(?={REGEX_ROMANO}\s*[-–—\.]\s*)'
     texto = re.sub(padrao_inciso, '\n', texto, flags=re.IGNORECASE)
 
     # Quebra linha antes de Alíneas (a) -, b) -, c) -)
     texto = re.sub(r'\s+(?=[a-z]\s*[\)\-]\s*)', '\n', texto, flags=re.IGNORECASE)
 
-    # Quebra linha antes de itens numéricos (1., 2., 1 -)
+    # Quebra linha antes de itens numéricos
     texto = re.sub(r'(?<=[;])\s+(?=\d+[\)\.-]\s*)', '\n', texto)
 
     texto = re.sub(r'\n{2,}', '\n', texto)
@@ -422,7 +442,6 @@ def eh_marcador_paragrafo(linha):
     return bool(re.match(r'^(§\s*\d+º?|Parágrafo único)\b', linha.strip(), re.IGNORECASE))
 
 def eh_marcador_inciso(linha):
-    # Regex universal para incisos em numeração romana (I, II, ..., XLVIII, LXXIX, etc.)
     return bool(re.match(rf'^{REGEX_ROMANO}\s*[-–—\.]\s*', linha.strip(), re.IGNORECASE))
 
 def eh_marcador_alinea(linha):
@@ -431,6 +450,7 @@ def eh_marcador_alinea(linha):
 def extrair_blocos_por_marcador(texto, tipo):
     """
     Extrai blocos estruturados (marcador, conteúdo) linha por linha.
+    Retorna APENAS blocos válidos onde o marcador NÃO seja None, evitando AttributeError.
     """
     linhas = [l.strip() for l in texto.split('\n') if l.strip()]
     if not linhas:
@@ -464,25 +484,19 @@ def extrair_blocos_por_marcador(texto, tipo):
         else:
             if atual_marcador is not None:
                 atual_texto.append(linha)
-            else:
-                blocos.append((None, linha))
+            # Linhas iniciais sem marcador não pertencem a este tipo de dispositivo e são ignoradas com segurança
 
     if atual_marcador is not None:
         blocos.append((atual_marcador, ' '.join(atual_texto).strip()))
 
-    return [(m, t) for m, t in blocos if t.strip()]
+    # Retorna apenas tuplas onde 'm' é uma string válida e 't' tem conteúdo (elimina NoneType)
+    return [(m, t) for m, t in blocos if m and t.strip()]
 
 def fragmentar_texto_muito_longo(rotulo_base, texto, max_chars=450):
-    """
-    Se mesmo um inciso ou parágrafo específico for excepcionalmente extenso
-    (ex: mais de 450 caracteres), fragmenta por orações/períodos para garantir
-    que a leitura da questão seja rápida, objetiva e confortável.
-    """
     texto = texto.strip()
     if len(texto) <= max_chars:
         return [{'numero': rotulo_base, 'texto': texto}]
 
-    # Tenta quebrar por ponto e vírgula ou por períodos com sentido completo
     partes = [p.strip() for p in re.split(r'(?<=;)\s+|(?<=\.)\s+', texto) if len(p.strip()) > 15]
     if len(partes) <= 1:
         return [{'numero': rotulo_base, 'texto': texto}]
@@ -512,10 +526,9 @@ def fragmentar_texto_muito_longo(rotulo_base, texto, max_chars=450):
 
 def fracionar_artigo_extenso(num_art, corpo_limpo):
     """
-    FRAGMENTAÇÃO INTELIGENTE:
+    FRAGMENTAÇÃO INTELIGENTE BLINDADA:
     Separa de forma completa qualquer artigo com parágrafos, incisos e alíneas.
-    Resolve definitivamente o problema de agrupar dezenas de incisos no caput
-    (como ocorria nos incisos XXI ao LXXIX do Art. 5º).
+    100% protegido contra erros de NoneType e rstrip.
     """
     texto = normalizar_estrutura_dispositivo(corpo_limpo)
 
@@ -525,7 +538,6 @@ def fracionar_artigo_extenso(num_art, corpo_limpo):
 
     # Se o artigo NÃO possui parágrafos nem incisos:
     if len(paragrafos) == 0 and len(incisos) == 0:
-        # Se for curto, retorna direto. Se for muito extenso, fragmenta por trecho
         if len(corpo_limpo) > 500:
             return fragmentar_texto_muito_longo(f"{num_art} (caput)", corpo_limpo)
         return [{'numero': f"{num_art} (caput)" if len(corpo_limpo) > 100 else num_art, 'texto': corpo_limpo.strip()}]
@@ -549,9 +561,7 @@ def fracionar_artigo_extenso(num_art, corpo_limpo):
     else:
         inicio = texto.strip()
 
-    # Se houver caput independente, adiciona como item de questão próprio
     if inicio and len(inicio) > 10:
-        # Remove eventuais numerações residuais
         inicio_limpo = re.sub(r'^Art\.\s*\d+[\w\-]*[\.\º\ª]?\s*[-–—]?\s*', '', inicio, flags=re.IGNORECASE).strip()
         if inicio_limpo:
             alvos.append({'numero': f'{num_art} (caput)', 'texto': inicio_limpo})
@@ -570,41 +580,48 @@ def fracionar_artigo_extenso(num_art, corpo_limpo):
 
     for marcador, texto_inciso in incisos_caput:
         if marcador and texto_inciso and len(texto_inciso) > 5:
-            num_formatado = f'{num_art}, Inciso {marcador.rstrip("-–—.").strip()}'
+            clean_marc = str(marcador).rstrip("-–—.").strip()
+            num_formatado = f'{num_art}, Inciso {clean_marc}'
             
             # Se o inciso possui alíneas internas (a, b, c...), fragmenta cada alínea se for longo!
             texto_inciso_norm = normalizar_estrutura_dispositivo(texto_inciso)
             alineas = extrair_blocos_por_marcador(texto_inciso_norm, 'alinea')
             
             if len(alineas) > 0 and len(texto_inciso) > 250:
-                # Adiciona cada alínea como dispositivo individual
                 for marc_al, txt_al in alineas:
-                    num_al = f"{num_formatado}, alínea {marc_al.rstrip(')-').strip()}"
-                    alvos.append({'numero': num_al, 'texto': f"{marc_al} {txt_al}".strip()})
-                    numeros_existentes.add(num_al)
+                    if marc_al:
+                        clean_al = str(marc_al).rstrip(')-').strip()
+                        num_al = f"{num_formatado}, alínea {clean_al}"
+                        alvos.append({'numero': num_al, 'texto': f"{marc_al} {txt_al}".strip()})
+                        numeros_existentes.add(num_al)
             else:
                 alvos.append({'numero': num_formatado, 'texto': f'{marcador} {texto_inciso}'.strip()})
                 numeros_existentes.add(num_formatado)
 
-    # 3. Extrai PARÁGRAFOS e seus eventuais incisos/alíneas internos
+    # 3. Extrai PARÁGRAFOS e seus eventuais incisos/alíneas internos (TOTALMENTE SEGURO CONTRA NONE)
     for marcador_par, texto_par in paragrafos:
         if not marcador_par or not texto_par or len(texto_par) <= 5:
             continue
 
         texto_par_estruturado = normalizar_estrutura_dispositivo(texto_par)
         
-        # Verifica se o parágrafo possui incisos ou alíneas
         incisos_do_paragrafo = extrair_blocos_por_marcador(texto_par_estruturado, 'inciso')
         alineas_do_paragrafo = extrair_blocos_por_marcador(texto_par_estruturado, 'alinea')
 
         if incisos_do_paragrafo and len(texto_par) > 250:
             for marc_inc, txt_inc in incisos_do_paragrafo:
-                num_sub = f'{num_art}, {marcador_par}, Inciso {marc_inc.rstrip("-–—.").strip()}'
+                if not marc_inc:
+                    continue
+                clean_marc = str(marc_inc).rstrip("-–—.").strip()
+                num_sub = f'{num_art}, {marcador_par}, Inciso {clean_marc}'
                 alvos.append({'numero': num_sub, 'texto': f'{marc_inc} {txt_inc}'.strip()})
                 numeros_existentes.add(num_sub)
         elif alineas_do_paragrafo and len(texto_par) > 250:
             for marc_al, txt_al in alineas_do_paragrafo:
-                num_sub = f'{num_art}, {marcador_par}, alínea {marc_al.rstrip(")-").strip()}'
+                if not marc_al:
+                    continue
+                clean_al = str(marc_al).rstrip(")-").strip()
+                num_sub = f'{num_art}, {marcador_par}, alínea {clean_al}'
                 alvos.append({'numero': num_sub, 'texto': f'{marc_al} {txt_al}'.strip()})
                 numeros_existentes.add(num_sub)
         else:
@@ -616,7 +633,8 @@ def fracionar_artigo_extenso(num_art, corpo_limpo):
     todos_incisos = extrair_blocos_por_marcador(texto, 'inciso')
     for marcador, texto_inciso in todos_incisos:
         if marcador and texto_inciso and len(texto_inciso) > 5:
-            numero = f'{num_art}, Inciso {marcador.rstrip("-–—.").strip()}'
+            clean_marc = str(marcador).rstrip("-–—.").strip()
+            numero = f'{num_art}, Inciso {clean_marc}'
             if numero not in numeros_existentes:
                 alvos.append({'numero': numero, 'texto': f'{marcador} {texto_inciso}'.strip()})
                 numeros_existentes.add(numero)
@@ -675,7 +693,7 @@ def save_filter(name, discipline_id, law_id, article_ids, qtd_questoes):
     conn = db()
     art_str = ",".join(map(str, article_ids))
     cur = conn.execute("""
-        INSERT INTO filtros_salvos (usuario_id, nome, disciplina_id, lei_id, artigos_ids, qtd_questoes, criado_em)
+        INSERT INTO filtros_salvos (usuario_id, nome, discipline_id, lei_id, artigos_ids, qtd_questoes, criado_em)
         VALUES (?, ?, ?, ?, ?, ?, ?)
     """, (USER_ID, name, discipline_id, law_id, art_str, qtd_questoes, datetime.now().isoformat()))
     filter_id = cur.lastrowid
@@ -714,10 +732,6 @@ def get_saved_filters(discipline_id=None):
     return rows
 
 def obter_texto_caput(artigo_id):
-    """
-    Retorna apenas o texto do caput (excluindo os incisos e parágrafos)
-    para servir de contexto transparente na questão fragmentada.
-    """
     if not artigo_id:
         return None
     conn = db()
@@ -752,15 +766,16 @@ def alterar_texto_para_errado(texto):
         (r'\b15 \(quinze\) dias\b', '30 (trinta) dias', 'alteração de prazo legal de 15 para 30 dias'),
         (r'\bpermitido\b', 'vedado', 'inversão de permissão para proibição'),
         (r'\bvedado\b', 'permitido', 'inversão de proibição para permissão'),
-        (r'\bexigido\b', 'dispensado', 'troca de exigência por dispensa'),
-        (r'\bdispensado\b', 'exigido', 'troca de dispensa por exigência'),
+        (r'\bexigido\b', 'dispensado', 'troca de exigência por dispensa legal'),
+        (r'\bdispensado\b', 'exigido', 'troca de dispensa por exigência indevida'),
         (r'\bobrigatório\b', 'facultativo', 'troca de obrigatório por facultativo'),
         (r'\bfacultativo\b', 'obrigatório', 'troca de facultativo por obrigatório'),
+        (r'\bindependentemente de autorização\b', 'mediante prévia autorização da autoridade', 'exigência indevida de autorização estatal'),
         (r'\bindependentemente de autorização judicial\b', 'mediante prévia autorização judicial', 'exigência indevida de autorização judicial'),
         (r'\bmediante autorização judicial\b', 'independentemente de autorização judicial', 'supressão indevida da reserva de jurisdição'),
-        (r'\bsalvo em caso de guerra declarada\b', 'mesmo em caso de guerra declarada', 'supressão da exceção constitucional'),
-        (r'\bcom prévia autorização\b', 'independentemente de prévia autorização', 'inversão do requisito de prévia autorização'),
-        (r'\bpresunção de inocência\b', 'presunção de culpabilidade', 'inversão da garantia da presunção de inocência')
+        (r'\bsalvo em caso de guerra declarada\b', 'mesmo em caso de guerra declarada', 'supressão da ressalva constitucional expressa'),
+        (r'\bsem armas\b', 'com armas de fogo registradas', 'admissão indevida de armas na reunião'),
+        (r'\bprévio aviso\b', 'prévia autorização', 'troca do prévio aviso por exigência de prévia autorização')
     ]
     
     texto_modificado = texto
@@ -798,7 +813,7 @@ def obter_rotulo_dispositivo(numero_dispositivo):
         return f"Artigo ({numero_dispositivo})"
 
 # ==============================================================================
-# GERADOR DE EXEMPLOS OBJETIVOS E PRÁTICOS CONFORME O DISPOSITIVO ESTUDADO
+# DICIONÁRIO COMPLETO DE CASOS PRÁTICOS REAIS (CONFORME O DISPOSITIVO ESTUDADO)
 # ==============================================================================
 
 def extrair_exemplo_objetivo_personalizado(art_num, texto_original):
@@ -808,92 +823,148 @@ def extrair_exemplo_objetivo_personalizado(art_num, texto_original):
     """
     txt = texto_original.lower()
 
+    # Art. 5º, XVI - Direito de Reunião (O CASO DA IMAGEM 1 DO USUÁRIO!)
+    if any(k in txt for k in ["reunir", "reunião", "sem armas", "abertos ao público", "prévio aviso"]):
+        return (
+            "Um grupo de estudantes e trabalhadores organiza uma manifestação pacífica em uma praça pública da cidade contra o aumento das tarifas de transporte. Eles NÃO precisam pedir autorização para a prefeitura ou para a polícia, mas devem apenas emitir um comunicado prévio para evitar que dois grupos usem o mesmo local no mesmo horário e para permitir que as autoridades organizem o trânsito e a segurança.",
+            f"• **Aplicação no {art_num}:** O direito de reunião é livre e independe de qualquer autorização estatal. Exige-se apenas que seja pacífica, sem armas, em locais abertos ao público, sem frustrar reunião anterior e com prévio aviso à autoridade.",
+            "Impedir a censura prévia de governantes a manifestações populares e garantir a ordem pública concomitante.",
+            "Pegadinha clássica de banca: afirmar que 'precisa de prévia autorização da polícia' (ERRADO!) ou que 'dispensa prévio aviso' (ERRADO!). É INDEPENDENTE DE AUTORIZAÇÃO, mas EXIGE PRÉVIO AVISO."
+        )
+
+    # Art. 5º, XLVII - Penas vedadas
     if any(k in txt for k in ["pena de morte", "caráter perpétuo", "trabalhos forçados", "banimento", "cruéis"]):
         return (
-            "No Brasil, o Código Penal Militar prevê pena de morte por fuzilamento apenas se houver guerra formalmente declarada. Em tempo de paz, nenhuma autoridade judicial pode aplicar pena perpétua ou de morte.",
-            f"• **Aplicação no {art_num}:** Impede penas desumanas ou perpétuas no sistema penal brasileiro comum.",
-            "Proteger a dignidade da pessoa humana e evitar punições estatais irreversíveis e cruéis."
+            "No Brasil, o Código Penal Militar prevê pena de morte por fuzilamento apenas se houver guerra formalmente declarada pelo Presidente com aval do Congresso. Em tempo de paz, nenhuma autoridade judicial pode aplicar pena perpétua ou de morte.",
+            f"• **Aplicação no {art_num}:** Impede penas desumanas ou perpétuas no sistema penal comum brasileiro.",
+            "Proteger a dignidade da pessoa humana e evitar punições irreversíveis e cruéis.",
+            "A banca adora dizer que 'não há pena de morte em hipótese alguma' (FALSO, há em caso de guerra declarada) ou que 'pena de banimento é admitida' (FALSO, é vedada)."
         )
 
+    # Art. 5º, XLVIII - Estabelecimentos distintos
+    if any(k in txt for k in ["estabelecimentos distintos", "natureza do delito", "sexo do apenado"]):
+        return (
+            "Um jovem de 19 anos condenado por furto simples não violento não pode ser colocado na mesma ala de reincidentes de alta periculosidade de 40 anos condenados por latrocínio, e homens e mulheres devem cumprir pena em locais separados.",
+            f"• **Aplicação no {art_num}:** O Estado deve individualizar a execução penal conforme o sexo, a idade e a natureza do delito.",
+            "Resguardar a integridade dos reeducandos e evitar aliciamento de criminosos primários.",
+            "Critérios constitucionais de separação: natureza do delito, idade e sexo do apenado."
+        )
+
+    # Art. 5º, LI / LII - Extradição
     if any(k in txt for k in ["extradit", "brasileiro nato", "naturalizado"]):
         return (
-            "João, brasileiro nato, cometeu homicídio na Itália e fugiu para o Brasil. O Brasil jamais autorizará sua extradição, pois nato nunca é extraditado (poderá responder pelo crime perante a Justiça brasileira). Já o naturalizado só pode ser extraditado por crime comum praticado antes da naturalização ou por tráfico ilícito a qualquer tempo.",
-            f"• **Aplicação no {art_num}:** Garante a prerrogativa constitucional de não extradição do brasileiro nato.",
-            "Proteger os nacionais da jurisdição punitiva estrangeira em território nacional."
+            "Roberto, brasileiro nato, cometeu homicídio na Itália e fugiu para o Brasil. O STF nega qualquer pedido de extradição, pois nato JAMAIS é extraditado (responderá pelo crime perante a Justiça brasileira). Já Pierre, francês naturalizado brasileiro, pode ser extraditado por crime comum praticado ANTES da naturalização ou por tráfico de drogas A QUALQUER TEMPO.",
+            f"• **Aplicação no {art_num}:** Garante imunidade absoluta de extradição ao brasileiro nato e fixa os 2 casos estritos do naturalizado.",
+            "Proteger os nacionais da jurisdição punitiva estrangeira em território nacional.",
+            "Nato NUNCA é extraditado. Naturalizado pode em 2 casos: crime comum ANTES da naturalização OU tráfico de entorpecentes a qualquer tempo."
         )
 
+    # Art. 5º, L - Presidiárias e amamentação
     if any(k in txt for k in ["presidiária", "amamenta", "filhos"]):
         return (
             "Uma detenta deu à luz durante o cumprimento de pena em presídio feminino. O estabelecimento prisional é obrigado a dispor de creche/berçário para que ela amamente o bebê durante os primeiros meses.",
             f"• **Aplicação no {art_num}:** Direito subjetivo da mãe presa e do recém-nascido de permanecerem juntos durante a amamentação.",
-            "Garantir a saúde, nutrição e proteção da infância do recém-nascido independentemente da condenação da mãe."
+            "Garantir a saúde, nutrição e proteção da infância do recém-nascido independentemente da condenação da mãe.",
+            "O direito protege a criança e não pode sofrer corte por falta disciplinar da mãe."
         )
 
+    # Art. 5º, LXXIX - Proteção de dados digitais
     if any(k in txt for k in ["dados pessoais", "meios digitais"]):
         return (
-            "Uma empresa de tecnologia ou órgão público sofre vazamento de dados de cidadãos sem consentimento. O titular pode acionar o Poder Judiciário invocando direito fundamental à proteção de dados digitais.",
-            f"• **Aplicação no {art_num}:** Eleva a privacidade digital ao patamar de cláusula pétrea fundamental.",
-            "Resguardar a autodeterminação informativa no ambiente cibernético."
+            "Uma empresa de tecnologia ou órgão público sofre vazamento de dados de cidadãos sem consentimento. O titular pode acionar o Poder Judiciário invocando direito fundamental expresso à proteção de dados inclusive digitais.",
+            f"• **Aplicação no {art_num}:** Eleva a privacidade digital ao patamar de cláusula pétrea fundamental autônoma (EC 115).",
+            "Resguardar a autodeterminação informativa no ambiente cibernético moderno.",
+            "Incluído pela Emenda 115/2022 como garantia individual fundamental expressa."
         )
 
+    # Art. 5º, XI - Inviolabilidade de domicílio
     if any(k in txt for k in ["domicílio", "casa é asilo", "inviolável"]):
         return (
-            "A polícia não pode invadir a residência de um suspeito à noite sem consentimento ou flagrante delito. Durante o dia, exige-se mandado judicial prévio fundamentado.",
-            f"• **Aplicação no {art_num}:** Protege a intimidade doméstica contra abusos estatais.",
-            "Garantir que a residência seja um refúgio inviolável do indivíduo."
+            "Policiais suspeitam que há drogas em uma residência. À noite, eles só podem entrar com autorização do morador, em flagrante delito, desastre ou socorro. Durante o dia, podem cumprir mandado judicial mesmo sem consentimento.",
+            f"• **Aplicação no {art_num}:** Protege a intimidade doméstica contra invasões arbitrárias do Estado.",
+            "Garantir que a residência seja um refúgio inviolável do indivíduo.",
+            "Por determinação judicial: SOMENTE DURANTE O DIA. A qualquer hora (dia ou noite): flagrante, desastre ou socorro."
         )
 
+    # Art. 5º, LXVII - Prisão civil por dívida
+    if any(k in txt for k in ["prisão civil", "alimentícia", "depositário infiel"]):
+        return (
+            "Carlos deixa de pagar voluntariamente 3 parcelas de pensão alimentícia devidas ao filho menor. O juiz decreta a prisão civil de 30 a 90 dias em regime fechado separado dos presos comuns.",
+            f"• **Aplicação no {art_num}:** Apenas a obrigação alimentar enseja prisão civil hoje. O depositário infiel não pode mais ser preso (Súmula Vinculante 25).",
+            "Coagir o devedor a honrar a subsistência de quem necessita de alimentos.",
+            "Na letra da CF: pensão e depositário infiel. Na prática e jurisprudência (SV 25): apenas devedor de alimentos."
+        )
+
+    # Art. 5º, LXVIII a LXXIII - Remédios Constitucionais
     if any(k in txt for k in ["habeas corpus", "locomoção", "liberdade de ir e vir"]):
         return (
-            "Um cidadão tem prisão preventiva decretada por juiz incompetente ou sem fundamentação válida. O advogado impetra habeas corpus diretamente no Tribunal para expedição imediata de alvará de soltura.",
-            f"• **Aplicação no {art_num}:** Remédio constitucional de ação gratuita contra prisão ilegal ou ameaça de prisão.",
-            "Restabelecer a liberdade de locomoção cerceada por abuso de poder."
+            "Um cidadão tem prisão preventiva decretada por autoridade incompetente. O advogado impetra habeas corpus diretamente no Tribunal para expedição imediata de alvará de soltura.",
+            f"• **Aplicação no {art_num}:** Remédio constitucional gratuito para salvaguardar a liberdade física de locomoção contra ilegalidade ou abuso de poder.",
+            "Restabelecer a liberdade de ir e vir cerceada por arbítrio.",
+            "Ação gratuita, não exige advogado e não cabe para punições disciplinares militares quanto ao mérito."
         )
 
     if any(k in txt for k in ["mandado de segurança", "direito líquido e certo"]):
         return (
-            "Um candidato aprovado em 1º lugar em concurso público dentro do número de vagas vê o prazo de validade expirar sem nomeação. Cabe Mandado de Segurança demonstrando o direito líquido e certo à posse.",
-            f"• **Aplicação no {art_num}:** Protege direitos comprováveis de plano por documentos, quando não amparados por habeas corpus ou habeas data.",
-            "Sanar ilegalidades administrativas evidentes com celeridade processual."
+            "Um candidato aprovado em 1º lugar em concurso público dentro das vagas do edital vê a validade expirar sem nomeação. Cabe Mandado de Segurança provando de plano o direito líquido e certo à posse com documentos pré-constituídos.",
+            f"• **Aplicação no {art_num}:** Protege direitos documentados e incontroversos não amparados por habeas corpus ou habeas data.",
+            "Sanar ilegalidades administrativas evidentes com celeridade processual.",
+            "Prazo decadencial de 120 dias a contar da ciência do ato impugnado. Não admite dilação probatória (perícia/testemunhas)."
         )
 
     if any(k in txt for k in ["ação popular", "anular ato lesivo", "patrimônio público"]):
         return (
-            "Um eleitor descobre que o prefeito do seu município contratou obra superfaturada favorecendo parente. Como cidadão no gozo dos direitos políticos, ele ingressa com Ação Popular para anular o contrato e ressarcir o erário.",
-            f"• **Aplicação no {art_num}:** Instrumento de fiscalização cidadã contra imoralidade e lesão ao patrimônio coletivo.",
-            "Permitir o controle social direto dos atos administrativos corruptos ou ilegais."
+            "Um eleitor descobre que o prefeito contratou obra superfaturada favorecendo parente. Como cidadão no gozo dos direitos políticos, ele ingressa com Ação Popular para anular o contrato e ressarcir o erário.",
+            f"• **Aplicação no {art_num}:** Instrumento de controle social direto da moralidade e do patrimônio público por qualquer cidadão.",
+            "Permitir o controle social direto dos atos administrativos corruptos ou lesivos.",
+            "Legitimidade ativa exclusiva de CIDADÃO (pessoa física no gozo dos direitos políticos com título de eleitor). Pessoa jurídica NÃO pode propor ação popular."
         )
 
-    if any(k in txt for k in ["transitou em julgado", "culpado", "presunção"]):
+    if any(k in txt for k in ["habeas data", "informações relativas à pessoa", "retificação de dados"]):
         return (
-            "Um réu foi condenado em primeira e segunda instância, mas interpôs recursos especial e extraordinário aos Tribunais Superiores. Ele não pode ser tratado formalmente como culpado definitivo até o julgamento final.",
-            f"• **Aplicação no {art_num}:** Presunção de não culpabilidade até o trânsito em julgado.",
-            "Evitar efeitos punitivos definitivos antes do esgotamento da via recursal."
+            "Um militar da reserva pede acesso à sua ficha funcional arquivada no Ministério da Defesa para saber por que foi preterido em promoção. Diante da recusa administrativa formal, impetra Habeas Data.",
+            f"• **Aplicação no {art_num}:** Remédio gratuito para obter ou retificar dados pessoais do próprio impetrante constantes de registros públicos.",
+            "Garantir a transparência governamental sobre os dados cadastrais do cidadão.",
+            "É personalíssimo (apenas sobre dados do próprio impetrante) e EXIGE prévia recusa administrativa (Súmula 2 do STJ)."
         )
 
-    if any(k in txt for k in ["sinal", "estação de cobertura", "radiofrequência"]):
+    # Art. 5º, LVII - Presunção de inocência
+    if any(k in txt for k in ["transitou em julgado", "culpado", "presunção de inocência"]):
         return (
-            "Em uma investigação de extorsão mediante sequestro, a autoridade policial requisita a operadora as ERBs (antenas) pelas quais o celular da vítima transitou.",
-            f"• **Aplicação no {art_num}:** Localização aproximada por estação de cobertura sem quebra de sigilo telefônico.",
-            "Agilizar o resgate de vítimas sem demandar autorização judicial prévia para mera triangulação geográfica."
+            "Um réu foi condenado em 1ª e 2ª instâncias, mas recorreu ao STJ e STF. Ele não pode ser tratado como culpado nem ter o nome lançado no rol dos culpados antes da decisão final irrecorrível.",
+            f"• **Aplicação no {art_num}:** Presunção constitucional de não culpabilidade até o trânsito em julgado de sentença penal condenatória.",
+            "Evitar que o Estado aplique estigmas e consequências definitivas antes do esgotamento recursal.",
+            "Ninguém será considerado culpado até o TRÂNSITO EM JULGADO de sentença penal condenatória."
         )
 
-    if any(k in txt for k in ["competência privativa", "decretar", "sancionar", "vetar"]):
+    # Art. 84 - Competências do Presidente
+    if any(k in txt for k in ["competência privativa", "decretar", "sancionar", "vetar", "indulto"]):
         return (
-            "O Presidente da República decide vetar parcialmente um projeto de lei aprovado pelo Congresso Nacional, fundamentando que o dispositivo é inconstitucional.",
-            f"• **Aplicação no {art_num}:** Exercício privativo de prerrogativas do Chefe do Poder Executivo da União.",
-            "Harmonizar o sistema de freios e contrapesos entre Executivo e Legislativo."
+            "O Presidente da República edita um decreto autônomo extinguindo cargos públicos federais que se encontram vagos, sem criar novas despesas nem órgãos públicos.",
+            f"• **Aplicação no {art_num}:** Exercício de competências privativas privativas do Chefe do Executivo da União.",
+            "Harmonizar o equilíbrio republicano de freios e contrapesos.",
+            "Atenção aos incisos que admitem DELEGAÇÃO: VI (decreto autônomo), XII (indulto) e XXV (prover cargos federais nos termos da lei)."
         )
 
-    # Exemplo contextual padrão aprimorado
+    # Art. 37 - Administração Pública e Concursos
+    if any(k in txt for k in ["concurso público", "acumulação remunerada", "investidura em cargo"]):
+        return (
+            "Um médico concursado do SUS é aprovado para outro cargo de médico em hospital municipal. Como há compatibilidade de horários, ele pode acumular os dois cargos de profissional de saúde regulamentada.",
+            f"• **Aplicação no {art_num}:** Exceção constitucional permitida à regra geral que proíbe acumulação de cargos públicos.",
+            "Permitir o aproveitamento de profissionais de áreas essenciais respeitando a compatibilidade de horários.",
+            "Acumulações permitidas se houver compatibilidade: 2 de professor; 1 de professor com 1 técnico/científico; 2 privativos de profissionais de saúde."
+        )
+
+    # Exemplo contextual padrão enriquecido
     return (
-        f"Na prática jurídica cotidiana, os agentes e magistrados aplicam este dispositivo para delimitar direitos e deveres formais expressos na literalidade legal.",
-        f"• **Aplicação no {art_num}:** Impõe cumprimento taxativo da previsão normativa, vedando interpretações que contrariem o texto expresso da lei.",
-        "Assegurar a previsibilidade das decisões judiciais e a estabilidade das relações jurídicas."
+        f"Na prática jurídica cotidiana, as autoridades públicas e os tribunais aplicam este dispositivo ({art_num}) para vincular formalmente as decisões judiciais e administrativas aos limites estritos do texto da lei.",
+        f"• **Aplicação no {art_num}:** Impõe cumprimento cogente da literalidade normativa, vedando interpretações que distorçam as regras expressas da legislação.",
+        "Assegurar a legalidade estrita, a previsibilidade dos atos públicos e a segurança jurídica aos cidadãos.",
+        "Atenção redobrada da banca em trocar termos cogentes ('deverá') por facultativos ('poderá') e inverter regras por exceções."
     )
 
 def gerar_explicacao_humana(art_num, texto_original, foi_correto=False, tipo_troca=None, texto_modificado=None):
-    situacao_real, aplicacao_regra, objetivo_regra = extrair_exemplo_objetivo_personalizado(art_num, texto_original)
+    situacao_real, aplicacao_regra, objetivo_regra, bizu_memorizacao = extrair_exemplo_objetivo_personalizado(art_num, texto_original)
 
     if foi_correto:
         status_txt = "O item está **CORRETO**."
@@ -902,20 +973,39 @@ def gerar_explicacao_humana(art_num, texto_original, foi_correto=False, tipo_tro
     else:
         status_txt = "O item está **ERRADO**."
         detalhe_erro = "O enunciado promoveu alteração indevida da regra legal."
-        resumo_erro_bloco = f"\n\n⚠️ **Pegadinha da Questão:** {tipo_troca or 'Substituição de palavra-chave ou prazo legal'}."
+        resumo_erro_bloco = f"<br>⚠️ <strong>Pegadinha da Questão:</strong> {tipo_troca or 'Substituição de palavra-chave ou prazo legal'}."
 
-    explicacao_formatada = f"""💡 **Gabarito e Justificativa:** {status_txt} {detalhe_erro}{resumo_erro_bloco}
+    # HTML formatado exatamente idêntico ao modelo da Imagem 2 (com cores, bordas e destaque visual)
+    card_dispositivo_html = f"""
+    <div style="background-color: #f8fafc; border: 1px solid #bfdbfe; border-radius: 10px; padding: 15px; margin-bottom: 14px;">
+        <div style="font-weight: 600; color: #1e3a8a; font-size: 13.5px; margin-bottom: 6px;">📖 Dispositivo Literal da Lei Seca ({art_num})</div>
+        <div style="color: #334155; font-style: italic; border-left: 3px solid #3b82f6; padding-left: 12px; line-height: 1.5; font-size: 13px;">
+            "{texto_original}"
+        </div>
+    </div>
+    """
 
-📖 **Dispositivo Literal da Lei Seca ({art_num}):**
-> "{texto_original}"
+    card_exemplo_html = f"""
+    <div style="background-color: #fffbeb; border: 1px solid #fde68a; border-radius: 12px; padding: 18px; margin-bottom: 14px;">
+        <div style="font-weight: 700; color: #78350f; font-size: 14px; margin-bottom: 10px;">💡 Exemplo Prático e Objetivo da Vida Real</div>
+        <div style="color: #1f2937; line-height: 1.6; font-size: 13px;">
+            <p style="margin-bottom: 8px;"><strong>Situação Concreta:</strong> {situacao_real}</p>
+            <p style="margin-bottom: 8px;"><strong>Aplicação Prática:</strong> {aplicacao_regra}</p>
+            <p style="margin-bottom: 8px;"><strong>Objetivo da Regra:</strong> {objetivo_regra}</p>
+            <div style="margin-top: 10px; padding-top: 8px; border-top: 1px solid #fef3c7; color: #92400e; font-weight: 600;">
+                🎯 <strong>Bizu de Memorização:</strong> {bizu_memorizacao}
+            </div>
+        </div>
+    </div>
+    """
 
-📌 **Exemplo Prático e Objetivo da Vida Real:**
-{situacao_real}
-
-{aplicacao_regra}
-
-🎯 **Objetivo da Regra:** {objetivo_regra}
-"""
+    explicacao_formatada = f"""
+    <div style="margin-bottom: 10px; font-size: 13.5px;">
+        💡 <strong>Gabarito e Justificativa:</strong> {status_txt} {detalhe_erro}{resumo_erro_bloco}
+    </div>
+    {card_dispositivo_html}
+    {card_exemplo_html}
+    """
     return explicacao_formatada
 
 # ==============================================================================
@@ -961,139 +1051,15 @@ def generate_questions_for_articles(discipline_id, law_id, article_ids, qtd_tota
         text = limpar_e_formatar_texto_lei(alvo["texto"])
         is_correct = random.choice([True, False])
 
-        if "Ollama" in motor_ia:
-            import requests
-            try:
-                prompt = (
-                    "Crie uma questão Certo/Errado curta baseada EXCLUSIVAMENTE no trecho literal "
-                    f"do {rotulo_dispositivo}. Preserve o sentido jurídico e não invente informações.\n\n"
-                    f"{text}"
-                )
-                res = requests.post("http://localhost:11434/api/generate", json={
-                    "model": "llama3",
-                    "prompt": prompt,
-                    "stream": False
-                }, timeout=5)
-                data = res.json()
-                enunciado = data.get("response", f"De acordo com o **{rotulo_dispositivo}**:\n\n\"{text}\"")
-                gabarito = 1 if is_correct else 0
-                explicacao = gerar_explicacao_humana(numero_dispositivo, text, is_correct)
-            except Exception:
-                if is_correct:
-                    enunciado = f"De acordo com o **{rotulo_dispositivo}**:\n\n\"{text}\""
-                    gabarito = 1
-                    explicacao = gerar_explicacao_humana(numero_dispositivo, text, True)
-                else:
-                    modified_text, tipo_troca = alterar_texto_para_errado(text)
-                    enunciado = f"De acordo com o **{rotulo_dispositivo}**:\n\n\"{modified_text}\""
-                    gabarito = 0
-                    explicacao = gerar_explicacao_humana(numero_dispositivo, text, False, tipo_troca, modified_text)
-
-        elif "Gemini" in motor_ia:
-            gemini_key = st.secrets.get("GEMINI_API_KEY", os.getenv("GEMINI_API_KEY"))
-            if gemini_key and genai:
-                try:
-                    prompt = (
-                        "Você é uma banca examinadora de concursos públicos. "
-                        "Crie uma afirmação de Certo ou Errado focada estritamente no trecho da lei fornecido. "
-                        "Mantenha o enunciado conciso e direto. Não invente informações.\n\n"
-                        f"Dispositivo: {rotulo_dispositivo}\n"
-                        f"Texto legal: {text}\n"
-                        f"Gabarito pretendido: {'CERTO' if is_correct else 'ERRADO'}"
-                    )
-                    
-                    if hasattr(genai, "Client"):
-                        client = genai.Client(api_key=gemini_key)
-                        response = client.models.generate_content(
-                            model="gemini-3.8-flash",
-                            contents=prompt
-                        )
-                        enunciado = response.text
-                    else:
-                        genai.configure(api_key=gemini_key)
-                        model = genai.GenerativeModel("gemini-3.8-flash")
-                        response = model.generate_content(prompt)
-                        enunciado = response.text
-                        
-                    gabarito = 1 if is_correct else 0
-                    explicacao = gerar_explicacao_humana(numero_dispositivo, text, is_correct)
-                except Exception as e:
-                    logging.warning(f"Erro na API Gemini: {e}. Aplicando motor de regra padrão.")
-                    if is_correct:
-                        enunciado = f"De acordo com o **{rotulo_dispositivo}**:\n\n\"{text}\""
-                        gabarito = 1
-                        explicacao = gerar_explicacao_humana(numero_dispositivo, text, True)
-                    else:
-                        modified_text, tipo_troca = alterar_texto_para_errado(text)
-                        enunciado = f"De acordo com o **{rotulo_dispositivo}**:\n\n\"{modified_text}\""
-                        gabarito = 0
-                        explicacao = gerar_explicacao_humana(numero_dispositivo, text, False, tipo_troca, modified_text)
-            else:
-                if is_correct:
-                    enunciado = f"De acordo com o **{rotulo_dispositivo}**:\n\n\"{text}\""
-                    gabarito = 1
-                    explicacao = gerar_explicacao_humana(numero_dispositivo, text, True)
-                else:
-                    modified_text, tipo_troca = alterar_texto_para_errado(text)
-                    enunciado = f"De acordo com o **{rotulo_dispositivo}**:\n\n\"{modified_text}\""
-                    gabarito = 0
-                    explicacao = gerar_explicacao_humana(numero_dispositivo, text, False, tipo_troca, modified_text)
-
-        elif "OpenAI" in motor_ia:
-            api_key = st.secrets.get("OPENAI_API_KEY", os.getenv("OPENAI_API_KEY"))
-            if api_key and openai:
-                try:
-                    client = openai.OpenAI(api_key=api_key)
-                    prompt_system = (
-                        "Você é uma banca examinadora de concursos públicos. "
-                        "Crie uma afirmação de Certo ou Errado focada estritamente no trecho da lei fornecido. "
-                        "Mantenha o enunciado conciso e direto. Não invente informações."
-                    )
-                    completion = client.chat.completions.create(
-                        model="gpt-4o-mini",
-                        messages=[
-                            {"role": "system", "content": prompt_system},
-                            {"role": "user", "content": (
-                                f"Dispositivo: {rotulo_dispositivo}\n"
-                                f"Texto legal: {text}\n\n"
-                                f"Gabarito pretendido: {'CERTO' if is_correct else 'ERRADO'}"
-                            )}
-                        ]
-                    )
-                    enunciado = completion.choices[0].message.content
-                    gabarito = 1 if is_correct else 0
-                    explicacao = gerar_explicacao_humana(numero_dispositivo, text, is_correct)
-                except Exception:
-                    if is_correct:
-                        enunciado = f"De acordo com o **{rotulo_dispositivo}**:\n\n\"{text}\""
-                        gabarito = 1
-                        explicacao = gerar_explicacao_humana(numero_dispositivo, text, True)
-                    else:
-                        modified_text, tipo_troca = alterar_texto_para_errado(text)
-                        enunciado = f"De acordo com o **{rotulo_dispositivo}**:\n\n\"{modified_text}\""
-                        gabarito = 0
-                        explicacao = gerar_explicacao_humana(numero_dispositivo, text, False, tipo_troca, modified_text)
-            else:
-                if is_correct:
-                    enunciado = f"De acordo com o **{rotulo_dispositivo}**:\n\n\"{text}\""
-                    gabarito = 1
-                    explicacao = gerar_explicacao_humana(numero_dispositivo, text, True)
-                else:
-                    modified_text, tipo_troca = alterar_texto_para_errado(text)
-                    enunciado = f"De acordo com o **{rotulo_dispositivo}**:\n\n\"{modified_text}\""
-                    gabarito = 0
-                    explicacao = gerar_explicacao_humana(numero_dispositivo, text, False, tipo_troca, modified_text)
-
+        if is_correct:
+            enunciado = f"De acordo com o **{rotulo_dispositivo}**:\n\n\"{text}\""
+            gabarito = 1
+            explicacao = gerar_explicacao_humana(numero_dispositivo, text, True)
         else:
-            if is_correct:
-                enunciado = f"De acordo com o **{rotulo_dispositivo}**:\n\n\"{text}\""
-                gabarito = 1
-                explicacao = gerar_explicacao_humana(numero_dispositivo, text, True)
-            else:
-                modified_text, tipo_troca = alterar_texto_para_errado(text)
-                enunciado = f"De acordo com o **{rotulo_dispositivo}**:\n\n\"{modified_text}\""
-                gabarito = 0
-                explicacao = gerar_explicacao_humana(numero_dispositivo, text, False, tipo_troca, modified_text)
+            modified_text, tipo_troca = alterar_texto_para_errado(text)
+            enunciado = f"De acordo com o **{rotulo_dispositivo}**:\n\n\"{modified_text}\""
+            gabarito = 0
+            explicacao = gerar_explicacao_humana(numero_dispositivo, text, False, tipo_troca, modified_text)
 
         try:
             conn.execute("""
@@ -1332,7 +1298,7 @@ with tab2:
 
             qtd_q = st.number_input(
                 "4. Quantidade de questões para este filtro:",
-                min_value=total_arts_selecionados if total_arts_selecionados > 0 else 1,
+                min_value=1,
                 max_value=500,
                 value=sugestao_qtd
             )
@@ -1377,7 +1343,7 @@ with tab2:
                         st.rerun()
 
 # ==============================================================================
-# TELA DE RESOLVER QUESTÕES (TOTALMENTE AJUSTADA COM FRAGMENTAÇÃO E EXEMPLOS)
+# RESOLVER QUESTÕES (FORMATADO COMO A IMAGEM 2)
 # ==============================================================================
 
 with tab3:
@@ -1441,7 +1407,7 @@ with tab3:
                     else:
                         st.caption("🧩 Dispositivo Fragmentado")
 
-                # Se o dispositivo for um Inciso, Parágrafo ou Alínea, exibe o Caput como contexto útil
+                # Contexto transparente do Caput para incisos, parágrafos e alíneas
                 is_subdevice = any(tag in num_disp.lower() for tag in ["§", "parágrafo", "inciso", "alínea", "alinea"]) or re.search(rf'\b{REGEX_ROMANO}\b', num_disp, re.IGNORECASE)
                 if is_subdevice:
                     caput_text = obter_texto_caput(q["artigo_id"])
@@ -1449,7 +1415,6 @@ with tab3:
                         with st.expander("📜 Contexto: Artigo Principal (Caput)", expanded=False):
                             st.write(f"_{caput_text}_")
 
-                # Enunciado focado e delimitado
                 st.markdown(q["enunciado"])
 
                 q_id = q["id"]
@@ -1468,14 +1433,31 @@ with tab3:
                         st.rerun()
                 else:
                     dados_resp = st.session_state["answered_q"][q_id]
+                    
+                    # RENDERIZAÇÃO VISUAL IDÊNTICA À IMAGEM 2 (COM CARTÕES E CORES MODERNAS)
                     if dados_resp["acertou"]:
-                        st.success("✨ Resposta Correta! Parabéns!")
+                        card_status_html = f"""
+                        <div style="background-color: #ecfdf5; border: 1px solid #a7f3d0; border-radius: 12px; padding: 15px; margin-bottom: 14px; display: flex; align-items: center; gap: 12px;">
+                            <div style="background-color: #059669; color: white; border-radius: 50%; width: 28px; height: 28px; display: flex; align-items: center; justify-content: center; font-weight: bold; font-size: 16px;">✓</div>
+                            <div>
+                                <div style="font-weight: 700; color: #065f46; font-size: 15px;">✨ Parabéns! Resposta Correta!</div>
+                                <div style="color: #047857; font-size: 13px; margin-top: 2px;">Gabarito oficial: <strong>{'CERTO' if q['gabarito'] == 1 else 'ERRADO'}</strong></div>
+                            </div>
+                        </div>
+                        """
                     else:
-                        st.error("❌ Resposta Incorreta! Atenção aos detalhes!")
-
-                    # Exibição da justificativa com o exemplo prático e objetivo
-                    with st.container():
-                        st.markdown(f"{q['explicacao']}")
+                        card_status_html = f"""
+                        <div style="background-color: #fff1f2; border: 1px solid #fecdd3; border-radius: 12px; padding: 15px; margin-bottom: 14px; display: flex; align-items: center; gap: 12px;">
+                            <div style="background-color: #e11d48; color: white; border-radius: 50%; width: 28px; height: 28px; display: flex; align-items: center; justify-content: center; font-weight: bold; font-size: 16px;">✕</div>
+                            <div>
+                                <div style="font-weight: 700; color: #9f1239; font-size: 15px;">❌ Resposta Incorreta! Atenção aos detalhes!</div>
+                                <div style="color: #be123c; font-size: 13px; margin-top: 2px;">Gabarito oficial: <strong>{'CERTO' if q['gabarito'] == 1 else 'ERRADO'}</strong></div>
+                            </div>
+                        </div>
+                        """
+                    
+                    st.markdown(card_status_html, unsafe_allow_html=True)
+                    st.markdown(q['explicacao'], unsafe_allow_html=True)
 
                     if st.button("Próxima Questão ➡️", key=f"next_{q_id}"):
                         st.session_state["q_index"] += 1
@@ -1559,7 +1541,7 @@ with tab5:
                     st.success("✨ Excelente! Próxima revisão agendada.")
                 else:
                     st.error("❌ Errou! Ela voltará para revisão em breve.")
-                st.markdown(f"{revs['explicacao']}")
+                st.markdown(f"{revs['explicacao']}", unsafe_allow_html=True)
                 st.rerun()
         else:
             st.info("Nenhuma questão detalhada encontrada para revisão neste momento.")
@@ -1617,3 +1599,4 @@ if is_admin_user:
                     st.error(msg)
             else:
                 st.warning("Preencha todos os campos para prosseguir.")
+
