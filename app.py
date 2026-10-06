@@ -1,4 +1,5 @@
 import hashlib
+import html
 import json
 import os
 import random
@@ -2763,10 +2764,6 @@ if is_admin_user:
                     st.error(msg)
             else:
                 st.warning("Preencha todos os campos para prosseguir.")
-
-
-
-
 
 
 
