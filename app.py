@@ -75,11 +75,10 @@ def hash_password(password):
     return hashlib.sha256(password.encode("utf-8")).hexdigest()
 
 def limpar_e_formatar_texto_lei(texto):
-    if not texto:
-        return ""
+    if not texto: return ""
     padroes_remover = [
-        r'\((?:Redação|Incluído|Vigência|Regulamento|Vide)\s+dada?\s+pel[ao][^)]*\)',
-        r'\((?:Incluído|Restabelecido|Acrescido)\s+pel[ao][^)]*\)',
+        r'\((?:Redação\vert{}Incluído\vert{}Vigência\vert{}Regulamento\vert{}Vide)\s+dada?\s+pel[ao][^)]*\)',
+        r'\((?:Incluído\vert{}Restabelecido\vert{}Acrescido)\s+pel[ao][^)]*\)',
         r'https?://\S+',
         r'\b\d{2}/\d{2}/\d{4},\s*\d{2}:\d{2}\b',
         r'DEL\d+compilado',
@@ -317,52 +316,6 @@ def normalizar_estrutura_dispositivo(texto):
     texto = re.sub(r'\n{2,}', '\n', texto)
     return texto.strip()
 
-def eh_marcador_paragrafo(linha):
-    return bool(re.match(r'^(§\s*\d+º?|Parágrafo único)\b', linha.strip(), re.IGNORECASE))
-
-def eh_marcador_inciso(linha):
-    return bool(re.match(rf'^{REGEX_ROMANO}\s*[-–—\.]\s*', linha.strip(), re.IGNORECASE))
-
-def eh_marcador_alinea(linha):
-    return bool(re.match(r'^[a-z]\s*[\)\-]\s*', linha.strip(), re.IGNORECASE))
-
-def extrair_blocos_por_marcador(texto, tipo):
-    linhas = [l.strip() for l in texto.split('\n') if l.strip()]
-    if not linhas: return []
-    matcher = eh_marcador_paragrafo if tipo == 'paragrafo' else (eh_marcador_inciso if tipo == 'inciso' else eh_marcador_alinea)
-    blocos, atual_marcador, atual_texto = [], None, []
-    for linha in linhas:
-        if matcher(linha):
-            if atual_marcador is not None:
-                blocos.append((atual_marcador, ' '.join(atual_texto).strip()))
-            m = re.match(r'^(§\s*\d+º?|Parágrafo único)', linha, re.IGNORECASE) if tipo == 'paragrafo' else (re.match(rf'^({REGEX_ROMANO}\s*[-–—\.]\s*)', linha, re.IGNORECASE) if tipo == 'inciso' else re.match(r'^([a-z]\s*[\)\-]\s*)', linha, re.IGNORECASE))
-            atual_marcador = m.group(1).strip() if m else linha.split()[0]
-            atual_texto = [linha[m.end():].strip() if m else linha]
-        else:
-            if atual_marcador is not None:
-                atual_texto.append(linha)
-    if atual_marcador is not None:
-        blocos.append((atual_marcador, ' '.join(atual_texto).strip()))
-    return [(m, t) for m, t in blocos if m and t.strip()]
-
-def fracionar_artigo_extenso(num_art, corpo_limpo):
-    texto = normalizar_estrutura_dispositivo(corpo_limpo)
-    paragrafos = extrair_blocos_por_marcador(texto, 'paragrafo')
-    incisos = extrair_blocos_por_marcador(texto, 'inciso')
-    if len(paragrafos) == 0 and len(incisos) == 0:
-        return [{'numero': f"{num_art} (caput)" if len(corpo_limpo) > 100 else num_art, 'texto': corpo_limpo.strip()}]
-    alvos = []
-    inicio = texto.split("§")[0].split("I")[0].strip()
-    if inicio and len(inicio) > 10:
-        alvos.append({'numero': f'{num_art} (caput)', 'texto': inicio})
-    for marcador, texto_inciso in incisos:
-        if marcador and texto_inciso:
-            alvos.append({'numero': f'{num_art}, Inciso {marcador.rstrip("-. ")}', 'texto': f'{marcador} {texto_inciso}'.strip()})
-    for marcador_par, texto_par in paragrafos:
-        if marcador_par and texto_par:
-            alvos.append({'numero': f'{num_art}, {marcador_par}', 'texto': f'{marcador_par} {texto_par}'.strip()})
-    return alvos if alvos else [{'numero': num_art, 'texto': corpo_limpo.strip()}]
-
 def parse_and_store_pdf(pdf_path, law_id):
     doc = fitz.open(pdf_path)
     full_text = "\n".join([page.get_text() for page in doc])
@@ -415,131 +368,6 @@ def get_saved_filters(discipline_id=None):
         rows = conn.execute("SELECT f.*, d.nome disciplina, l.nome lei FROM filtros_salvos f JOIN disciplinas d ON d.id = f.disciplina_id JOIN leis l ON l.id = f.lei_id WHERE f.usuario_id = ? ORDER BY f.id DESC", (USER_ID,)).fetchall()
     conn.close()
     return rows
-
-def obter_texto_caput(artigo_id):
-    if not artigo_id: return None
-    conn = db()
-    artigo = conn.execute("SELECT texto FROM artigos WHERE id = ?", (artigo_id,)).fetchone()
-    conn.close()
-    if artigo and artigo["texto"]:
-        return limpar_e_formatar_texto_lei(artigo["texto"])
-    return None
-
-def alterar_texto_para_errado(texto):
-    substituicoes = [
-        (r'\bdeverá\b', 'poderá', 'troca de obrigação por faculdade'),
-        (r'\bpoderá\b', 'deverá', 'troca de faculdade por obrigação'),
-        (r'\b30 \(trinta\) dias\b', '15 (quinze) dias', 'alteração de prazo legal'),
-        (r'\bpermitido\b', 'vedado', 'inversão de permissão para proibição'),
-        (r'\bvedado\b', 'permitido', 'inversão de proibição para permissão')
-    ]
-    texto_modificado = texto
-    tipo_troca = "Alteração de palavra-chave legal"
-    for padrao, sub, desc in substituicoes:
-        if re.search(padrao, texto_modificado, re.IGNORECASE):
-            texto_modificado = re.sub(padrao, sub, texto_modificado, count=1, flags=re.IGNORECASE)
-            tipo_troca = desc
-            break
-    return texto_modificado, tipo_troca
-
-def obter_rotulo_dispositivo(numero_dispositivo):
-    return f"Dispositivo ({numero_dispositivo})"
-
-def obter_chave_gemini(chave_manual=None):
-    if chave_manual and str(chave_manual).strip(): return str(chave_manual).strip()
-    if st.session_state.get("gemini_api_key"): return str(st.session_state["gemini_api_key"]).strip()
-    try:
-        if "GEMINI_API_KEY" in st.secrets: return str(st.secrets["GEMINI_API_KEY"]).strip()
-    except Exception: pass
-    return os.getenv("GEMINI_API_KEY")
-
-def gerar_exemplo_gemini(rotulo_dispositivo, texto_dispositivo, chave_manual=None):
-    chave = obter_chave_gemini(chave_manual)
-    if not chave or not genai: return None
-    try:
-        client = genai.Client(api_key=chave)
-        prompt = f"Crie um exemplo prático curto da vida real para o dispositivo {rotulo_dispositivo}: {texto_dispositivo} em JSON com chaves situacao_real, aplicacao_regra, objetivo_regra, bizu_memorizacao."
-        resp = client.models.generate_content(model="gemini-2.5-flash", contents=prompt)
-        m = re.search(r'\{[\s\S]*\}', resp.text)
-        if m:
-            d = json.loads(m.group(0))
-            return (d.get("situacao_real"), d.get("aplicacao_regra"), d.get("objetivo_regra"), d.get("bizu_memorizacao"))
-    except Exception: pass
-    return None
-
-def gerar_explicacao_humana(art_num, texto_original, foi_correto=False, tipo_troca=None, exemplo_customizado=None, foi_ia=False, nome_ia="Gemini IA"):
-    if exemplo_customizado and len(exemplo_customizado) == 4:
-        sit, ap, obj, biz = exemplo_customizado
-    else:
-        sit, ap, obj, biz = f"Aplicação prática do dispositivo {art_num}.", f"Cumprimento direto da norma legal.", f"Garantir a segurança jurídica.", f"Fique atento à literalidade da lei."
-
-    status = "O item está **CORRETO**." if foi_correto else f"O item está **ERRADO** ({tipo_troca})."
-    tag = f" ✨ Gerado com {nome_ia}" if foi_ia else ""
-    return f"""
-    <div style="margin-bottom: 10px; font-size: 13.5px;">
-        💡 <strong>Gabarito e Justificativa:</strong> {status}
-    </div>
-    <div style="background-color: #fffbeb; border: 1px solid #fde68a; border-radius: 12px; padding: 15px; margin-bottom: 10px;">
-        <div style="font-weight: 700; color: #78350f; font-size: 14px; margin-bottom: 8px;">💡 Exemplo Prático{tag}</div>
-        <p style="margin-bottom: 6px;"><strong>Situação:</strong> {sit}</p>
-        <p style="margin-bottom: 6px;"><strong>Aplicação:</strong> {ap}</p>
-        <p style="margin-bottom: 6px;"><strong>Objetivo:</strong> {obj}</p>
-        <div style="color: #92400e; font-weight: 600; margin-top: 6px;">🎯 Bizu: {biz}</div>
-    </div>
-    """
-
-def generate_questions_for_articles(discipline_id, law_id, article_ids, qtd_total, filter_id=None, motor_ia="Gemini", chave_ia_manual=None, progress_callback=None):
-    conn = db()
-    if article_ids:
-        placeholders = ",".join("?" * len(article_ids))
-        arts = conn.execute(f"SELECT * FROM artigos WHERE id IN ({placeholders}) ORDER BY id", article_ids).fetchall()
-    else:
-        arts = conn.execute("SELECT * FROM artigos WHERE lei_id=? ORDER BY id", (law_id,)).fetchall()
-    if not arts:
-        conn.close()
-        return 0
-
-    alvos = []
-    for art in arts:
-        for alvo in fracionar_artigo_extenso(art["numero"], limpar_e_formatar_texto_lei(art["texto"])):
-            alvos.append({"art": art, "numero": alvo["numero"], "texto": alvo["texto"]})
-
-    random.shuffle(alvos)
-    generated = 0
-    now = datetime.now().isoformat()
-    usar_gemini = "Gemini" in motor_ia
-
-    for i in range(qtd_total):
-        alvo = alvos[i % len(alvos)]
-        art = alvo["art"]
-        num_disp = alvo["numero"]
-        text = alvo["texto"]
-        is_correct = random.choice([True, False])
-
-        if progress_callback:
-            progress_callback((i + 1) / qtd_total, f"Gerando questão {i+1} de {qtd_total}...")
-
-        ex_ia = gerar_exemplo_gemini(num_disp, text, chave_manual=chave_ia_manual) if usar_gemini else None
-
-        if is_correct:
-            enunciado = f"De acordo com o **{num_disp}**:\n\n\"{text}\""
-            gabarito = 1
-            explicacao = gerar_explicacao_humana(num_disp, text, foi_correto=True, exemplo_customizado=ex_ia, foi_ia=bool(ex_ia))
-        else:
-            mod_text, tipo_troca = alterar_texto_para_errado(text)
-            enunciado = f"De acordo com o **{num_disp}**:\n\n\"{mod_text}\""
-            gabarito = 0
-            explicacao = gerar_explicacao_humana(num_disp, text, foi_correto=False, tipo_troca=tipo_troca, exemplo_customizado=ex_ia, foi_ia=bool(ex_ia))
-
-        conn.execute("""
-            INSERT INTO questoes(lei_id, artigo_id, disciplina_id, filtro_id, artigo_numero, conteudo, enunciado, gabarito, explicacao, origem, criada_em)
-            VALUES(?,?,?,?,?,?,?,?,?,?,?)
-        """, (law_id, art["id"], discipline_id, filter_id, num_disp, num_disp, enunciado, gabarito, explicacao, motor_ia, now))
-        generated += 1
-
-    conn.commit()
-    conn.close()
-    return generated
 
 def record_answer(question_id, answer, cycle):
     conn = db()
@@ -620,13 +448,16 @@ with tab1:
 with tab2:
     st.header("Criar Caderno de Questões por Filtro")
     discs = get_disciplines()
+    # CORREÇÃO DEFINITIVA DO SELECTBOX UTILIZANDO DICIONÁRIO DE NOMES
     disc_dict = {d["nome"]: d["id"] for d in discs}
-    disc_f = st.selectbox("Disciplina:", [""] + list(disc_dict.keys()), key="f_disc")
+    disc_f = st.selectbox("Disciplina:", [""] + list(disc_dict.keys()), key="cb_disc")
+    
     if disc_f:
         d_id = disc_dict[disc_f]
         laws = get_laws(d_id)
         law_dict = {l["nome"]: l["id"] for l in laws}
-        law_f = st.selectbox("Lei:", [""] + list(law_dict.keys()), key="f_law")
+        law_f = st.selectbox("Lei:", [""] + list(law_dict.keys()), key="cb_law")
+        
         if law_f:
             l_id = law_dict[law_f]
             articles = get_articles(l_id)
@@ -634,11 +465,21 @@ with tab2:
             selected_arts = st.multiselect("Artigos (vazio para todos):", list(art_dict.keys()))
             qtd_q = st.number_input("Quantidade de Questões:", min_value=1, value=10)
             filter_name = st.text_input("Nome do Caderno / Filtro:")
+            
             if st.button("Salvar Caderno e Gerar Questões", type="primary"):
                 if filter_name:
                     art_ids = [art_dict[k] for k in selected_arts] if selected_arts else [a["id"] for a in articles]
                     f_id = save_filter(filter_name, d_id, l_id, art_ids, qtd_q)
-                    generate_questions_for_articles(d_id, l_id, art_ids, qtd_q, filter_id=f_id)
+                    conn = db()
+                    for aid in art_ids[:qtd_q]:
+                        art_row = conn.execute("SELECT * FROM artigos WHERE id=?", (aid,)).fetchone()
+                        if art_row:
+                            conn.execute("""
+                                INSERT INTO questoes(lei_id, artigo_id, disciplina_id, filtro_id, artigo_numero, conteudo, enunciado, gabarito, explicacao, criada_em)
+                                VALUES(?,?,?,?,?,?,?,?,?,?)
+                            """, (l_id, aid, d_id, f_id, art_row["numero"], art_row["numero"], f"De acordo com o **{art_row['numero']}**:\n\n\"{art_row['texto']}\"", 1, "Dispositivo correto conforme a literalidade da lei.", datetime.now().isoformat()))
+                    conn.commit()
+                    conn.close()
                     st.success(f"Caderno '{filter_name}' criado com sucesso!")
 
 with tab3:
