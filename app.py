@@ -143,7 +143,7 @@ st.markdown("""
         font-weight: 650;
         text-align: left;
     }
-        </style>
+    </style>
 """, unsafe_allow_html=True)
 
 # Regex universal para algarismos romanos de I até CCC (1 a 300+)
@@ -453,7 +453,46 @@ if menu == "📖 Estudar / Questões":
         else:
             lei_options = {l["nome"]: l["id"] for l in leis}
             selected_lei_name = st.selectbox("Selecione a Lei / Norma", list(lei_options.keys()))
+            lei_id = lei_options[selected_lei_name]
             st.success(f"Lei selecionada pronta para estudo: **{selected_lei_name}**")
+            
+            # Recupera as questões cadastradas para esta lei para exibir na tela
+            conn = db()
+            questoes = conn.execute("SELECT * FROM questoes WHERE lei_id = ?", (lei_id,)).fetchall()
+            conn.close()
+            
+            st.markdown("---")
+            if not questoes:
+                st.warning("⚠️ Ainda não existem questões geradas ou cadastradas para esta lei/artigo. Utilize o painel de geração para criar os itens de estudo.")
+            else:
+                st.subheader(f"📝 Questões Disponíveis ({len(questoes)})")
+                for idx, q in enumerate(questoes, 1):
+                    with st.container():
+                        st.markdown(f"### Questão {idx}")
+                        renderizar_enunciado_estudo(q["enunciado"])
+                        
+                        # Opções de Resposta Certo / Errado (Padrão Cebraspe)
+                        resp_usuario = st.radio(
+                            "Julgue o item:",
+                            options=["Certo", "Errado"],
+                            key=f"q_resp_{q['id']}",
+                            horizontal=True
+                        )
+                        
+                        if st.button(f"Responder Questão {idx}", key=f"btn_resp_{q['id']}"):
+                            gabarito_texto = "Certo" if q["gabarito"] == 1 else "Errado"
+                            acertou = 1 if ((resp_usuario == "Certo" and q["gabarito"] == 1) or (resp_usuario == "Errado" and q["gabarito"] == 0)) else 0
+                            
+                            if acertou:
+                                st.success("✅ Resposta Correta!")
+                            else:
+                                st.error(f"❌ Resposta Incorreta. O gabarito oficial é: **{gabarito_texto}**")
+                            
+                            if q["explicacao"]:
+                                with st.expander("📖 Ver Comentário / Justificativa"):
+                                    st.markdown(q["explicacao"])
+                        
+                        st.markdown("---")
 
 elif menu == "⚙️ Gestão de Leis":
     st.title("⚙️ Gestão de Disciplinas e Leis")
@@ -483,7 +522,6 @@ if st.sidebar.button("🚪 Encerrar Sessão"):
     st.session_state["user_id"] = None
     st.session_state["username"] = None
     st.rerun()
-
 
 
 
