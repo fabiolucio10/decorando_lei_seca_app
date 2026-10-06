@@ -1,6 +1,11 @@
+# Segredos locais do Streamlit
+.streamlit/secrets.toml
+
+# Base de dados local SQLite
+*.db
+
+# Ambiente virtual Python
 .venv/
+venv/
 __pycache__/
 *.pyc
-decorando_lei.db
-leis_importadas/
-.streamlit/secrets.toml

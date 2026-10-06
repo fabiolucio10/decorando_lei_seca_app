@@ -82,11 +82,8 @@ class PostgresCursorWrapper:
         self.cursor = cursor
 
     def execute(self, query, params=None):
-        # Converte interrogações (?) do estilo SQLite para placeholders %s do Postgres
         if params:
-            # Substitui ? por %s de forma segura
             query_pg = query.replace('?', '%s')
-            # Ajusta sintaxe de INSERT OR IGNORE para PostgreSQL
             if "INSERT OR IGNORE" in query_pg:
                 query_pg = query_pg.replace("INSERT OR IGNORE", "INSERT INTO").replace("VALUES", "ON CONFLICT DO NOTHING VALUES")
             self.cursor.execute(query_pg, params)
@@ -100,7 +97,6 @@ class PostgresCursorWrapper:
         return self
 
     def executescript(self, script_sql):
-        # Converte comandos básicos de criação de tabela para Postgres
         script_pg = script_sql.replace("INTEGER PRIMARY KEY AUTOINCREMENT", "SERIAL PRIMARY KEY")
         script_pg = script_pg.replace("UNIQUE(usuario_id, questao_id)", "CONSTRAINT unique_user_quest UNIQUE(usuario_id, questao_id)")
         self.cursor.execute(script_pg)
@@ -112,7 +108,6 @@ class PostgresCursorWrapper:
             return None
         if isinstance(row, dict):
             return row
-        # Retorna um objeto acessível por chave como sqlite3.Row
         colnames = [desc[0] for desc in self.cursor.description]
         return {colnames[i]: row[i] for i in range(len(row))}
 
@@ -137,7 +132,6 @@ class PostgresConnWrapper:
         self.pg_conn = pg_conn
 
     def cursor(self):
-        # Usa RealDictCursor para retornar resultados como dicionários
         cur = self.pg_conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
         return PostgresCursorWrapper(self, cur)
 
@@ -174,7 +168,6 @@ def db():
         except Exception as e:
             logging.warning(f"Erro ao conectar no Supabase Postgres: {e}. Usando SQLite local.")
 
-    # Fallback para SQLite local
     conn = sqlite3.connect(DB_FILE)
     conn.row_factory = sqlite3.Row
     return conn
@@ -478,8 +471,35 @@ def stats():
     hits = conn.execute("SELECT COALESCE(SUM(acertou),0) n FROM respostas WHERE usuario_id=?", (USER_ID,)).fetchone()["n"]
     errors = total - hits
     pct = (hits / total * 100) if total else 0
-    b_disc = pd.read_sql_query("SELECT d.nome disciplina, COUNT(r.id) respondidas, COALESCE(SUM(r.acertou),0) acertos FROM respostas r JOIN questoes q ON q.id=r.questao_id JOIN disciplinas d ON d.id=q.disciplina_id WHERE r.usuario_id = ? GROUP BY d.id", conn.pg_conn if hasattr(conn, 'pg_conn') else conn, params=(USER_ID,)) if pd else None
-    b_filt = pd.read_sql_query("SELECT f.nome filtro, COUNT(r.id) respondidas FROM respostas r JOIN questoes q ON q.id=r.questao_id JOIN filtros_salvos f ON f.id=q.filtro_id WHERE r.usuario_id = ? GROUP BY f.id", conn.pg_conn if hasattr(conn, 'pg_conn') else conn, params=(USER_ID,)) if pd else None
+    
+    is_postgres = hasattr(conn, 'pg_conn')
+    
+    q_disc = """
+        SELECT d.nome AS disciplina, COUNT(r.id) AS respondidas, COALESCE(SUM(r.acertou),0) AS acertos 
+        FROM respostas r 
+        JOIN questoes q ON q.id=r.questao_id 
+        JOIN disciplinas d ON d.id=q.disciplina_id 
+        WHERE r.usuario_id = ? 
+        GROUP BY d.id, d.nome
+    """
+    q_filt = """
+        SELECT f.nome AS filtro, COUNT(r.id) AS respondidas 
+        FROM respostas r 
+        JOIN questoes q ON q.id=r.questao_id 
+        JOIN filtros_salvos f ON f.id=q.filtro_id 
+        WHERE r.usuario_id = ? 
+        GROUP BY f.id, f.nome
+    """
+    
+    if is_postgres:
+        q_disc = q_disc.replace('?', '%s')
+        q_filt = q_filt.replace('?', '%s')
+        b_disc = pd.read_sql_query(q_disc, conn.pg_conn, params=(USER_ID,)) if pd else None
+        b_filt = pd.read_sql_query(q_filt, conn.pg_conn, params=(USER_ID,)) if pd else None
+    else:
+        b_disc = pd.read_sql_query(q_disc, conn, params=(USER_ID,)) if pd else None
+        b_filt = pd.read_sql_query(q_filt, conn, params=(USER_ID,)) if pd else None
+
     due = conn.execute("SELECT COUNT(*) n FROM revisoes WHERE usuario_id = ? AND proxima_revisao <= ?", (USER_ID, datetime.now().isoformat())).fetchone()["n"]
     conn.close()
     return total, hits, errors, pct, b_disc, b_filt, due
