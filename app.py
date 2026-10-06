@@ -62,11 +62,23 @@ st.markdown("""
         text-align: justify !important;
     }
     
+    /* Cartão de destaque para o fragmento estudado */
+    .fragmento-card {
+        background-color: #f8fafc;
+        border-left: 4px solid #3b82f6;
+        padding: 14px 18px;
+        border-radius: 6px;
+        margin-bottom: 15px;
+    }
+
     /* Garante que o botão de alternar/expandir a sidebar permaneça sempre visível */
     [data-testid="stSidebarCollapseButton"] {display: block !important; visibility: visible !important;}
     [data-testid="stHeader"] {background-color: transparent !important; z-index: 999;}
     </style>
 """, unsafe_allow_html=True)
+
+# Regex universal para algarismos romanos de I até CCC (1 a 300+)
+REGEX_ROMANO = r'(?:M{0,4}(?:CM|CD|D?C{0,3})(?:XC|XL|L?X{0,3})(?:IX|IV|V?I{1,3}))'
 
 def db():
     conn = sqlite3.connect(DB_FILE)
@@ -92,7 +104,7 @@ def limpar_e_formatar_texto_lei(texto):
     for padrao in padroes_remover:
         texto = re.sub(padrao, '', texto, flags=re.IGNORECASE)
 
-    texto = re.sub(r' +', ' ', texto)
+    texto = re.sub(r'[ \t]+', ' ', texto)
     texto = re.sub(r'\n\s*\n', '\n', texto)
 
     return texto.strip()
@@ -375,22 +387,33 @@ def get_laws(discipline_id=None):
     conn.close()
     return rows
 
+# ==============================================================================
+# MOTOR DE ESTRUTURAÇÃO E FRAGMENTAÇÃO INTELIGENTE (CORRIGIDO E AMPLIADO)
+# ==============================================================================
+
 def normalizar_estrutura_dispositivo(texto):
+    """
+    Normaliza o texto do dispositivo legal para que cada parágrafo, inciso ou alínea
+    inicie em uma nova linha com padrão limpo. Suporta algarismos romanos de I a CCC+.
+    """
     if not texto:
         return ""
 
     texto = texto.replace("\r", "\n")
     texto = re.sub(r'[ \t]+', ' ', texto)
 
-    texto = re.sub(r'\s+(§\s*\d+º?|Parágrafo único)\s+', r'\n\1 ', texto, flags=re.IGNORECASE)
-    texto = re.sub(
-        r'\s+(?=(?:I|II|III|IV|V|VI|VII|VIII|IX|X|XI|XII|XIII|XIV|XV|XVI|XVII|XVIII|XIX|XX)\s*-)',
-        '\n',
-        texto,
-        flags=re.IGNORECASE
-    )
-    texto = re.sub(r'\s+(?=[a-z]\s*[\)\-])', '\n', texto, flags=re.IGNORECASE)
-    texto = re.sub(r'(?<=[;])\s+(?=\d+[\)\.-]\s)', '\n', texto)
+    # Quebra linha antes de Parágrafos
+    texto = re.sub(r'\s+(§\s*\d+º?|Parágrafo único)\s*', r'\n\1 ', texto, flags=re.IGNORECASE)
+
+    # Quebra linha antes de Incisos (suporta I até LXXIX e além!)
+    padrao_inciso = rf'\s+(?={REGEX_ROMANO}\s*[-–—]\s*)'
+    texto = re.sub(padrao_inciso, '\n', texto, flags=re.IGNORECASE)
+
+    # Quebra linha antes de Alíneas (a) -, b) -, c) -)
+    texto = re.sub(r'\s+(?=[a-z]\s*[\)\-]\s*)', '\n', texto, flags=re.IGNORECASE)
+
+    # Quebra linha antes de itens numéricos (1., 2., 1 -)
+    texto = re.sub(r'(?<=[;])\s+(?=\d+[\)\.-]\s*)', '\n', texto)
 
     texto = re.sub(r'\n{2,}', '\n', texto)
     return texto.strip()
@@ -399,15 +422,16 @@ def eh_marcador_paragrafo(linha):
     return bool(re.match(r'^(§\s*\d+º?|Parágrafo único)\b', linha.strip(), re.IGNORECASE))
 
 def eh_marcador_inciso(linha):
-    return bool(re.match(
-        r'^(?:I|II|III|IV|V|VI|VII|VIII|IX|X|XI|XII|XIII|XIV|XV|XVI|XVII|XVIII|XIX|XX)\s*-',
-        linha.strip(), re.IGNORECASE
-    ))
+    # Regex universal para incisos em numeração romana (I, II, ..., XLVIII, LXXIX, etc.)
+    return bool(re.match(rf'^{REGEX_ROMANO}\s*[-–—\.]\s*', linha.strip(), re.IGNORECASE))
 
 def eh_marcador_alinea(linha):
     return bool(re.match(r'^[a-z]\s*[\)\-]\s*', linha.strip(), re.IGNORECASE))
 
 def extrair_blocos_por_marcador(texto, tipo):
+    """
+    Extrai blocos estruturados (marcador, conteúdo) linha por linha.
+    """
     linhas = [l.strip() for l in texto.split('\n') if l.strip()]
     if not linhas:
         return []
@@ -427,12 +451,14 @@ def extrair_blocos_por_marcador(texto, tipo):
         if matcher(linha):
             if atual_marcador is not None:
                 blocos.append((atual_marcador, ' '.join(atual_texto).strip()))
+            
             if tipo == 'paragrafo':
                 m = re.match(r'^(§\s*\d+º?|Parágrafo único)', linha, re.IGNORECASE)
             elif tipo == 'inciso':
-                m = re.match(r'^((?:I|II|III|IV|V|VI|VII|VIII|IX|X|XI|XII|XIII|XIV|XV|XVI|XVII|XVIII|XIX|XX)\s*-)', linha, re.IGNORECASE)
+                m = re.match(rf'^({REGEX_ROMANO}\s*[-–—\.]\s*)', linha, re.IGNORECASE)
             else:
-                m = re.match(r'^([a-z]\s*[\)\-])', linha, re.IGNORECASE)
+                m = re.match(r'^([a-z]\s*[\)\-]\s*)', linha, re.IGNORECASE)
+
             atual_marcador = m.group(1).strip() if m else linha.split()[0]
             atual_texto = [linha[m.end():].strip() if m else linha]
         else:
@@ -446,76 +472,151 @@ def extrair_blocos_por_marcador(texto, tipo):
 
     return [(m, t) for m, t in blocos if t.strip()]
 
+def fragmentar_texto_muito_longo(rotulo_base, texto, max_chars=450):
+    """
+    Se mesmo um inciso ou parágrafo específico for excepcionalmente extenso
+    (ex: mais de 450 caracteres), fragmenta por orações/períodos para garantir
+    que a leitura da questão seja rápida, objetiva e confortável.
+    """
+    texto = texto.strip()
+    if len(texto) <= max_chars:
+        return [{'numero': rotulo_base, 'texto': texto}]
+
+    # Tenta quebrar por ponto e vírgula ou por períodos com sentido completo
+    partes = [p.strip() for p in re.split(r'(?<=;)\s+|(?<=\.)\s+', texto) if len(p.strip()) > 15]
+    if len(partes) <= 1:
+        return [{'numero': rotulo_base, 'texto': texto}]
+
+    resultado = []
+    acumulado = ""
+    parte_idx = 1
+    for p in partes:
+        if len(acumulado) + len(p) + 1 <= max_chars:
+            acumulado = f"{acumulado} {p}".strip()
+        else:
+            if acumulado:
+                resultado.append({
+                    'numero': f"{rotulo_base} (trecho {parte_idx})",
+                    'texto': acumulado
+                })
+                parte_idx += 1
+            acumulado = p
+
+    if acumulado:
+        resultado.append({
+            'numero': f"{rotulo_base} (trecho {parte_idx})" if parte_idx > 1 else rotulo_base,
+            'texto': acumulado
+        })
+
+    return resultado if resultado else [{'numero': rotulo_base, 'texto': texto}]
+
 def fracionar_artigo_extenso(num_art, corpo_limpo):
+    """
+    FRAGMENTAÇÃO INTELIGENTE:
+    Separa de forma completa qualquer artigo com parágrafos, incisos e alíneas.
+    Resolve definitivamente o problema de agrupar dezenas de incisos no caput
+    (como ocorria nos incisos XXI ao LXXIX do Art. 5º).
+    """
     texto = normalizar_estrutura_dispositivo(corpo_limpo)
 
-    if len(corpo_limpo) <= 700:
-        return [{'numero': num_art, 'texto': corpo_limpo.strip()}]
-
+    # Identifica parágrafos e incisos
     paragrafos = extrair_blocos_por_marcador(texto, 'paragrafo')
     incisos = extrair_blocos_por_marcador(texto, 'inciso')
 
+    # Se o artigo NÃO possui parágrafos nem incisos:
     if len(paragrafos) == 0 and len(incisos) == 0:
-        return [{'numero': num_art, 'texto': corpo_limpo.strip()}]
+        # Se for curto, retorna direto. Se for muito extenso, fragmenta por trecho
+        if len(corpo_limpo) > 500:
+            return fragmentar_texto_muito_longo(f"{num_art} (caput)", corpo_limpo)
+        return [{'numero': f"{num_art} (caput)" if len(corpo_limpo) > 100 else num_art, 'texto': corpo_limpo.strip()}]
 
     alvos = []
 
-    inicio = texto
+    # 1. Extrai o CAPUT (texto antes do primeiro parágrafo ou inciso)
     marcadores = []
-    for padrao in [
+    padroes_primeiro = [
         r'(?m)^§\s*\d+º?',
         r'(?m)^Parágrafo único\b',
-        r'(?m)^(?:I|II|III|IV|V|VI|VII|VIII|IX|X|XI|XII|XIII|XIV|XV|XVI|XVII|XVIII|XIX|XX)\s*-'
-    ]:
+        rf'(?m)^{REGEX_ROMANO}\s*[-–—\.]\s*'
+    ]
+    for padrao in padroes_primeiro:
         m = re.search(padrao, texto, re.IGNORECASE)
         if m:
             marcadores.append(m.start())
+
     if marcadores:
         inicio = texto[:min(marcadores)].strip()
     else:
         inicio = texto.strip()
 
+    # Se houver caput independente, adiciona como item de questão próprio
     if inicio and len(inicio) > 10:
-        alvos.append({'numero': f'{num_art} (caput)', 'texto': inicio})
+        # Remove eventuais numerações residuais
+        inicio_limpo = re.sub(r'^Art\.\s*\d+[\w\-]*[\.\º\ª]?\s*[-–—]?\s*', '', inicio, flags=re.IGNORECASE).strip()
+        if inicio_limpo:
+            alvos.append({'numero': f'{num_art} (caput)', 'texto': inicio_limpo})
 
+    # 2. Extrai INCISOS DO CAPUT (antes de qualquer parágrafo)
     posicao_primeiro_paragrafo = None
     if paragrafos:
         m = re.search(r'(?m)^(?:§\s*\d+º?|Parágrafo único)\b', texto, re.IGNORECASE)
         if m:
             posicao_primeiro_paragrafo = m.start()
 
-    trecho_inicial = texto[:posicao_primeiro_paragrafo].strip() if posicao_primeiro_paragrafo is not None else texto
-    incisos_iniciais = extrair_blocos_por_marcador(trecho_inicial, 'inciso')
-    for marcador, texto_inciso in incisos_iniciais:
-        if marcador and texto_inciso and len(texto_inciso) > 5:
-            alvos.append({'numero': f'{num_art}, inciso {marcador.rstrip("-").strip()}', 'texto': f'{marcador} {texto_inciso}'.strip()})
+    trecho_incisos_caput = texto[:posicao_primeiro_paragrafo].strip() if posicao_primeiro_paragrafo is not None else texto
+    incisos_caput = extrair_blocos_por_marcador(trecho_incisos_caput, 'inciso')
+    
+    numeros_existentes = {a['numero'] for a in alvos}
 
+    for marcador, texto_inciso in incisos_caput:
+        if marcador and texto_inciso and len(texto_inciso) > 5:
+            num_formatado = f'{num_art}, Inciso {marcador.rstrip("-–—.").strip()}'
+            
+            # Se o inciso possui alíneas internas (a, b, c...), fragmenta cada alínea se for longo!
+            texto_inciso_norm = normalizar_estrutura_dispositivo(texto_inciso)
+            alineas = extrair_blocos_por_marcador(texto_inciso_norm, 'alinea')
+            
+            if len(alineas) > 0 and len(texto_inciso) > 250:
+                # Adiciona cada alínea como dispositivo individual
+                for marc_al, txt_al in alineas:
+                    num_al = f"{num_formatado}, alínea {marc_al.rstrip(')-').strip()}"
+                    alvos.append({'numero': num_al, 'texto': f"{marc_al} {txt_al}".strip()})
+                    numeros_existentes.add(num_al)
+            else:
+                alvos.append({'numero': num_formatado, 'texto': f'{marcador} {texto_inciso}'.strip()})
+                numeros_existentes.add(num_formatado)
+
+    # 3. Extrai PARÁGRAFOS e seus eventuais incisos/alíneas internos
     for marcador_par, texto_par in paragrafos:
         if not marcador_par or not texto_par or len(texto_par) <= 5:
             continue
 
         texto_par_estruturado = normalizar_estrutura_dispositivo(texto_par)
-        alíneas = [(m, t) for m, t in extrair_blocos_por_marcador(texto_par_estruturado, 'alinea') if m]
-        if alíneas:
-            for idx, (marcador_al, texto_al) in enumerate(alíneas):
-                if not marcador_al or not texto_al or len(texto_al) <= 5:
-                    continue
-                texto_alvo = f'{marcador_al} {texto_al}'.strip()
-                alvos.append({
-                    'numero': f'{num_art}, {marcador_par}, alínea {marcador_al[0].lower()}',
-                    'texto': texto_alvo
-                })
-        else:
-            alvos.append({
-                'numero': f'{num_art}, {marcador_par}',
-                'texto': f'{marcador_par} {texto_par}'.strip()
-            })
+        
+        # Verifica se o parágrafo possui incisos ou alíneas
+        incisos_do_paragrafo = extrair_blocos_por_marcador(texto_par_estruturado, 'inciso')
+        alineas_do_paragrafo = extrair_blocos_por_marcador(texto_par_estruturado, 'alinea')
 
+        if incisos_do_paragrafo and len(texto_par) > 250:
+            for marc_inc, txt_inc in incisos_do_paragrafo:
+                num_sub = f'{num_art}, {marcador_par}, Inciso {marc_inc.rstrip("-–—.").strip()}'
+                alvos.append({'numero': num_sub, 'texto': f'{marc_inc} {txt_inc}'.strip()})
+                numeros_existentes.add(num_sub)
+        elif alineas_do_paragrafo and len(texto_par) > 250:
+            for marc_al, txt_al in alineas_do_paragrafo:
+                num_sub = f'{num_art}, {marcador_par}, alínea {marc_al.rstrip(")-").strip()}'
+                alvos.append({'numero': num_sub, 'texto': f'{marc_al} {txt_al}'.strip()})
+                numeros_existentes.add(num_sub)
+        else:
+            num_par = f'{num_art}, {marcador_par}'
+            alvos.append({'numero': num_par, 'texto': f'{marcador_par} {texto_par}'.strip()})
+            numeros_existentes.add(num_par)
+
+    # 4. Varredura de segurança para incisos posteriores
     todos_incisos = extrair_blocos_por_marcador(texto, 'inciso')
-    numeros_existentes = {a['numero'] for a in alvos}
     for marcador, texto_inciso in todos_incisos:
         if marcador and texto_inciso and len(texto_inciso) > 5:
-            numero = f'{num_art}, inciso {marcador.rstrip("-").strip()}'
+            numero = f'{num_art}, Inciso {marcador.rstrip("-–—.").strip()}'
             if numero not in numeros_existentes:
                 alvos.append({'numero': numero, 'texto': f'{marcador} {texto_inciso}'.strip()})
                 numeros_existentes.add(numero)
@@ -613,6 +714,10 @@ def get_saved_filters(discipline_id=None):
     return rows
 
 def obter_texto_caput(artigo_id):
+    """
+    Retorna apenas o texto do caput (excluindo os incisos e parágrafos)
+    para servir de contexto transparente na questão fragmentada.
+    """
     if not artigo_id:
         return None
     conn = db()
@@ -623,7 +728,7 @@ def obter_texto_caput(artigo_id):
         texto_normalizado = normalizar_estrutura_dispositivo(texto_limpo)
         
         m = re.search(
-            r'(?m)^(?:§\s*\d+º?|Parágrafo único\b|(?:I|II|III|IV|V|VI|VII|VIII|IX|X|XI|XII|XIII|XIV|XV|XVI|XVII|XVIII|XIX|XX)\s*-)', 
+            rf'(?m)^(?:§\s*\d+º?|Parágrafo único\b|{REGEX_ROMANO}\s*[-–—\.]\s*)', 
             texto_normalizado, 
             re.IGNORECASE
         )
@@ -640,17 +745,22 @@ def alterar_texto_para_errado(texto):
         (r'\bdeverá\b', 'poderá', 'troca de obrigação ("deverá") por faculdade ("poderá")'),
         (r'\bpoderá\b', 'deverá', 'troca de faculdade ("poderá") por obrigação ("deverá")'),
         (r'\b24 \(vinte e quatro\) horas\b', '48 (quarenta e oito) horas', 'alteração de prazo legal de 24h para 48h'),
+        (r'\b48 \(quarenta e oito\) horas\b', '24 (vinte e quatro) horas', 'alteração de prazo legal de 48h para 24h'),
         (r'\b72 \(setenta e duas\) horas\b', '24 (vinte e quatro) horas', 'alteração de prazo legal de 72h para 24h'),
-        (r'\b12 \(doze\) horas\b', '24 (vinte e quatro) horas', 'alteração do prazo de manifestação de 12h para 24h'),
-        (r'\b30 \(trinta\) dias\b', '15 (quinze) dias', 'alteração do prazo de fornecimento de dados'),
+        (r'\b12 \(doze\) horas\b', '24 (vinte e quatro) horas', 'alteração do prazo de 12h para 24h'),
+        (r'\b30 \(trinta\) dias\b', '15 (quinze) dias', 'alteração de prazo legal de 30 para 15 dias'),
+        (r'\b15 \(quinze\) dias\b', '30 (trinta) dias', 'alteração de prazo legal de 15 para 30 dias'),
         (r'\bpermitido\b', 'vedado', 'inversão de permissão para proibição'),
         (r'\bvedado\b', 'permitido', 'inversão de proibição para permissão'),
         (r'\bexigido\b', 'dispensado', 'troca de exigência por dispensa'),
         (r'\bdispensado\b', 'exigido', 'troca de dispensa por exigência'),
-        (r'\bobrigatório\b', 'facultativo', 'troca de obrigação por faculdade'),
-        (r'\bfacultativo\b', 'obrigatório', 'troca de faculdade por obrigação'),
-        (r'\bindependentemente de autorização judicial\b', 'mediante autorização judicial', 'exigência indevida de autorização judicial'),
-        (r'\bmediante autorização judicial\b', 'independente de autorização judicial', 'supressão da necessidade de autorização judicial')
+        (r'\bobrigatório\b', 'facultativo', 'troca de obrigatório por facultativo'),
+        (r'\bfacultativo\b', 'obrigatório', 'troca de facultativo por obrigatório'),
+        (r'\bindependentemente de autorização judicial\b', 'mediante prévia autorização judicial', 'exigência indevida de autorização judicial'),
+        (r'\bmediante autorização judicial\b', 'independentemente de autorização judicial', 'supressão indevida da reserva de jurisdição'),
+        (r'\bsalvo em caso de guerra declarada\b', 'mesmo em caso de guerra declarada', 'supressão da exceção constitucional'),
+        (r'\bcom prévia autorização\b', 'independentemente de prévia autorização', 'inversão do requisito de prévia autorização'),
+        (r'\bpresunção de inocência\b', 'presunção de culpabilidade', 'inversão da garantia da presunção de inocência')
     ]
     
     texto_modificado = texto
@@ -682,57 +792,135 @@ def obter_rotulo_dispositivo(numero_dispositivo):
         return f"Alínea ({numero_dispositivo})"
     elif "§" in num_lower or "parágrafo" in num_lower or "paragrafo" in num_lower:
         return f"Parágrafo ({numero_dispositivo})"
-    elif "inciso" in num_lower or re.search(r'\b(I|II|III|IV|V|VI|VII|VIII|IX|X|XI|XII|XIII|XIV|XV|XVI|XVII|XVIII|XIX|XX)\b', numero_dispositivo):
+    elif "inciso" in num_lower or re.search(rf'\b{REGEX_ROMANO}\b', numero_dispositivo, re.IGNORECASE):
         return f"Inciso ({numero_dispositivo})"
     else:
         return f"Artigo ({numero_dispositivo})"
 
-def gerar_explicacao_humana(art_num, texto_original, foi_correto=False, tipo_troca=None, texto_modificado=None):
-    txt_lower = texto_original.lower()
+# ==============================================================================
+# GERADOR DE EXEMPLOS OBJETIVOS E PRÁTICOS CONFORME O DISPOSITIVO ESTUDADO
+# ==============================================================================
 
-    if "sinal" in txt_lower or "estação de cobertura" in txt_lower or "radiofrequência" in txt_lower:
-        situacao_real = "Em uma investigação de sequestro, a polícia requisita às operadoras de telefonia o sinal da antena de celular utilizada pelo suspeito para localizar a região onde a vítima está mantida em cativeiro."
-        aplicacao_regra = f"• **Aplicação do {art_num}:**\n  - O ofício enviado à operadora deve conter a identificação da unidade de polícia judiciária responsável.\n  - Fornece apenas a localização aproximada (antena/ERB), sem dar acesso ao conteúdo das conversas."
-        objetivo_regra = "Agilizar a localização geográfica de vítimas/suspeitos sem violar o sigilo do conteúdo das chamadas sem ordem do juiz."
-    elif "remessa" in txt_lower or "instituto de identificação" in txt_lower:
-        situacao_real = "Ao concluir o inquérito de um crime e enviá-lo para a Vara Criminal responsável, a autoridade policial envia um comunicado ao Instituto de Identificação e Estatística."
-        aplicacao_regra = f"• **Aplicação do {art_num}:**\n  - O comunicado deve conter os dados do investigado, o crime cometido e o juízo para o qual os autos foram distribuídos."
-        objetivo_regra = "Registrar o crime e o local do processo no histórico criminal do investigado."
-    elif "prazo" in txt_lower or "esgotado" in txt_lower:
-        situacao_real = "Um prazo legal de investigação ou diligência especial chega ao fim e nenhuma prorrogação foi solicitada formalmente."
-        aplicacao_regra = f"• **Aplicação do {art_num}:**\n  - A autoridade deve encerrar a medida imediatamente e apresentar o relatório das diligências efetuadas."
-        objetivo_regra = "Forçar o encerramento imediato da medida, impedindo prazos indefinidos ou abusivos na persecução penal."
-    elif "dados" in txt_lower or "informações cadastrais" in txt_lower:
-        situacao_real = "Em investigações de crimes graves (como tráfico de pessoas), a polícia precisa identificar rapidamente a qualificação dos envolvidos."
-        aplicacao_regra = f"• **Aplicação do {art_num}:**\n  - Delegado ou Promotor requisitam dados cadastrais (nome, CPF, endereço) diretamente a órgãos ou empresas."
-        objetivo_regra = "Obter qualificação básica de suspeitos com agilidade e sem burocracia desnecessária."
-    else:
-        situacao_real = "A aplicação prática deste dispositivo ocorre nas rotinas e atos oficiais de investigação criminal da polícia judiciária."
-        aplicacao_regra = f"• **Aplicação do {art_num}:**\n  - O dispositivo fixa procedimentos formais obrigatórios a serem respeitados pelas autoridades."
-        objetivo_regra = "Garantir a legalidade, a segurança jurídica e a padronização dos procedimentos no inquérito policial."
+def extrair_exemplo_objetivo_personalizado(art_num, texto_original):
+    """
+    Analisa os termos jurídicos do artigo, inciso ou parágrafo específico
+    e constrói um exemplo prático, objetivo e memorável da vida real.
+    """
+    txt = texto_original.lower()
+
+    if any(k in txt for k in ["pena de morte", "caráter perpétuo", "trabalhos forçados", "banimento", "cruéis"]):
+        return (
+            "No Brasil, o Código Penal Militar prevê pena de morte por fuzilamento apenas se houver guerra formalmente declarada. Em tempo de paz, nenhuma autoridade judicial pode aplicar pena perpétua ou de morte.",
+            f"• **Aplicação no {art_num}:** Impede penas desumanas ou perpétuas no sistema penal brasileiro comum.",
+            "Proteger a dignidade da pessoa humana e evitar punições estatais irreversíveis e cruéis."
+        )
+
+    if any(k in txt for k in ["extradit", "brasileiro nato", "naturalizado"]):
+        return (
+            "João, brasileiro nato, cometeu homicídio na Itália e fugiu para o Brasil. O Brasil jamais autorizará sua extradição, pois nato nunca é extraditado (poderá responder pelo crime perante a Justiça brasileira). Já o naturalizado só pode ser extraditado por crime comum praticado antes da naturalização ou por tráfico ilícito a qualquer tempo.",
+            f"• **Aplicação no {art_num}:** Garante a prerrogativa constitucional de não extradição do brasileiro nato.",
+            "Proteger os nacionais da jurisdição punitiva estrangeira em território nacional."
+        )
+
+    if any(k in txt for k in ["presidiária", "amamenta", "filhos"]):
+        return (
+            "Uma detenta deu à luz durante o cumprimento de pena em presídio feminino. O estabelecimento prisional é obrigado a dispor de creche/berçário para que ela amamente o bebê durante os primeiros meses.",
+            f"• **Aplicação no {art_num}:** Direito subjetivo da mãe presa e do recém-nascido de permanecerem juntos durante a amamentação.",
+            "Garantir a saúde, nutrição e proteção da infância do recém-nascido independentemente da condenação da mãe."
+        )
+
+    if any(k in txt for k in ["dados pessoais", "meios digitais"]):
+        return (
+            "Uma empresa de tecnologia ou órgão público sofre vazamento de dados de cidadãos sem consentimento. O titular pode acionar o Poder Judiciário invocando direito fundamental à proteção de dados digitais.",
+            f"• **Aplicação no {art_num}:** Eleva a privacidade digital ao patamar de cláusula pétrea fundamental.",
+            "Resguardar a autodeterminação informativa no ambiente cibernético."
+        )
+
+    if any(k in txt for k in ["domicílio", "casa é asilo", "inviolável"]):
+        return (
+            "A polícia não pode invadir a residência de um suspeito à noite sem consentimento ou flagrante delito. Durante o dia, exige-se mandado judicial prévio fundamentado.",
+            f"• **Aplicação no {art_num}:** Protege a intimidade doméstica contra abusos estatais.",
+            "Garantir que a residência seja um refúgio inviolável do indivíduo."
+        )
+
+    if any(k in txt for k in ["habeas corpus", "locomoção", "liberdade de ir e vir"]):
+        return (
+            "Um cidadão tem prisão preventiva decretada por juiz incompetente ou sem fundamentação válida. O advogado impetra habeas corpus diretamente no Tribunal para expedição imediata de alvará de soltura.",
+            f"• **Aplicação no {art_num}:** Remédio constitucional de ação gratuita contra prisão ilegal ou ameaça de prisão.",
+            "Restabelecer a liberdade de locomoção cerceada por abuso de poder."
+        )
+
+    if any(k in txt for k in ["mandado de segurança", "direito líquido e certo"]):
+        return (
+            "Um candidato aprovado em 1º lugar em concurso público dentro do número de vagas vê o prazo de validade expirar sem nomeação. Cabe Mandado de Segurança demonstrando o direito líquido e certo à posse.",
+            f"• **Aplicação no {art_num}:** Protege direitos comprováveis de plano por documentos, quando não amparados por habeas corpus ou habeas data.",
+            "Sanar ilegalidades administrativas evidentes com celeridade processual."
+        )
+
+    if any(k in txt for k in ["ação popular", "anular ato lesivo", "patrimônio público"]):
+        return (
+            "Um eleitor descobre que o prefeito do seu município contratou obra superfaturada favorecendo parente. Como cidadão no gozo dos direitos políticos, ele ingressa com Ação Popular para anular o contrato e ressarcir o erário.",
+            f"• **Aplicação no {art_num}:** Instrumento de fiscalização cidadã contra imoralidade e lesão ao patrimônio coletivo.",
+            "Permitir o controle social direto dos atos administrativos corruptos ou ilegais."
+        )
+
+    if any(k in txt for k in ["transitou em julgado", "culpado", "presunção"]):
+        return (
+            "Um réu foi condenado em primeira e segunda instância, mas interpôs recursos especial e extraordinário aos Tribunais Superiores. Ele não pode ser tratado formalmente como culpado definitivo até o julgamento final.",
+            f"• **Aplicação no {art_num}:** Presunção de não culpabilidade até o trânsito em julgado.",
+            "Evitar efeitos punitivos definitivos antes do esgotamento da via recursal."
+        )
+
+    if any(k in txt for k in ["sinal", "estação de cobertura", "radiofrequência"]):
+        return (
+            "Em uma investigação de extorsão mediante sequestro, a autoridade policial requisita a operadora as ERBs (antenas) pelas quais o celular da vítima transitou.",
+            f"• **Aplicação no {art_num}:** Localização aproximada por estação de cobertura sem quebra de sigilo telefônico.",
+            "Agilizar o resgate de vítimas sem demandar autorização judicial prévia para mera triangulação geográfica."
+        )
+
+    if any(k in txt for k in ["competência privativa", "decretar", "sancionar", "vetar"]):
+        return (
+            "O Presidente da República decide vetar parcialmente um projeto de lei aprovado pelo Congresso Nacional, fundamentando que o dispositivo é inconstitucional.",
+            f"• **Aplicação no {art_num}:** Exercício privativo de prerrogativas do Chefe do Poder Executivo da União.",
+            "Harmonizar o sistema de freios e contrapesos entre Executivo e Legislativo."
+        )
+
+    # Exemplo contextual padrão aprimorado
+    return (
+        f"Na prática jurídica cotidiana, os agentes e magistrados aplicam este dispositivo para delimitar direitos e deveres formais expressos na literalidade legal.",
+        f"• **Aplicação no {art_num}:** Impõe cumprimento taxativo da previsão normativa, vedando interpretações que contrariem o texto expresso da lei.",
+        "Assegurar a previsibilidade das decisões judiciais e a estabilidade das relações jurídicas."
+    )
+
+def gerar_explicacao_humana(art_num, texto_original, foi_correto=False, tipo_troca=None, texto_modificado=None):
+    situacao_real, aplicacao_regra, objetivo_regra = extrair_exemplo_objetivo_personalizado(art_num, texto_original)
 
     if foi_correto:
         status_txt = "O item está **CORRETO**."
-        detalhe_erro = f"O enunciado reproduz com exatidão o disposto na legislação."
+        detalhe_erro = "O enunciado reproduz com exatidão a literalidade da legislação."
         resumo_erro_bloco = ""
     else:
         status_txt = "O item está **ERRADO**."
-        detalhe_erro = f"O enunciado alterou a regra legal."
-        resumo_erro_bloco = f"\n⚠️ **Pegadinha da Questão:** Alteração mediante **{tipo_troca or 'modificação de termos'}**."
+        detalhe_erro = "O enunciado promoveu alteração indevida da regra legal."
+        resumo_erro_bloco = f"\n\n⚠️ **Pegadinha da Questão:** {tipo_troca or 'Substituição de palavra-chave ou prazo legal'}."
 
     explicacao_formatada = f"""💡 **Gabarito e Justificativa:** {status_txt} {detalhe_erro}{resumo_erro_bloco}
 
-📖 **Texto Correto da Lei Seca:**
+📖 **Dispositivo Literal da Lei Seca ({art_num}):**
 > "{texto_original}"
 
-📌 **Exemplo Prático da Vida Real:**
+📌 **Exemplo Prático e Objetivo da Vida Real:**
 {situacao_real}
 
 {aplicacao_regra}
 
-**Objetivo:** {objetivo_regra}
+🎯 **Objetivo da Regra:** {objetivo_regra}
 """
     return explicacao_formatada
+
+# ==============================================================================
+# GERAÇÃO DE QUESTÕES COM FRAGMENTAÇÃO
+# ==============================================================================
 
 def generate_questions_for_articles(discipline_id, law_id, article_ids, qtd_total, filter_id=None, motor_ia="⚙️ Regra Padrão"):
     conn = db()
@@ -817,13 +1005,13 @@ def generate_questions_for_articles(discipline_id, law_id, article_ids, qtd_tota
                     if hasattr(genai, "Client"):
                         client = genai.Client(api_key=gemini_key)
                         response = client.models.generate_content(
-                            model="models/gemini-3.8-flash",
+                            model="gemini-3.8-flash",
                             contents=prompt
                         )
                         enunciado = response.text
                     else:
                         genai.configure(api_key=gemini_key)
-                        model = genai.GenerativeModel("models/gemini-3.8-flash")
+                        model = genai.GenerativeModel("gemini-3.8-flash")
                         response = model.generate_content(prompt)
                         enunciado = response.text
                         
@@ -841,7 +1029,6 @@ def generate_questions_for_articles(discipline_id, law_id, article_ids, qtd_tota
                         gabarito = 0
                         explicacao = gerar_explicacao_humana(numero_dispositivo, text, False, tipo_troca, modified_text)
             else:
-                logging.warning("Biblioteca ou Chave do Gemini (GEMINI_API_KEY) não configurada.")
                 if is_correct:
                     enunciado = f"De acordo com o **{rotulo_dispositivo}**:\n\n\"{text}\""
                     gabarito = 1
@@ -1161,11 +1348,11 @@ with tab2:
                 if not filter_name:
                     st.error("Informe um nome para o seu caderno!")
                 else:
-                    with st.spinner("Aguarde sincronização... Gerando questões e estruturando o caderno..."):
+                    with st.spinner("Aguarde sincronização... Gerando questões fragmentadas e estruturando o caderno..."):
                         art_ids = [art_dict[k] for k in selected_arts]
                         f_id = save_filter(filter_name, d_id, l_id, art_ids, qtd_q)
                         qtd_geradas = generate_questions_for_articles(d_id, l_id, art_ids, qtd_q, filter_id=f_id, motor_ia=motor_ia)
-                    st.success(f"Caderno '{filter_name}' criado com sucesso! {qtd_geradas} questões geradas.")
+                    st.success(f"Caderno '{filter_name}' criado com sucesso! {qtd_geradas} questões fragmentadas geradas.")
 
     st.divider()
     st.subheader("🗑 Meus Cadernos / Filtros Salvos por Disciplina")
@@ -1188,6 +1375,10 @@ with tab2:
                         delete_filter(mf['id'])
                         st.success(f"Caderno '{mf['nome']}' removido com sucesso!")
                         st.rerun()
+
+# ==============================================================================
+# TELA DE RESOLVER QUESTÕES (TOTALMENTE AJUSTADA COM FRAGMENTAÇÃO E EXEMPLOS)
+# ==============================================================================
 
 with tab3:
     st.header("Resolver Questões")
@@ -1238,14 +1429,27 @@ with tab3:
                 st.subheader(f"Questão {idx + 1} de {len(questoes)}")
                 
                 num_disp = q['artigo_numero']
-                st.markdown(f"**Dispositivo:** {num_disp}")
+                rotulo_formatado = obter_rotulo_dispositivo(num_disp)
+                
+                col_disp, col_badge = st.columns([4, 1])
+                with col_disp:
+                    st.markdown(f"**Dispositivo em Estudo:** `{rotulo_formatado}`")
+                with col_badge:
+                    tamanho = len(q["enunciado"])
+                    if tamanho < 250:
+                        st.caption("⚡ Dispositivo Curto / Direto")
+                    else:
+                        st.caption("🧩 Dispositivo Fragmentado")
 
-                is_subdevice = any(tag in num_disp.lower() for tag in ["§", "parágrafo", "inciso", "alínea", "alinea"]) or re.search(r'\b(I|II|III|IV|V|VI|VII|VIII|IX|X|XI|XII|XIII|XIV|XV|XVI|XVII|XVIII|XIX|XX)\b', num_disp)
+                # Se o dispositivo for um Inciso, Parágrafo ou Alínea, exibe o Caput como contexto útil
+                is_subdevice = any(tag in num_disp.lower() for tag in ["§", "parágrafo", "inciso", "alínea", "alinea"]) or re.search(rf'\b{REGEX_ROMANO}\b', num_disp, re.IGNORECASE)
                 if is_subdevice:
                     caput_text = obter_texto_caput(q["artigo_id"])
                     if caput_text:
-                        st.info(f"📜 **Artigo Principal (Caput):**\n\n\"{caput_text}\"")
+                        with st.expander("📜 Contexto: Artigo Principal (Caput)", expanded=False):
+                            st.write(f"_{caput_text}_")
 
+                # Enunciado focado e delimitado
                 st.markdown(q["enunciado"])
 
                 q_id = q["id"]
@@ -1254,7 +1458,7 @@ with tab3:
                 resp = st.radio("A sua resposta:", ["Certo", "Errado"], key=f"q_{q_id}", disabled=ja_respondida)
                 
                 if not ja_respondida:
-                    if st.button("Responder", key=f"btn_{q_id}"):
+                    if st.button("Responder", key=f"btn_{q_id}", type="primary"):
                         val = 1 if resp == "Certo" else 0
                         acertou = record_answer(q_id, val, cycle=1)
                         st.session_state["answered_q"][q_id] = {
@@ -1265,10 +1469,13 @@ with tab3:
                 else:
                     dados_resp = st.session_state["answered_q"][q_id]
                     if dados_resp["acertou"]:
-                        st.success("✨ Resposta Correta!")
+                        st.success("✨ Resposta Correta! Parabéns!")
                     else:
-                        st.error("❌ Resposta Incorreta!")
-                    st.markdown(f"{q['explicacao']}")
+                        st.error("❌ Resposta Incorreta! Atenção aos detalhes!")
+
+                    # Exibição da justificativa com o exemplo prático e objetivo
+                    with st.container():
+                        st.markdown(f"{q['explicacao']}")
 
                     if st.button("Próxima Questão ➡️", key=f"next_{q_id}"):
                         st.session_state["q_index"] += 1
@@ -1331,26 +1538,27 @@ with tab5:
             st.subheader("Questão para Revisão")
             
             num_disp = revs['artigo_numero']
-            st.markdown(f"**Dispositivo:** {num_disp}")
+            st.markdown(f"**Dispositivo:** `{obter_rotulo_dispositivo(num_disp)}`")
 
-            is_subdevice = any(tag in num_disp.lower() for tag in ["§", "parágrafo", "inciso", "alínea", "alinea"]) or re.search(r'\b(I|II|III|IV|V|VI|VII|VIII|IX|X|XI|XII|XIII|XIV|XV|XVI|XVII|XVIII|XIX|XX)\b', num_disp)
+            is_subdevice = any(tag in num_disp.lower() for tag in ["§", "parágrafo", "inciso", "alínea", "alinea"]) or re.search(rf'\b{REGEX_ROMANO}\b', num_disp, re.IGNORECASE)
             if is_subdevice and "artigo_id" in revs.keys() and revs["artigo_id"]:
                 caput_text = obter_texto_caput(revs["artigo_id"])
                 if caput_text:
-                    st.info(f"📜 **Artigo Principal (Caput):**\n\n\"{caput_text}\"")
+                    with st.expander("📜 Contexto: Artigo Principal (Caput)", expanded=False):
+                        st.write(f"_{caput_text}_")
 
             st.markdown(revs["enunciado"])
             
             q_id_rev = revs["id"]
             resp_rev = st.radio("A sua resposta:", ["Certo", "Errado"], key=f"rev_ans_{q_id_rev}")
             
-            if st.button("Enviar Resposta da Revisão", key=f"btn_rev_{q_id_rev}"):
+            if st.button("Enviar Resposta da Revisão", key=f"btn_rev_{q_id_rev}", type="primary"):
                 val = 1 if resp_rev == "Certo" else 0
                 acertou = record_answer(q_id_rev, val, cycle=2)
                 if acertou:
                     st.success("✨ Excelente! Próxima revisão agendada.")
                 else:
-                    st.error("❌ Errou! Ela voltará para revisão.")
+                    st.error("❌ Errou! Ela voltará para revisão em breve.")
                 st.markdown(f"{revs['explicacao']}")
                 st.rerun()
         else:
