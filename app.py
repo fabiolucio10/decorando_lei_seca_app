@@ -143,7 +143,7 @@ st.markdown("""
         font-weight: 650;
         text-align: left;
     }
-        </style>
+    </style>
 """, unsafe_allow_html=True)
 
 # Regex universal para algarismos romanos de I até CCC (1 a 300+), cobrindo com precisão V, X, L, XLV, etc.
@@ -159,17 +159,13 @@ def hash_password(password):
 
 def limpar_conteudo_html_para_renderizacao(conteudo):
     """
-    Remove cercas de código Markdown que possam ter sido salvas em versões
-    anteriores e normaliza HTML escapado antes da renderização no Streamlit.
-    Isso impede que <div>, <style> etc. apareçam como código na tela.
+    Remove cercas de código Markdown e normaliza HTML escapado antes da renderização.
     """
     if conteudo is None:
         return ""
     texto = str(conteudo).strip()
-    # Remove blocos ```html ... ``` ou ``` ... ```
     texto = re.sub(r"^\s*```(?:html|HTML)?\s*", "", texto)
     texto = re.sub(r"\s*```\s*$", "", texto)
-    # Caso uma versão anterior tenha armazenado o HTML escapado
     if "&lt;div" in texto or "&lt;style" in texto or "&gt;" in texto:
         texto = html.unescape(texto)
     return texto.strip()
@@ -439,10 +435,6 @@ def get_laws(discipline_id=None):
     conn.close()
     return rows
 
-# ==============================================================================
-# MOTOR DE ESTRUTURAÇÃO E FRAGMENTAÇÃO INTELIGENTE (100% BLINDADO CONTRA ERROS)
-# ==============================================================================
-
 def normalizar_estrutura_dispositivo(texto):
     if not texto:
         return ""
@@ -450,17 +442,10 @@ def normalizar_estrutura_dispositivo(texto):
     texto = texto.replace("\r", "\n")
     texto = re.sub(r'[ \t]+', ' ', texto)
 
-    # Quebra linha antes de Parágrafos
     texto = re.sub(r'(?:;|\.|\n|\s)\s*(§\s*\d+º?|Parágrafo único)\b', r'\n\1 ', texto, flags=re.IGNORECASE)
-
-    # Quebra linha antes de Incisos (suporta I até LXXIX e além, separando inclusive após ponto e vírgula)
     padrao_inciso = rf'(?:;|\.|\n|\s)\s*(?={REGEX_ROMANO}\s*[-–—\.]\s*)'
     texto = re.sub(padrao_inciso, '\n', texto, flags=re.IGNORECASE)
-
-    # Quebra linha antes de Alíneas (a) -, b) -, c) -)
-    texto = re.sub(r'(?:;|\.|\n|\s)\s*(?=[a-z]\s*[\)\-]\s*)', '\n', texto, flags=re.IGNORECASE)
-
-    # Quebra linha antes de itens numéricos
+    texto = re.sub(r'(?:;|\.|\n|\s)\s*(?=[a-z]\s*[\)\-]\s*)', '\n', texto)
     texto = re.sub(r'(?<=[;])\s+(?=\d+[\)\.-]\s*)', '\n', texto)
 
     texto = re.sub(r'\n{2,}', '\n', texto)
@@ -558,8 +543,6 @@ def fracionar_artigo_extenso(num_art, corpo_limpo):
         return [{'numero': f"{num_art} (caput)" if len(corpo_limpo) > 100 else num_art, 'texto': corpo_limpo.strip()}]
 
     alvos = []
-
-    # 1. Extrai o CAPUT
     padroes_primeiro = [
         r'(?m)^§\s*\d+º?',
         r'(?m)^Parágrafo único\b',
@@ -578,7 +561,6 @@ def fracionar_artigo_extenso(num_art, corpo_limpo):
         if inicio_limpo:
             alvos.append({'numero': f'{num_art} (caput)', 'texto': inicio_limpo})
 
-    # 2. Extrai INCISOS DO CAPUT
     posicao_primeiro_paragrafo = None
     if paragrafos:
         m = re.search(r'(?m)^(?:§\s*\d+º?|Parágrafo único)\b', texto, re.IGNORECASE)
@@ -608,7 +590,6 @@ def fracionar_artigo_extenso(num_art, corpo_limpo):
                 alvos.append({'numero': num_formatado, 'texto': f'{marcador} {texto_inciso}'.strip()})
                 numeros_existentes.add(num_formatado)
 
-    # 3. Extrai PARÁGRAFOS
     for marcador_par, texto_par in paragrafos:
         if not marcador_par or not texto_par or len(texto_par) <= 5:
             continue
@@ -638,7 +619,6 @@ def fracionar_artigo_extenso(num_art, corpo_limpo):
             alvos.append({'numero': num_par, 'texto': f'{marcador_par} {texto_par}'.strip()})
             numeros_existentes.add(num_par)
 
-    # 4. Varredura de segurança para incisos posteriores
     todos_incisos = extrair_blocos_por_marcador(texto, 'inciso')
     for marcador, texto_inciso in todos_incisos:
         if marcador and texto_inciso and len(texto_inciso) > 5:
@@ -763,60 +743,39 @@ def obter_texto_caput(artigo_id):
         return caput if caput else texto_normalizado.strip()
     return None
 
-# ==============================================================================
-# FORMATAÇÃO, NEXO GRAMATICAL E GERAÇÃO DE ASSERTIVAS (PADRÃO CEBRASPE / OAB)
-# ==============================================================================
-
 def limpar_assertiva_dispositivo(texto):
-    """
-    Higieniza o texto bruto do dispositivo, removendo numerais romanos (ex: 'XLIX - '),
-    parágrafos ('§ 1º - ') e alíneas, ajustando maiúscula inicial e pontuação final.
-    """
     if not texto:
         return ""
     t = texto.strip()
-    # Remove marcadores no início como "XLIX - ", "§ 1º - ", "Parágrafo único. ", "a) - "
     t = re.sub(
         rf'^(?:{REGEX_ROMANO}\s*[-–—\.]\s*|§\s*\d+º?\s*[-–—\.]?\s*|Parágrafo único\s*[-–—\.]?\s*|[a-z]\s*[\)\-]\s*)',
         '',
         t,
         flags=re.IGNORECASE
     ).strip()
-    # Remove pontuação residual no final como ;, : ou vírgula
     t = re.sub(r'[\s;:,]+$', '', t).strip()
     if not t:
         return texto.strip()
-    # Garante primeira letra maiúscula e ponto final
     t = t[0].upper() + t[1:]
     if not t.endswith('.'):
         t += '.'
     return t
 
 def conectar_caput_com_dispositivo(caput_texto, assertiva_limpa, rotulo_dispositivo):
-    """
-    Quando um dispositivo (especialmente inciso) depende da oração principal do Caput
-    para ter sujeito, verbo e sentido completo (nexo sintático), realiza a ligação inteligente.
-    Ex: 'Compete privativamente ao Presidente da República:' + 'nomear e exonerar...'
-    -> 'Compete privativamente ao Presidente da República nomear e exonerar os Ministros de Estado.'
-    """
     if not caput_texto or not assertiva_limpa:
         return assertiva_limpa
     
     cap = caput_texto.strip()
-    
-    # 1. Art. 84 - Competências do Presidente
     if re.search(r'compete\s+privativamente\s+ao\s+presidente\s+da\s+república', cap, re.IGNORECASE):
         if not re.search(r'compete', assertiva_limpa, re.IGNORECASE):
             verbo_ajustado = assertiva_limpa[0].lower() + assertiva_limpa[1:]
             return f"Compete privativamente ao Presidente da República {verbo_ajustado}"
             
-    # 2. Art. 37 - Princípios da Administração Pública
     if re.search(r'administração\s+pública\s+direta\s+e\s+indireta.*obedecerá', cap, re.IGNORECASE):
         if not re.search(r'administração|cargos|princípios', assertiva_limpa, re.IGNORECASE):
             verbo_ajustado = assertiva_limpa[0].lower() + assertiva_limpa[1:]
             return f"Na administração pública direta e indireta, {verbo_ajustado}"
 
-    # 3. Caput que termina com dois pontos e introduz enumeração direta curta
     if cap.endswith(':') and len(cap) < 120:
         cap_sem_dois_pontos = cap.rstrip(':').strip()
         if not assertiva_limpa.lower().startswith(cap_sem_dois_pontos.lower()[:20]):
@@ -834,9 +793,6 @@ def formatar_nome_lei_contextual(nome_lei):
     return nl
 
 def construir_enunciado_com_nexo(nome_lei, rotulo_dispositivo, assertiva_texto, caput_texto=None, num_art=None):
-    """
-    Monta o enunciado com apresentação contextualizada, nexo legal direto e citação em destaque.
-    """
     ref_rotulo = obter_rotulo_dispositivo(rotulo_dispositivo)
     lei_formatada = formatar_nome_lei_contextual(nome_lei)
     vinculo = ""
@@ -854,27 +810,19 @@ def obter_rotulo_dispositivo(numero_dispositivo):
     if not numero_dispositivo:
         return "Dispositivo da Lei"
     s = str(numero_dispositivo).strip()
-    # Remove aninhamentos repetitivos como "Inciso (Art. 5º, Inciso XLIX)"
     s = re.sub(r'^(?:Inciso|Parágrafo|Alínea|Artigo)\s*\((.+)\)$', r'\1', s, flags=re.IGNORECASE)
     return s
 
-
 def renderizar_enunciado_estudo(enunciado, num_disp=None):
-    """Renderiza a questão em cartões visuais.
-
-    Também corrige questões antigas que tenham sido salvas com o HTML dentro
-    de ```html ... ``` ou com HTML escapado. O banco não precisa ser recriado.
+    """
+    Renderiza os cartões da questão garantindo que qualquer HTML armazenado
+    seja corretamente limpo e escapado para evitar códigos visíveis na tela.
     """
     if not enunciado:
         return
 
     texto = limpar_conteudo_html_para_renderizacao(enunciado)
 
-    # ------------------------------------------------------------------
-    # Questões antigas: algumas versões anteriores salvaram os próprios
-    # cartões HTML dentro do campo enunciado. Recuperamos apenas o texto
-    # necessário e reconstruímos os cartões corretamente.
-    # ------------------------------------------------------------------
     if "questao-comando-card" in texto or "questao-assertiva-card" in texto:
         ref_match = re.search(
             r'(?:Referência Normativa:\s*)(.*?)(?=<div\s+class=["\']questao-comando-card|$)',
@@ -896,7 +844,6 @@ def renderizar_enunciado_estudo(enunciado, num_disp=None):
         assertiva = html.unescape(re.sub(r'<[^>]+>', '', assertiva_match.group(1))) if assertiva_match else ""
         referencia = html.unescape(re.sub(r'<[^>]+>', '', referencia))
     else:
-        # Formato original salvo pelo gerador: Markdown + assertiva entre > "..."
         linhas = [linha.strip() for linha in texto.splitlines() if linha.strip()]
         referencia = re.sub(r'\*\*', '', linhas[0]).strip() if linhas else ""
 
@@ -911,13 +858,13 @@ def renderizar_enunciado_estudo(enunciado, num_disp=None):
         if m_assertiva:
             assertiva = m_assertiva.group(1).strip()
         else:
-            # Compatibilidade com questões antigas.
             partes = texto.split('\n\n')
             assertiva = partes[-1].strip().lstrip('> ').strip('"“”') if partes else texto
 
-    referencia = html.escape(referencia.strip())
-    comando = html.escape(comando.strip())
-    assertiva = html.escape(assertiva.strip())
+    # Normalização robusta para evitar exibição de tags literais
+    referencia = html.escape(re.sub(r'<[^>]+>', '', referencia).strip())
+    comando = html.escape(re.sub(r'<[^>]+>', '', comando).strip())
+    assertiva = html.escape(re.sub(r'<[^>]+>', '', assertiva).strip())
 
     html_enunciado = f"""
     <div class="questao-estudo-wrapper">
@@ -940,145 +887,31 @@ def renderizar_enunciado_estudo(enunciado, num_disp=None):
     st.markdown(limpar_conteudo_html_para_renderizacao(textwrap.dedent(html_enunciado)), unsafe_allow_html=True)
 
 def alterar_texto_para_errado(texto):
-    """
-    Gera assertivas INCORRETAS com 100% de nexo sintático e jurídico,
-    reproduzindo as pegadinhas clássicas de bancas de concursos (Cebraspe/FGV/Vunesp/FCC).
-    NUNCA insere palavras de forma cega ou quebra a concordância verbal.
-    """
     substituicoes = [
-        # Direitos dos Presos e Dignidade (Art. 5º, XLIX, XLVIII, L)
-        (
-            r'\brespeito à integridade física e moral\b',
-            'respeito à integridade física, sendo dispensada a tutela de sua integridade moral',
-            'restrição indevida: a CF/88 assegura expressamente o respeito à integridade física E moral dos presos'
-        ),
-        (
-            r'\bintegridade física e moral\b',
-            'integridade física, mas não à integridade moral',
-            'restrição indevida: a garantia constitucional abrange tanto a integridade física quanto a moral'
-        ),
-        (
-            r'\bé assegurado aos presos o respeito\b',
-            'é facultado à administração penitenciária restringir o respeito',
-            'troca indevida de garantia fundamental cogente por faculdade administrativa'
-        ),
-        (
-            r'\bestabelecimentos distintos, de acordo com a natureza do delito, a idade e o sexo\b',
-            'estabelecimentos unificados, independentemente da natureza do delito, idade ou sexo',
-            'supressão do critério constitucional de separação de presos por delito, idade e sexo'
-        ),
-        (
-            r'\bpermanecer com seus filhos durante o período de amamentação\b',
-            'permanecer com seus filhos apenas nos primeiros 15 dias de vida, vedada a amamentação no presídio',
-            'supressão da garantia constitucional da presidiária de amamentar seus filhos'
-        ),
-
-        # Penas Proibidas e Extradição (Art. 5º, XLVII, LI, LII)
-        (
-            r'\bsalvo em caso de guerra declarada\b',
-            'mesmo em caso de guerra declarada',
-            'supressão da única ressalva constitucional para a pena de morte no Brasil'
-        ),
-        (
-            r'\bnenhum brasileiro será extraditado, salvo o naturalizado\b',
-            'qualquer brasileiro, inclusive o nato, poderá ser extraditado por crime comum',
-            'violação da imunidade absoluta do brasileiro nato contra extradição'
-        ),
-        (
-            r'\bnenhum brasileiro será extraditado\b',
-            'o brasileiro nato poderá ser extraditado em caso de tráfico de drogas',
-            'o brasileiro nato NUNCA é extraditado, nem mesmo por tráfico de entorpecentes'
-        ),
-        (
-            r'\bnão será concedida extradição de estrangeiro por crime político ou de opinião\b',
-            'será admitida a extradição de estrangeiro por crime puramente político ou de opinião',
-            'violação da vedação expressa de extradição por crime político ou de opinião'
-        ),
-
-        # Provas Ilícitas, Devido Processo e Presunção de Inocência (Art. 5º, LIV, LVI, LVII)
-        (
-            r'\bsão inadmissíveis, no processo, as provas obtidas por meios ilícitos\b',
-            'são plenamente admissíveis no processo as provas obtidas por meios ilícitos, desde que úteis à verdade real',
-            'inversão da regra constitucional de inadmissibilidade absoluta das provas ilícitas'
-        ),
-        (
-            r'\bsão inadmissíveis\b',
-            'são admissíveis',
-            'inversão da vedação de provas ilícitas'
-        ),
-        (
-            r'\btrânsito em julgado de sentença penal condenatória\b',
-            'confirmação da condenação em julgamento de segundo grau',
-            'antecipação indevida da culpabilidade antes do trânsito em julgado'
-        ),
-        (
-            r'\btrânsito em julgado\b',
-            'decisão condenatória de primeira instância',
-            'violação do princípio da presunção de inocência'
-        ),
-        (
-            r'\bsem o devido processo legal\b',
-            'mediante processo sumário sem contraditório',
-            'supressão da garantia do devido processo legal'
-        ),
-        (
-            r'\bo civilmente identificado não será submetido a identificação criminal\b',
-            'o civilmente identificado será compulsoriamente submetido a identificação criminal em qualquer hipótese',
-            'violação da regra que dispensa identificação criminal de quem já possui identificação civil'
-        ),
-
-        # Prisão e Liberdade (Art. 5º, XI, LXVII, LXVIII, LXIX, LXXIII)
-        (
-            r'\bnão haverá prisão civil por dívida, salvo a do responsável pelo inadimplemento voluntário e inescusável de obrigação alimentícia e a do depositário infiel\b',
-            'é admitida a prisão civil por qualquer dívida bancária ou contratual inadimplida',
-            'generalização indevida da prisão civil, que só cabe para obrigação alimentícia'
-        ),
-        (
-            r'\bdurante o dia, por determinação judicial\b',
-            'a qualquer hora do dia ou da noite, por determinação da autoridade policial',
-            'violação da reserva de jurisdição e do limite diurno para cumprimento de mandado em domicílio'
-        ),
-        (
-            r'\bindependentemente de autorização\b',
-            'desde que previamente autorizada pelo órgão policial competente',
-            'exigência indevida de autorização para o direito constitucional de reunião'
-        ),
-        (
-            r'\bsem armas\b',
-            'ainda que os participantes portem armas de fogo registradas',
-            'admissão indevida de armas na reunião pacífica'
-        ),
-        (
-            r'\bprévio aviso à autoridade competente\b',
-            'prévia autorização judicial',
-            'a CF exige apenas prévio aviso, e não autorização judicial'
-        ),
-        (
-            r'\bqualquer cidadão é parte legítima para propor ação popular\b',
-            'qualquer pessoa jurídica ou estrangeiro não eleitor é parte legítima para propor ação popular',
-            'ação popular é remédio exclusivo de cidadão (pessoa física no gozo dos direitos políticos)'
-        ),
-        (
-            r'\bisen[ts]o de custas judiciais e do ônus da sucumbência\b',
-            'sujeito ao recolhimento prévio de custas judiciais e depósito recursal obrigatório',
-            'cobrança indevida em ação popular constitucionalmente gratuita'
-        ),
-        (
-            r'\bdireito líquido e certo\b',
-            'direito controvertido que demande perícia técnica e ampla dilação probatória',
-            'mandado de segurança exige prova pré-constituída e não admite dilação probatória'
-        ),
-        (
-            r'\bliberdade de locomoção\b',
-            'direito patrimonial ou funcional',
-            'habeas corpus destina-se exclusivamente a tutelar a liberdade de locomoção'
-        ),
-
-        # Prazos e Conectivos Legais Gerais
+        (r'\brespeito à integridade física e moral\b', 'respeito à integridade física, sendo dispensada a tutela de sua integridade moral', 'restrição indevida: a CF/88 assegura expressamente o respeito à integridade física E moral dos presos'),
+        (r'\bintegridade física e moral\b', 'integridade física, mas não à integridade moral', 'restrição indevida: a garantia constitucional abrange tanto a integridade física quanto a moral'),
+        (r'\bé assegurado aos presos o respeito\b', 'é facultado à administração penitenciária restringir o respeito', 'troca indevida de garantia fundamental cogente por faculdade administrativa'),
+        (r'\bestabelecimentos distintos, de acordo com a natureza do delito, a idade e o sexo\b', 'estabelecimentos unificados, independentemente da natureza do delito, idade ou sexo', 'supressão do critério constitucional de separação de presos por delito, idade e sexo'),
+        (r'\bpermanecer com seus filhos durante o período de amamentação\b', 'permanecer com seus filhos apenas nos primeiros 15 dias de vida, vedada a amamentação no presídio', 'supressão da garantia constitucional da presidiária de amamentar seus filhos'),
+        (r'\bsalvo em caso de guerra declarada\b', 'mesmo em caso de guerra declarada', 'supressão da única ressalva constitucional para a pena de morte no Brasil'),
+        (r'\bnenhum brasileiro será extraditado, salvo o naturalizado\b', 'qualquer brasileiro, inclusive o nato, poderá ser extraditado por crime comum', 'violação da imunidade absoluta do brasileiro nato contra extradição'),
+        (r'\bnenhum brasileiro será extraditado\b', 'o brasileiro nato poderá ser extraditado em caso de tráfico de drogas', 'o brasileiro nato NUNCA é extraditado, nem mesmo por tráfico de entorpecentes'),
+        (r'\bnão será concedida extradição de estrangeiro por crime político ou de opinião\b', 'será admitida a extradição de estrangeiro por crime puramente político ou de opinião', 'violação da vedação expressa de extradição por crime político ou de opinião'),
+        (r'\bsão inadmissíveis, no processo, as provas obtidas por meios ilícitos\b', 'são plenamente admissíveis no processo as provas obtidas por meios ilícitos, desde que úteis à verdade real', 'inversão da regra constitucional de inadmissibilidade absoluta das provas ilícitas'),
+        (r'\btrânsito em julgado de sentença penal condenatória\b', 'confirmação da condenação em julgamento de segundo grau', 'antecipação indevida da culpabilidade antes do trânsito em julgado'),
+        (r'\bsem o devido processo legal\b', 'mediante processo sumário sem contraditório', 'supressão da garantia do devido processo legal'),
+        (r'\bo civilmente identificado não será submetido a identificação criminal\b', 'o civilmente identificado será compulsoriamente submetido a identificação criminal em qualquer hipótese', 'violação da regra que dispensa identificação criminal de quem já possui identificação civil'),
+        (r'\bnão haverá prisão civil por dívida, salvo a do responsável pelo inadimplemento voluntário e inescusável de obrigação alimentícia e a do depositário infiel\b', 'é admitida a prisão civil por qualquer dívida bancária ou contratual inadimplida', 'generalização indevida da prisão civil, que só cabe para obrigação alimentícia'),
+        (r'\bdurante o dia, por determinação judicial\b', 'a qualquer hora do dia ou da noite, por determinação da autoridade policial', 'violação da reserva de jurisdição e do limite diurno para cumprimento de mandado em domicílio'),
+        (r'\bindependentemente de autorização\b', 'desde que previamente autorizada pelo órgão policial competente', 'exigência indevida de autorização para o direito constitucional de reunião'),
+        (r'\bsem armas\b', 'ainda que os participantes portem armas de fogo registradas', 'admissão indevida de armas na reunião pacífica'),
+        (r'\bprévio aviso à autoridade competente\b', 'prévia autorização judicial', 'a CF exige apenas prévio aviso, e não autorização judicial'),
+        (r'\bqualquer cidadão é parte legítima para propor ação popular\b', 'qualquer pessoa jurídica ou estrangeiro não eleitor é parte legítima para propor ação popular', 'ação popular é remédio exclusivo de cidadão (pessoa física no gozo dos direitos políticos)'),
+        (r'\bisen[ts]o de custas judiciais e do ônus da sucumbência\b', 'sujeito ao recolhimento prévio de custas judiciais e depósito recursal obrigatório', 'cobrança indevida em ação popular constitucionalmente gratuita'),
+        (r'\bdireito líquido e certo\b', 'direito controvertido que demande perícia técnica e ampla dilação probatória', 'mandado de segurança exige prova pré-constituída e não admite dilação probatória'),
+        (r'\bliberdade de locomoção\b', 'direito patrimonial ou funcional', 'habeas corpus destina-se exclusivamente a tutelar a liberdade de locomoção'),
         (r'\b24 \(vinte e quatro\) horas\b', '48 (quarenta e oito) horas', 'alteração indevida de prazo legal de 24h para 48h'),
         (r'\b48 \(quarenta e oito\) horas\b', '24 (vinte e quatro) horas', 'alteração indevida de prazo legal de 48h para 24h'),
-        (r'\b72 \(setenta e duas\) horas\b', '24 (vinte e quatro) horas', 'alteração de prazo legal de 72h para 24h'),
-        (r'\b12 \(doze\) horas\b', '24 (vinte e quatro) horas', 'alteração de prazo legal de 12h para 24h'),
         (r'\b30 \(trinta\) dias\b', '15 (quinze) dias', 'alteração indevida de prazo legal de 30 para 15 dias'),
         (r'\b15 \(quinze\) dias\b', '30 (trinta) dias', 'alteração indevida de prazo legal de 15 para 30 dias'),
         (r'\b120 \(cento e vinte\) dias\b', '60 (sessenta) dias', 'alteração do prazo decadencial do MS de 120 para 60 dias'),
@@ -1091,8 +924,7 @@ def alterar_texto_para_errado(texto):
         (r'\bdispensado\b', 'exigido', 'troca de dispensa legal por exigência indevida'),
         (r'\bobrigatório\b', 'facultativo', 'troca de obrigatoriedade legal por facultatividade'),
         (r'\bfacultativo\b', 'obrigatório', 'troca de faculdade legal por obrigatoriedade'),
-        (r'\bgratuito\b', 'oneroso, mediante pagamento de taxa', 'cobrança indevida em garantia constitucional gratuita'),
-        (r'\brazoável duração do processo\b', 'duração discricionária do processo', 'supressão da garantia da razoável duração processual')
+        (r'\bgratuito\b', 'oneroso, mediante pagamento de taxa', 'cobrança indevida em garantia constitucional gratuita')
     ]
 
     texto_modificado = texto
@@ -1104,7 +936,6 @@ def alterar_texto_para_errado(texto):
             tipo_troca = desc
             break
 
-    # Se não caiu em nenhuma substituição temática, aplica inversão sintática cirúrgica (com nexo garantido!)
     if not tipo_troca:
         inversoes_sintaticas = [
             (r'^É assegurado\b', 'Não é assegurado', 'inversão do direito assegurado para negativa'),
@@ -1114,17 +945,11 @@ def alterar_texto_para_errado(texto):
             (r'^São invioláveis\b', 'Não são invioláveis', 'supressão da inviolabilidade constitucional'),
             (r'^É inviolável\b', 'Não é inviolável', 'supressão da inviolabilidade constitucional'),
             (r'^É livre\b', 'Depende de autorização prévia', 'restrição indevida à liberdade constitucional'),
-            (r'^São livres\b', 'Dependem de autorização prévia', 'restrição indevida à liberdade constitucional'),
             (r'^É vedad[oa]\b', 'É permitido', 'inversão da vedação para permissão'),
             (r'^Não haverá\b', 'Será admitida a criação de', 'inversão da vedação constitucional expressa'),
             (r'^Nenhum brasileiro\b', 'Qualquer brasileiro', 'supressão da garantia constitucional'),
-            (r'^Ninguém será\b', 'Qualquer pessoa poderá ser', 'supressão de garantia individual'),
-            (r'^Compete privativamente\b', 'Compete concorrentemente ao Poder Legislativo e', 'troca de competência privativa por concorrente'),
             (r'\bnão será\b', 'será', 'supressão da partícula negativa "não"'),
-            (r'\bnão serão\b', 'serão', 'supressão da partícula negativa "não"'),
-            (r'\bnão pode\b', 'pode', 'supressão da vedação "não pode"'),
-            (r'\bnão podem\b', 'podem', 'supressão da vedação "não podem"'),
-            (r'\bnão deve\b', 'deve', 'supressão da proibição "não deve"')
+            (r'\bnão serão\b', 'serão', 'supressão da partícula negativa "não"')
         ]
         for padrao, sub, desc in inversoes_sintaticas:
             if re.search(padrao, texto_modificado, re.IGNORECASE):
@@ -1132,13 +957,11 @@ def alterar_texto_para_errado(texto):
                 tipo_troca = desc
                 break
 
-    # Fallback de segurança com pegadinha real de concurso (NUNCA insere palavras no meio)
     if not tipo_troca:
         texto_limpo_ponto = texto_modificado.rstrip('.')
-        texto_modificado = f"{texto_limpo_ponto}, ressalvada decisão discricionária em sentido contrário da autoridade administrativa."
-        tipo_troca = 'criação de ressalva discricionária não prevista na literalidade da lei'
+        texto_modificado = f"{texto_limpo_ponto}, ressalvada decisão discricionária em sentido contrário."
+        tipo_troca = 'criação de ressalva não prevista na literalidade da lei'
 
-    # Ajusta capitalização inicial
     if texto_modificado:
         texto_modificado = texto_modificado[0].upper() + texto_modificado[1:]
         if not texto_modificado.endswith('.'):
@@ -1146,18 +969,7 @@ def alterar_texto_para_errado(texto):
 
     return texto_modificado, tipo_troca
 
-# ==============================================================================
-# INTEGRAÇÃO GEMINI IA & OPENAI: EXEMPLOS PRÁTICOS DINÂMICOS DA VIDA REAL
-# ==============================================================================
-
 def obter_chave_gemini(chave_manual=None):
-    """
-    Recupera a chave Gemini API na seguinte ordem de prioridade:
-    1. Chave fornecida manualmente pelo usuário no input
-    2. Session state da sessão do Streamlit
-    3. Streamlit secrets (configurado no Streamlit Cloud dashboard)
-    4. Variáveis de ambiente (GEMINI_API_KEY ou GOOGLE_API_KEY)
-    """
     if chave_manual and str(chave_manual).strip():
         return str(chave_manual).strip()
     if st.session_state.get("gemini_api_key"):
@@ -1192,7 +1004,6 @@ def obter_chave_openai(chave_manual=None):
 def extrair_json_exemplo(raw_text, rotulo_dispositivo):
     if not raw_text:
         return None
-    # Remove marcações de código markdown se presentes
     clean = re.sub(r'```(?:json)?\s*', '', raw_text)
     clean = re.sub(r'```', '', clean).strip()
 
@@ -1216,56 +1027,38 @@ def extrair_json_exemplo(raw_text, rotulo_dispositivo):
     return None
 
 def gerar_exemplo_gemini(rotulo_dispositivo, texto_dispositivo, chave_manual=None):
-    """
-    Chama a Inteligência Artificial Gemini com tripla camada de redundância:
-    1. SDK google.genai moderno (v2.x)
-    2. SDK google.generativeai legado (v0.x)
-    3. Chamada HTTP REST nativa via urllib (sem dependência de bibliotecas, 100% à prova de falhas)
-    """
     chave = obter_chave_gemini(chave_manual)
     if not chave:
         return None
 
-    # Limpa texto para retirar cabeçalho de enunciado caso exista
     texto_puro = texto_dispositivo
     if "De acordo com o" in texto_puro:
         m = re.search(r':\s*"(.*)"\s*$', texto_puro, re.DOTALL)
         if m:
             texto_puro = m.group(1).strip()
-        else:
-            partes = texto_puro.split("\n\n")
-            if len(partes) > 1:
-                texto_puro = partes[-1].strip('"\n ')
 
     prompt = f"""Você é um jurista e professor de Direito para concursos públicos no Brasil.
 Dispositivo legal em estudo: {rotulo_dispositivo}
 Texto literal da Lei Seca: "{texto_puro}"
 
-Crie um exemplo prático e objetivo da vida real, extremamente claro e direto, demonstrando como esse dispositivo legal exato é aplicado na prática (em um tribunal, delegacia, repartição pública ou cotidiano do cidadão). Use nomes fictícios e uma narrativa simples de 2 a 3 frases.
-
-Responda EXCLUSIVAMENTE em formato JSON com as chaves:
+Crie um exemplo prático e objetivo da vida real, demonstrando como esse dispositivo legal é aplicado na prática. Responda EXCLUSIVAMENTE em formato JSON com as chaves:
 {{
-  "situacao_real": "Narrativa objetiva de 2 a 3 frases de um caso concreto real da vida cotidiana aplicando este dispositivo com nomes fictícios",
+  "situacao_real": "Narrativa objetiva de 2 a 3 frases de um caso concreto aplicando este dispositivo com nomes fictícios",
   "aplicacao_regra": "Como a regra foi aplicada ao caso concreto",
   "objetivo_regra": "Qual a finalidade protetiva ou jurídica da norma",
-  "bizu_memorizacao": "Uma dica rápida de memorização ou como as bancas de concurso tentam criar pegadinha neste dispositivo"
+  "bizu_memorizacao": "Uma dica rápida de memorização ou como as bancas de concurso criam pegadinha neste dispositivo"
 }}"""
 
-    # Estratégia 1: SDK google.genai moderno
     if genai and hasattr(genai, "Client"):
         try:
             client = genai.Client(api_key=chave)
-            resp = client.models.generate_content(
-                model="gemini-2.5-flash",
-                contents=prompt
-            )
+            resp = client.models.generate_content(model="gemini-2.5-flash", contents=prompt)
             res = extrair_json_exemplo(resp.text, rotulo_dispositivo)
             if res:
                 return res
-        except Exception as e:
-            logging.info(f"Tentativa com google.genai falhou: {e}")
+        except Exception:
+            pass
 
-    # Estratégia 2: SDK google.generativeai legado
     if genai and hasattr(genai, "configure"):
         try:
             genai.configure(api_key=chave)
@@ -1274,32 +1067,23 @@ Responda EXCLUSIVAMENTE em formato JSON com as chaves:
             res = extrair_json_exemplo(resp.text, rotulo_dispositivo)
             if res:
                 return res
-        except Exception as e:
-            logging.info(f"Tentativa com google.generativeai falhou: {e}")
+        except Exception:
+            pass
 
-    # Estratégia 3: Chamada REST nativa via urllib (funciona em qualquer Python, sem dependência externa)
     for model_name in ["gemini-2.5-flash", "gemini-1.5-flash", "gemini-2.0-flash"]:
         try:
             url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={chave}"
             headers = {"Content-Type": "application/json"}
-            payload = {
-                "contents": [{"parts": [{"text": prompt}]}],
-                "generationConfig": {"temperature": 0.2}
-            }
-            req = urllib.request.Request(
-                url,
-                data=json.dumps(payload).encode("utf-8"),
-                headers=headers,
-                method="POST"
-            )
+            payload = {"contents": [{"parts": [{"text": prompt}]}], "generationConfig": {"temperature": 0.2}}
+            req = urllib.request.Request(url, data=json.dumps(payload).encode("utf-8"), headers=headers, method="POST")
             with urllib.request.urlopen(req, timeout=12) as response:
                 result_raw = json.loads(response.read().decode("utf-8"))
                 candidate = result_raw.get("candidates", [])[0]["content"]["parts"][0]["text"]
                 res = extrair_json_exemplo(candidate, rotulo_dispositivo)
                 if res:
                     return res
-        except Exception as e_rest:
-            logging.warning(f"Chamada REST com {model_name} falhou: {e_rest}")
+        except Exception:
+            pass
 
     return None
 
@@ -1313,7 +1097,7 @@ def gerar_exemplo_openai(rotulo_dispositivo, texto_dispositivo, chave_manual=Non
 Dispositivo legal: {rotulo_dispositivo}
 Texto literal da Lei: "{texto_puro}"
 
-Crie um exemplo prático e objetivo da vida real (2 a 3 frases) com caso concreto aplicando a regra.
+Crie um exemplo prático da vida real (2 a 3 frases) com caso concreto aplicando a regra.
 Responda em JSON puro:
 {{
   "situacao_real": "...",
@@ -1322,1488 +1106,491 @@ Responda em JSON puro:
   "bizu_memorizacao": "..."
 }}"""
         url = "https://api.openai.com/v1/chat/completions"
-        headers = {
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {chave}"
-        }
-        payload = {
-            "model": "gpt-4o-mini",
-            "messages": [{"role": "user", "content": prompt}],
-            "temperature": 0.2,
-            "response_format": {"type": "json_object"}
-        }
+        headers = {"Content-Type": "application/json", "Authorization": f"Bearer {chave}"}
+        payload = {"model": "gpt-4o-mini", "messages": [{"role": "user", "content": prompt}], "temperature": 0.2, "response_format": {"type": "json_object"}}
         req = urllib.request.Request(url, data=json.dumps(payload).encode("utf-8"), headers=headers, method="POST")
         with urllib.request.urlopen(req, timeout=12) as resp:
             data = json.loads(resp.read().decode("utf-8"))
             content = data["choices"][0]["message"]["content"]
             return extrair_json_exemplo(content, rotulo_dispositivo)
-    except Exception as e:
-        logging.warning(f"Erro OpenAI: {e}")
+    except Exception:
         return None
 
-# ==============================================================================
-# MOTOR HEURÍSTICO CONTEXTUAL JURÍDICO (COBERTURA TOTAL - NUNCA GERA TEXTO GENÉRICO)
-# ==============================================================================
-
 def gerar_exemplo_dinamico_heuristico(art_num, texto_original):
-    """
-    Analisa sintaticamente o texto do dispositivo legal para extrair atores, verbos,
-    prazos e vedações, construindo um exemplo com personagens e caso concreto específico,
-    garantindo que mesmo sem internet/IA o usuário NUNCA receba uma resposta estática vazia.
-    """
     txt = texto_original.strip()
     txt_lower = txt.lower()
 
-    # Detecta prazos específicos
     m_prazo = re.search(r'(\d+)\s*\(([^)]+)\)\s*(dias|horas|meses|anos)', txt, re.IGNORECASE)
     if not m_prazo:
         m_prazo = re.search(r'(\d+)\s*(dias|horas|meses|anos)', txt, re.IGNORECASE)
-    
     prazo_str = m_prazo.group(0) if m_prazo else None
 
-    # Detecta se é proibição, dever ou faculdade
     eh_vedacao = any(w in txt_lower for w in ["vedado", "proibido", "não poderá", "não haverá", "inadmissível", "é vedada"])
     eh_obrigacao = any(w in txt_lower for w in ["deverá", "obrigatório", "compete", "incumbe", "é obrigado"])
     eh_faculdade = any(w in txt_lower for w in ["poderá", "facultado", "faculdade", "a critério"])
 
-    # Identifica o ator principal provável
     ator = "O cidadão Pedro"
-    if any(w in txt_lower for w in ["servidor", "cargo público", "função pública", "investidura"]):
+    if any(w in txt_lower for w in ["servidor", "cargo público", "função pública"]):
         ator = "O servidor público Marcos"
-    elif any(w in txt_lower for w in ["juiz", "magistrado", "tribunal", "judiciário"]):
-        ator = "O juiz titular da comarca"
-    elif any(w in txt_lower for w in ["polícia", "policial", "delegado", "autoridade policial"]):
+    elif any(w in txt_lower for w in ["juiz", "magistrado", "tribunal"]):
+        ator = "O magistrado titular da comarca"
+    elif any(w in txt_lower for w in ["polícia", "delegado", "autoridade policial"]):
         ator = "A autoridade policial em investigação"
-    elif any(w in txt_lower for w in ["preso", "apenado", "reeducando", "pena", "detento"]):
+    elif any(w in txt_lower for w in ["preso", "apenado", "detento"]):
         ator = "O custodiado Lucas"
-    elif any(w in txt_lower for w in ["presidente", "ministro", "executivo"]):
-        ator = "A autoridade do Poder Executivo"
-    elif any(w in txt_lower for w in ["empresa", "fornecedor", "consumidor", "contratada"]):
-        ator = "A sociedade empresária contratada"
 
-    # Constrói narrativa personalizada baseada no conteúdo
     if eh_vedacao:
-        situacao = f"Em uma situação prática, uma autoridade tentou impor determinada exigência a {ator}. Contudo, por força expressa do {art_num}, a conduta foi barrada imediatamente por configurar vedação legal expressa."
-        aplicacao = f"• **Aplicação no {art_num}:** Impede atos arbitrários ao estabelecer proibição imperativa que vincula todos os órgãos públicos e particulares."
+        situacao = f"Em uma situação prática, tentou-se impor determinada exigência a {ator}. Contudo, por força expressa do {art_num}, a conduta foi barrada por configurar vedação legal expressa."
+        aplicacao = f"• **Aplicação no {art_num}:** Impede atos arbitrários ao estabelecer proibição imperativa."
         objetivo = "Garantir a preservação dos direitos fundamentais e evitar abusos de poder pelo Estado."
-        bizu = f"Pegadinha de banca: costumam trocar a vedação por permissão condicional ou criar exceções inexistentes neste dispositivo ({art_num})."
+        bizu = f"Pegadinha de banca: costumam trocar a vedação por permissão condicional neste dispositivo ({art_num})."
     elif eh_obrigacao:
         if prazo_str:
-            situacao = f"{ator} foi intimado a cumprir uma determinação formal no prazo legal improrrogável de {prazo_str}. Caso o ato não seja praticado nesse lapso temporal, opera-se a preclusão e perda da faculdade processual/administrativa."
+            situacao = f"{ator} foi intimado a cumprir uma determinação formal no prazo legal improrrogável de {prazo_str}."
             aplicacao = f"• **Aplicação no {art_num}:** Impõe o cumprimento cogente no prazo estrito de {prazo_str}."
-            objetivo = "Assegurar a celeridade, a marcha regular do procedimento e a segurança jurídica."
-            bizu = f"A banca costuma alterar o prazo de '{prazo_str}' por outro valor similar para induzir o candidato ao erro."
+            objetivo = "Assegurar a celeridade e a segurança jurídica."
+            bizu = f"A banca costuma alterar o prazo de '{prazo_str}' por outro valor similar."
         else:
-            situacao = f"Diante de um caso concreto perante a administração, {ator} exerceu pretensão amparada na norma, sendo o órgão competente obrigado a cumprir a diretriz por expressa determinação cogente."
-            aplicacao = f"• **Aplicação no {art_num}:** A regra possui caráter vinculante ('deverá'), não cabendo juízo de discricionariedade à autoridade."
+            situacao = f"Diante de um caso concreto, {ator} exerceu pretensão amparada na norma, sendo o órgão competente obrigado a cumprir a diretriz."
+            aplicacao = f"• **Aplicação no {art_num}:** A regra possui caráter vinculante ('deverá')."
             objetivo = "Submeter todos os atos públicos ao império da legalidade estrita."
             bizu = "A banca adora trocar o termo vinculante ('deverá') por faculdade discricionária ('poderá')."
     elif eh_faculdade:
-        situacao = f"Analisando as circunstâncias de conveniência e oportunidade do caso, {ator} exerceu a prerrogativa prevista na lei de forma motivada, sem que houvesse ilegalidade na escolha discricionária."
-        aplicacao = f"• **Aplicação no {art_num}:** Confere faculdade legítima de atuação, respeitados os princípios gerais de proporcionalidade e razoabilidade."
+        situacao = f"Analisando as circunstâncias de conveniência e oportunidade, {ator} exerceu a prerrogativa prevista na lei de forma motivada."
+        aplicacao = f"• **Aplicação no {art_num}:** Confere faculdade legítima de atuação, respeitados a proporcionalidade e a razoabilidade."
         objetivo = "Conferir flexibilidade técnica e discricionariedade regulada à aplicação prática."
         bizu = "Cuidado com questões que afirmam ser 'obrigatória' uma conduta que a lei qualifica como mera faculdade."
     else:
-        # Extrai os primeiros 100 caracteres do texto para contextualizar
         resumo_regra = txt[:110] + "..." if len(txt) > 110 else txt
-        situacao = f"Em um litígio sob exame judicial, {ator} postulou a incidência direta desta regra: '{resumo_regra}'. O magistrado acolheu o pedido exatamente nos termos literais positivados."
-        aplicacao = f"• **Aplicação no {art_num}:** Subordina os atos da vida civil e pública à literalidade desta norma."
-        objetivo = "Assegurar a previsibilidade dos comportamentos sociais e a tutela jurisdicional efetiva."
-        bizu = f"Em provas de lei seca, a cobrança do {art_num} é literal: atente-se aos conectivos 'e/ou', às ressalvas ('salvo') e às condições expressas."
+        situacao = f"Em litígio sob exame, {ator} postulou a incidência direta desta regra: '{resumo_regra}', acolhida nos termos literais."
+        aplicacao = f"• **Aplicação no {art_num}:** Subordina os atos à literalidade desta norma."
+        objetivo = "Assegurar a previsibilidade dos comportamentos sociais."
+        bizu = f"Em provas de lei seca, a cobrança do {art_num} é literal: atente-se às palavras-chave e ressalvas."
 
     return situacao, aplicacao, objetivo, bizu
 
-def extrair_exemplo_objetivo_personalizado(art_num, texto_original):
-    """
-    Biblioteca rica de casos práticos reais e contextualizados para todos os temas
-    de Direito Constitucional, Penal, Processual Penal e Administrativo.
-    """
-    txt = texto_original.lower()
-    art_lower = art_num.lower()
-
-    # Art. 5º, I - Igualdade entre homens e mulheres
-    if "art. 5" in art_lower and ("inciso i\b" in art_lower or "i -" in art_lower) or ("homens e mulheres são iguais" in txt):
-        return (
-            "Um edital de concurso público para investigador policial fixou pontuação salarial distinta para homens e mulheres no mesmo cargo e com a mesma carga horária. Uma candidata impetrou mandado de segurança e anulou a cláusula com base na igualdade constitucional absoluta de direitos e obrigações.",
-            f"• **Aplicação no {art_num}:** Veda qualquer discriminação arbitrária de gênero na fixação de vencimentos e atribuições públicas.",
-            "Garantir a igualdade substancial e formal entre homens e mulheres no ordenamento brasileiro.",
-            "Diferenciações entre homens e mulheres só são válidas quando justificadas por critérios biológicos razoáveis (ex: teste de aptidão física adaptado ou licença-maternidade)."
-        )
-
-    # Art. 5º, II - Princípio da Legalidade
-    if "art. 5" in art_lower and ("inciso ii\b" in art_lower or "ii -" in art_lower) or ("virtude de lei" in txt and "obrigado a fazer" in txt):
-        return (
-            "Um fiscal municipal aplicou multa de trânsito a um motorista baseando-se unicamente em uma portaria interna da secretaria municipal, sem nenhuma previsão em lei formal aprovada pela Câmara. A Justiça anulou a sanção, pois ninguém é obrigado a cumprir dever que não decorra de lei formal.",
-            f"• **Aplicação no {art_num}:** Princípio da legalidade estrita — para o particular, tudo o que não é proibido por lei é permitido; já o poder público só pode agir onde a lei expressamente autoriza.",
-            "Proteger a esfera de autonomia e liberdade do cidadão contra imposições arbitrárias do Poder Executivo.",
-            "Para os cidadãos vigora a autonomia da vontade (fazer o que a lei não proíbe); para a Administração, vigora a legalidade estrita (fazer apenas o que a lei autoriza)."
-        )
-
-    # Art. 5º, III - Vedação à Tortura e Tratamento Desumano
-    if "art. 5" in art_lower and ("inciso iii\b" in art_lower or "iii -" in art_lower) or ("submetido a tortura" in txt or "tratamento desumano" in txt):
-        return (
-            "Policiais civis agrediram fisicamente e ameaçaram um suspeito durante o interrogatório em delegacia para forçar uma confissão de roubo. O juiz declarou a nulidade absoluta da confissão, determinou a soltura imediata do réu e ordenou a instauração de ação penal contra os agentes por crime inafiançável de tortura.",
-            f"• **Aplicação no {art_num}:** Proibição absoluta e indelegável de tortura ou tratamento cruel, independentemente da gravidade do crime investigado.",
-            "Salvaguardar a dignidade da pessoa humana e a integridade física de qualquer indivíduo perante o aparato estatal.",
-            "O direito de não ser torturado é absoluto no Brasil — não admite exceções nem mesmo em estado de defesa, sítio ou guerra declarada."
-        )
-
-    # Art. 5º, IV - Livre Manifestação do Pensamento e Vedação ao Anonimato
-    if "art. 5" in art_lower and ("inciso iv\b" in art_lower or "iv -" in art_lower) or ("manifestação do pensamento" in txt and "vedado o anonimato" in txt):
-        return (
-            "Um cidadão publicou em rede social críticas severas à gestão de um prefeito, assinando com seu nome civil real e CPF. O prefeito pediu a censura do post, mas a Justiça negou porque a manifestação é livre quando identificada, ressalvado eventual pedido de indenização caso comprovada calúnia.",
-            f"• **Aplicação no {art_num}:** Protege a livre crítica e o debate público, proibindo estritamente denúncias anônimas como único fundamento de sanções estatais.",
-            "Promover o pluralismo político e garantir que a liberdade de expressão não seja usada de forma covarde para difamação anônima.",
-            "A banca adora dizer que 'o anonimato é admitido em certas hipóteses' (ERRADO! O anonimato é taxativamente VEDADO pela CF)."
-        )
-
-    # Art. 5º, V - Direito de Resposta
-    if "art. 5" in art_lower and ("inciso v\b" in art_lower or "v -" in art_lower) or ("direito de resposta" in txt):
-        return (
-            "Um telejornal noticiou incorretamente que um empresário local participava de fraude tributária. O empresário obteve na Justiça o direito de veicular sua resposta no mesmo horário e com o mesmo tempo do telejornal, além de receber indenização pecuniária por danos morais à sua imagem comercial.",
-            f"• **Aplicação no {art_num}:** Garante o contraditório social através de resposta proporcional ao agravo, cumulável com indenização material e moral.",
-            "Restaurar a verdade pública sobre a honra do indivíduo ofendido pelos meios de comunicação.",
-            "O direito de resposta é PROPORCIONAL AO AGRAVO e CUMULÁVEL com indenização por dano material, moral ou à imagem."
-        )
-
-    # Art. 5º, VI, VII, VIII - Liberdade Religiosa e Escusa de Consciência
-    if any(k in txt for k in ["liberdade de consciência e de crença", "livre exercício dos cultos", "escusa de consciência", "prestação alternativa"]):
-        return (
-            "Um jovem adventista convocado para o alistamento militar obrigatório declarou que suas convicções religiosas impedem o porte de armas e o serviço militar aos sábados. As Forças Armadas foram obrigadas a conferir-lhe prestação de serviço alternativo em atividades civis durante os dias úteis.",
-            f"• **Aplicação no {art_num}:** Protege a liberdade religiosa e garante que ninguém será privado de direitos por convicção de fé se cumprir a prestação alternativa fixada em lei.",
-            "Assegurar a laicidade do Estado e a convivência plural de todas as crenças e filosofias.",
-            "A perda de direitos políticos só ocorre se o indivíduo invocar escusa de consciência E se RECUSAR a cumprir a prestação alternativa fixada em lei (CF, Art. 15, IV)."
-        )
-
-    # Art. 5º, IX, X - Intimidade, Vida Privada, Honra e Imagem
-    if any(k in txt for k in ["intimidade", "vida privada", "honra e a imagem", "indenização pelo dano material ou moral"]):
-        return (
-            "Um hospital privado teve seu banco de dados invadido e fotos íntimas de prontuários cirúrgicos de pacientes vazaram na internet por negligência na segurança digital. Uma paciente acionou o hospital e foi indenizada em R$ 80.000 por violação direta à sua intimidade e honra.",
-            f"• **Aplicação no {art_num}:** Tutela a esfera privada e impõe responsabilidade civil com dever de reparação por violação da imagem.",
-            "Preservar a intimidade do indivíduo contra intromissões indevidas de particulares ou do poder estatal.",
-            "São invioláveis a intimidade, a vida privada, a honra e a imagem das pessoas, assegurado o direito à indenização pelo dano material ou moral decorrente de sua violação."
-        )
-
-    # Art. 5º, XI - Inviolabilidade de domicílio
-    if "xi" in art_lower or any(k in txt for k in ["domicílio", "casa é asilo", "inviolável"]):
-        return (
-            "Policiais desconfiam de entorpecentes em uma residência. À noite, eles não podem entrar sem autorização do morador, a não ser em flagrante delito, desastre ou para prestar socorro. Durante o dia, podem cumprir mandado judicial mesmo sem permissão do residente.",
-            f"• **Aplicação no {art_num}:** Protege a intimidade doméstica contra invasões arbitrárias do Estado.",
-            "Garantir que a residência seja um refúgio inviolável do indivíduo.",
-            "Por determinação judicial: SOMENTE DURANTE O DIA. A qualquer hora (dia ou noite): flagrante, desastre ou socorro."
-        )
-
-    # Art. 5º, XII - Sigilo de correspondência e telefônico
-    if "xii" in art_lower or any(k in txt for k in ["sigilo da correspondência", "comunicações telegráficas", "dados e das comunicações telefônicas"]):
-        return (
-            "A polícia realizou escuta telefônica de um investigado por homicídio com base apenas em ordem do delegado, sem prévia autorização judicial. O juiz declarou a gravação ilícita e ordenou o desentranhamento do processo, pois a interceptação telefônica exige estrita reserva de jurisdição.",
-            f"• **Aplicação no {art_num}:** Comunicações telefônicas só podem ser interceptadas por ordem judicial, para fins de investigação criminal ou instrução processual penal.",
-            "Preservar a intimidade das conversas e evitar espionagem estatal sem controle de magistrado.",
-            "Interceptação telefônica: SOMENTE por ordem judicial, para investigação criminal ou processo penal (NUNCA para processo civil ou administrativo)."
-        )
-
-    # Art. 5º, XVI - Direito de Reunião
-    if "xvi" in art_lower or any(k in txt for k in ["reunir", "reunião", "sem armas", "abertos ao público", "prévio aviso"]):
-        return (
-            "Estudantes e trabalhadores organizam passeata pacífica em praça pública contra o aumento da tarifa de transporte. Eles NÃO precisam pedir permissão ao prefeito ou ao comandante da PM; basta aviso prévio à autoridade para organizar o trânsito e evitar sobreposição com outro evento marcado.",
-            f"• **Aplicação no {art_num}:** O direito de reunião independe de autorização do Poder Público; requer apenas que seja pacífica, sem armas e com aviso prévio.",
-            "Impedir a censura governamental a manifestações cívicas e garantir a harmonia com o trânsito da cidade.",
-            "Pegadinha clássica: 'exige prévia autorização da polícia' (ERRADO!). É INDEPENDENTE de autorização, mas EXIGE PRÉVIO AVISO."
-        )
-
-    # Art. 5º, XVII a XXI - Direito de Associação
-    if any(k in txt for k in ["associação", "associar-se", "dissolução compulsória", "suspensão de suas atividades"]):
-        return (
-            "Um grupo de moradores funda uma associação de bairro sem pedir licença à prefeitura. Meses depois, o prefeito tentou fechar a entidade por decreto. A Justiça declarou o decreto nulo: a dissolução de associação exige decisão judicial com trânsito em julgado.",
-            f"• **Aplicação no {art_num}:** A criação de associações independe de autorização estatal, e sua dissolução forçada exige ordem judicial transitada em julgado.",
-            "Garantir a autonomia da sociedade civil contra o arbítrio governamental.",
-            "Para SUSPENDER atividades da associação: basta decisão judicial simples. Para DISSOLVER compulsoriamente: EXIGE TRÂNSITO EM JULGADO."
-        )
-
-    # Art. 5º, XXII a XXVI - Propriedade, Desapropriação e Pequena Propriedade Rural
-    if any(k in txt for k in ["direito de propriedade", "função social", "desapropriação por necessidade", "pequena propriedade rural", "requisição administrativa"]):
-        return (
-            "Um pequeno agricultor cultiva milho em sítio familiar de 20 hectares para subsistência de sua família. Ele contraiu dívida para comprar sementes e o banco pediu a penhora da terra. O juiz negou a penhora com base no Art. 5º, XXVI, pois a pequena propriedade rural trabalhada pela família é impenhorável por dívidas produtivas.",
-            f"• **Aplicação no {art_num}:** Protege o patrimônio mínimo de sobrevivência da família camponesa contra execuções bancárias.",
-            "Fomentar a agricultura familiar e assegurar a dignidade e o trabalho no campo.",
-            "Pequena propriedade rural: trabalhada pela família + dívida da atividade produtiva = IMPENHORÁVEL."
-        )
-
-    # Art. 5º, XXXVIII - Tribunal do Júri
-    if "xxxviii" in art_lower or any(k in txt for k in ["tribunal do júri", "plenitude de defesa", "sigilo das votações", "soberania dos veredictos", "crimes dolosos contra a vida"]):
-        return (
-            "Um indivíduo é acusado de homicídio tentado após desferir facadas em um vizinho em briga de bar. O juiz togado não pode condená-lo sozinho no mérito: ele profere pronúncia e remete o acusado a julgamento perante 7 jurados populares no Tribunal do Júri.",
-            f"• **Aplicação no {art_num}:** Competência constitucional privativa do Júri para julgar crimes dolosos contra a vida (homicídio, infanticídio, aborto, induzimento ao suicídio).",
-            "Garantir o julgamento de crimes contra a vida por pares da própria sociedade com soberania de veredicto.",
-            "O Tribunal do Júri julga apenas crimes DOLOSOS contra a vida (latrocínio, embora envolva morte, é crime contra o patrimônio julgado por juiz singular, Súmula 603 do STF)."
-        )
-
-    # Art. 5º, XXXIX, XL - Legalidade Penal e Irretroatividade
-    if any(k in txt for k in ["não há crime sem lei anterior", "não há pena sem prévia", "lei penal não retroagirá", "salvo para beneficiar o réu"]):
-        return (
-            "Um indivíduo foi condenado a 4 anos por um crime. Meses após a sentença, o Congresso aprovou nova lei reduzindo a pena do mesmo delito para 2 anos. O juiz da execução penal aplicou a nova lei retroativamente, reduzindo a pena do condenado para 2 anos de forma imediata.",
-            f"• **Aplicação no {art_num}:** A lei penal mais benéfica sempre retroage para alcançar fatos e processos anteriores, inclusive já transitados em julgado.",
-            "Impedir que o Estado mantenha penas mais gravosas quando a própria sociedade reduziu o rigor punitivo.",
-            "A lei penal NÃO retroage, SALVO para beneficiar o réu (novatio legis in mellius ou abolitio criminis retroagem SEMPRE)."
-        )
-
-    # Art. 5º, XLII, XLIII, XLIV - Racismo, 3T+H e Grupos Armados
-    if any(k in txt for k in ["prática do racismo", "tortura", "tráfico ilícito de entorpecentes", "terrorismo", "hediondos", "grupos armados"]):
-        return (
-            "Um homem profere ofensas racistas contra atendente de loja em shopping. Ele é preso em flagrante. O delegado não pode arbitrar fiança, e o advogado sabe que a ação penal não prescreverá mesmo se passarem 20 anos, pois racismo é inafiançável e imprescritível.",
-            f"• **Aplicação no {art_num}:** Racismo e Ação de grupos armados são INAFIANÇÁVEIS e IMPRESCRITÍVEIS. Já os 3T+H (tortura, tráfico, terrorismo e hediondos) são inafiançáveis e insuscetíveis de graça/anistia (mas prescrevem!).",
-            "Combater com o mais alto rigor constitucional a discriminação racial e os crimes mais hediondos.",
-            "Mnemônico de ouro: RACISMO e GRUPOS ARMADOS = RAÇUDOS = IMPRESCRITÍVEIS e INAFIANÇÁVEIS. 3T+H = INAFIANÇÁVEIS e INSUSCETÍVEIS de graça/anistia."
-        )
-
-    # Art. 5º, XLVII - Penas vedadas (Morte, Perpétua, Banimento, Cruéis, Trabalhos forçados)
-    if "xlvii" in art_lower or any(k in txt for k in ["de morte", "pena de morte", "guerra declarada", "caráter perpétuo", "perpétu", "trabalhos forçados", "banimento", "cruéis", "não haverá penas"]):
-        return (
-            "No Brasil, o Código Penal Militar prevê pena de morte por fuzilamento apenas se houver guerra formalmente declarada pelo Presidente com autorização do Congresso Nacional. Em tempo de paz, nenhuma autoridade judicial pode aplicar pena de morte ou de caráter perpétuo.",
-            f"• **Aplicação no {art_num}:** Impede punições desumanas, cruéis ou perpétuas no sistema penal brasileiro comum.",
-            "Proteger a dignidade da pessoa humana e evitar punições estatais irreversíveis e cruéis.",
-            "Banca adora dizer que 'não há pena de morte em hipótese alguma' (FALSO, há em caso de guerra declarada) ou que 'pena de banimento é permitida' (FALSO, é expressamente vedada)."
-        )
-
-    # Art. 5º, XLVIII - Estabelecimentos distintos
-    if "xlviii" in art_lower or any(k in txt for k in ["estabelecimentos distintos", "natureza do delito", "sexo do apenado"]):
-        return (
-            "Um jovem de 19 anos condenado por furto simples não violento não pode ser colocado na mesma ala de reincidentes de alta periculosidade de 40 anos condenados por latrocínio, e homens e mulheres devem cumprir pena em locais separados.",
-            f"• **Aplicação no {art_num}:** O Estado deve individualizar a execução penal conforme o sexo, a idade e a natureza do delito.",
-            "Resguardar a integridade dos reeducandos e evitar aliciamento de criminosos primários.",
-            "Critérios constitucionais de separação: natureza do delito, idade e sexo do apenado."
-        )
-
-    # Art. 5º, XLIX - Integridade física e moral dos presos
-    if "xlix" in art_lower or any(k in txt for k in ["integridade física e moral", "assegurado aos presos", "respeito à integridade física"]):
-        return (
-            "Durante uma revista em unidade prisional, detentos imobilizados sofreram agressões verbais e físicas por agentes de segurança. O Ministério Público instaurou ação penal, pois a Constituição assegura que a privação de liberdade jamais retira do preso o direito ao respeito à sua integridade física e moral.",
-            f"• **Aplicação no {art_num}:** O Estado tem o dever indeclinável de custódia e garantia da incolumidade física e da dignidade moral dos apenados.",
-            "Impedir violências, torturas e desumanização no cárcere, preservando o princípio da dignidade da pessoa humana.",
-            "Pegadinha de prova: bancas costumam afirmar que 'apenas a integridade física é assegurada' ou que 'a garantia moral pode ser suspensa por sanção disciplinar'. FALSO! A garantia constitucional protege a integridade FÍSICA E MORAL do preso."
-        )
-
-    # Art. 5º, L - Presidiárias e amamentação
-    if " l" in art_lower or any(k in txt for k in ["presidiária", "amamenta", "filhos durante o período"]):
-        return (
-            "Uma detenta deu à luz durante o cumprimento de pena em presídio feminino. O estabelecimento prisional é obrigado a dispor de creche/berçário para que ela amamente o bebê durante os primeiros meses.",
-            f"• **Aplicação no {art_num}:** Direito subjetivo da mãe presa e do recém-nascido de permanecerem juntos durante a amamentação.",
-            "Garantir a saúde, nutrição e proteção da infância do recém-nascido independentemente da condenação da mãe.",
-            "O direito protege a criança e não pode sofrer corte por falta disciplinar da mãe."
-        )
-
-    # Art. 5º, LI / LII - Extradição
-    if "li" in art_lower or "lii" in art_lower or any(k in txt for k in ["extradit", "brasileiro nato", "naturalizado"]):
-        return (
-            "Roberto, brasileiro nato, cometeu homicídio na Itália e fugiu para o Brasil. O STF nega qualquer pedido de extradição, pois nato JAMAIS é extraditado (responderá pelo crime perante a Justiça brasileira). Já Pierre, francês naturalizado brasileiro, pode ser extraditado por crime comum praticado ANTES da naturalização ou por tráfico de drogas A QUALQUER TEMPO.",
-            f"• **Aplicação no {art_num}:** Garante imunidade absoluta de extradição ao brasileiro nato e fixa os 2 casos estritos do naturalizado.",
-            "Proteger os nacionais da jurisdição punitiva estrangeira em território nacional.",
-            "Nato NUNCA é extraditado. Naturalizado pode em 2 casos: crime comum ANTES da naturalização OU tráfico de entorpecentes a qualquer tempo."
-        )
-
-    # Art. 5º, LVI - Provas ilícitas
-    if "lvi" in art_lower or any(k in txt for k in ["provas obtidas por meios ilícitos", "inadmissíveis"]):
-        return (
-            "Investigadores invadiram um escritório sem mandado judicial à noite e fotografaram planilhas de propina. Na ação penal, o juiz declarou a prova nula de pleno direito e mandou trancar o processo, pois provas colhidas por meio ilícito não podem fundamentar condenação.",
-            f"• **Aplicação no {art_num}:** Teoria dos frutos da árvore envenenada: a prova ilícita contamina todas as demais provas que dela derivarem exclusivamente.",
-            "Desestimular autoridades a violarem direitos fundamentais na busca por evidências penais.",
-            "São inadmissíveis no processo as provas obtidas por meios ilícitos (CF, Art. 5º, LVI)."
-        )
-
-    # Art. 5º, LVII - Presunção de inocência
-    if "lvii" in art_lower or any(k in txt for k in ["transitou em julgado", "culpado", "presunção de inocência", "trânsito em julgado"]):
-        return (
-            "Um réu foi condenado em 1ª e 2ª instâncias, mas recorreu ao STJ e STF. Ele não pode ser tratado como culpado nem ter o nome lançado no rol dos culpados antes da decisão final irrecorrível.",
-            f"• **Aplicação no {art_num}:** Presunção constitucional de não culpabilidade até o trânsito em julgado de sentença penal condenatória.",
-            "Evitar que o Estado aplique estigmas e consequências definitivas antes do esgotamento recursal.",
-            "Ninguém será considerado culpado até o TRÂNSITO EM JULGADO de sentença penal condenatória."
-        )
-
-    # Art. 5º, LXVII - Prisão civil por dívida
-    if "lxvii" in art_lower or any(k in txt for k in ["prisão civil", "alimentícia", "depositário infiel"]):
-        return (
-            "Carlos deixa de pagar voluntariamente 3 parcelas de pensão alimentícia devidas ao filho menor. O juiz decreta a prisão civil de 30 a 90 dias em regime fechado separado dos presos comuns.",
-            f"• **Aplicação no {art_num}:** Apenas a obrigação alimentar enseja prisão civil hoje. O depositário infiel não pode mais ser preso (Súmula Vinculante 25).",
-            "Coagir o devedor a honrar a subsistência de quem necessita de alimentos.",
-            "Na letra da CF: pensão e depositário infiel. Na prática e jurisprudência (SV 25): apenas devedor de alimentos."
-        )
-
-    # Art. 5º, LXVIII a LXXIII - Remédios Constitucionais (HC, MS, HD, Ação Popular)
-    if any(k in txt for k in ["habeas corpus", "locomoção", "liberdade de ir e vir"]):
-        return (
-            "Um cidadão tem prisão preventiva decretada por autoridade incompetente. O advogado impetra habeas corpus diretamente no Tribunal para expedição imediata de alvará de soltura.",
-            f"• **Aplicação no {art_num}:** Remédio constitucional gratuito para salvaguardar a liberdade física de locomoção contra ilegalidade ou abuso de poder.",
-            "Restabelecer a liberdade de ir e vir cerceada por arbítrio.",
-            "Ação gratuita, não exige advogado e não cabe para punições disciplinares militares quanto ao mérito."
-        )
-
-    if any(k in txt for k in ["mandado de segurança", "direito líquido e certo"]):
-        return (
-            "Um candidato aprovado em 1º lugar em concurso público dentro das vagas do edital vê a validade expirar sem nomeação. Cabe Mandado de Segurança provando de plano o direito líquido e certo à posse com documentos pré-constituídos.",
-            f"• **Aplicação no {art_num}:** Protege direitos documentados e incontroversos não amparados por habeas corpus ou habeas data.",
-            "Sanar ilegalidades administrativas evidentes com celeridade processual.",
-            "Prazo decadencial de 120 dias a contar da ciência do ato impugnado. Não admite dilação probatória (perícia/testemunhas)."
-        )
-
-    if any(k in txt for k in ["ação popular", "anular ato lesivo", "patrimônio público"]):
-        return (
-            "Um eleitor descobre que o prefeito contratou obra superfaturada favorecendo parente. Como cidadão no gozo dos direitos políticos, ele ingressa com Ação Popular para anular o contrato e ressarcir o erário.",
-            f"• **Aplicação no {art_num}:** Instrumento de controle social direto da moralidade e do patrimônio público por qualquer cidadão.",
-            "Permitir o controle social direto dos atos administrativos corruptos ou lesivos.",
-            "Legitimidade ativa exclusiva de CIDADÃO (pessoa física no gozo dos direitos políticos com título de eleitor). Pessoa jurídica NÃO pode propor ação popular."
-        )
-
-    if any(k in txt for k in ["habeas data", "informações relativas à pessoa", "retificação de dados"]):
-        return (
-            "Um militar da reserva pede acesso à sua ficha funcional arquivada no Ministério da Defesa para saber por que foi preterido em promoção. Diante da recusa administrativa formal, impetra Habeas Data.",
-            f"• **Aplicação no {art_num}:** Remédio gratuito para obter ou retificar dados pessoais do próprio impetrante constantes de registros públicos.",
-            "Garantir a transparência governamental sobre os dados cadastrais do cidadão.",
-            "É personalíssimo (apenas sobre dados do próprio impetrante) e EXIGE prévia recusa administrativa (Súmula 2 do STJ)."
-        )
-
-    # Art. 5º, LXXVIII - Razoável duração do processo e celeridade
-    if "lxxviii" in art_lower or any(k in txt for k in ["razoável duração", "celeridade", "tramitação"]):
-        return (
-            "Um cidadão aguarda há mais de 10 anos a decisão final em um processo administrativo de aposentadoria no INSS sem qualquer complexidade que justifique tamanha demora. Diante da inércia desproporcional, ele impetra mandado de segurança exigindo conclusão imediata e pleiteia indenização por danos morais.",
-            f"• **Aplicação no {art_num}:** Garante a qualquer jurisdicionado o direito a um processo sem dilações indevidas, tanto judicial quanto administrativo.",
-            "Evitar que a morosidade e lentidão do Estado resultem em denegação prática de justiça.",
-            "Atenção: a garantia se aplica a processos JUDICIAIS e ADMINISTRATIVOS (banca adora restringir a 'apenas judiciais')."
-        )
-
-    # Art. 5º, LXXIX - Proteção de dados digitais
-    if "lxxix" in art_lower or any(k in txt for k in ["dados pessoais", "meios digitais"]):
-        return (
-            "Uma empresa de tecnologia ou órgão público sofre vazamento de dados de cidadãos sem consentimento. O titular pode acionar o Poder Judiciário invocando direito fundamental expresso à proteção de dados inclusive digitais.",
-            f"• **Aplicação no {art_num}:** Eleva a privacidade digital ao patamar de cláusula pétrea fundamental autônoma (EC 115).",
-            "Resguardar a autodeterminação informativa no ambiente cibernético moderno.",
-            "Incluído pela Emenda 115/2022 como garantia individual fundamental expressa."
-        )
-
-    # Art. 84 - Competências do Presidente
-    if "84" in art_lower or any(k in txt for k in ["competência privativa do presidente", "sancionar, promulgar", "decretar o estado de defesa"]):
-        return (
-            "O Presidente da República edita um decreto autônomo extinguindo cargos públicos federais que se encontram vagos, sem criar novas despesas nem órgãos públicos (Art. 84, VI, 'b').",
-            f"• **Aplicação no {art_num}:** Exercício de competências privativas privativas do Chefe do Executivo da União.",
-            "Harmonizar o equilíbrio republicano de freios e contrapesos.",
-            "Atenção aos incisos que admitem DELEGAÇÃO: VI (decreto autônomo), XII (indulto) e XXV (prover cargos federais nos termos da lei)."
-        )
-
-    # Art. 37 - Administração Pública e Concursos
-    if "37" in art_lower or any(k in txt for k in ["administração pública", "concurso público", "acumulação remunerada", "investidura em cargo"]):
-        return (
-            "Um médico concursado do SUS é aprovado para outro cargo de médico em hospital municipal. Como há compatibilidade de horários, ele pode acumular os dois cargos de profissional de saúde regulamentada.",
-            f"• **Aplicação no {art_num}:** Exceção constitucional permitida à regra geral que proíbe acumulação de cargos públicos.",
-            "Permitir o aproveitamento de profissionais de áreas essenciais respeitando a compatibilidade de horários.",
-            "Acumulações permitidas se houver compatibilidade: 2 de professor; 1 de professor com 1 técnico/científico; 2 privativos de profissionais de saúde."
-        )
-
-    # Se não caiu em nenhum caso tabelado, usa o motor heurístico dinâmico contextual!
-    return gerar_exemplo_dinamico_heuristico(art_num, texto_original)
-
-def gerar_explicacao_humana(art_num, texto_original, foi_correto=False, tipo_troca=None, texto_modificado=None, exemplo_customizado=None, foi_ia=False, nome_ia="Gemini IA", caput_texto=None):
-    """
-    Monta a explicação pós-resposta em HTML visual.
-    Importante: textwrap.dedent() é aplicado antes do retorno para impedir que
-    o Streamlit interprete as linhas indentadas como bloco de código.
-    """
-    if exemplo_customizado and len(exemplo_customizado) == 4:
-        situacao_real, aplicacao_regra, objetivo_regra, bizu_memorizacao = exemplo_customizado
-    else:
-        situacao_real, aplicacao_regra, objetivo_regra, bizu_memorizacao = extrair_exemplo_objetivo_personalizado(art_num, texto_original)
-
-    if foi_correto:
-        status_txt = "O item está CORRETO."
-        detalhe_erro = "O enunciado reproduz com exatidão a literalidade da legislação."
-        resumo_erro_bloco = ""
-        status_bg = "#ecfdf5"
-        status_border = "#86efac"
-        status_color = "#166534"
-        status_icon = "✓"
-        status_titulo = "Parabéns! Resposta correta!"
-    else:
-        status_txt = "O item está ERRADO."
-        detalhe_erro = "O enunciado promoveu alteração indevida da regra legal."
-        pegadinha = tipo_troca or "Substituição de palavra-chave, prazo ou conectivo legal"
-        resumo_erro_bloco = f"""
-        <div class="resultado-pegadinha">
-            ⚠️ <strong>Pegadinha da questão:</strong> {html.escape(str(pegadinha))}
-        </div>
-        """
-        status_bg = "#fff1f2"
-        status_border = "#fda4af"
-        status_color = "#9f1239"
-        status_icon = "✕"
-        status_titulo = "Resposta incorreta! Atenção aos detalhes!"
-
-    tag_ia = (
-        f'<span class="ia-badge">✨ Gerado com {html.escape(str(nome_ia))}</span>'
-        if foi_ia
-        else '<span class="exemplo-badge">⚖️ Exemplo prático da lei</span>'
-    )
-
-    texto_original_html = html.escape(str(texto_original or "").strip())
-    situacao_html = html.escape(str(situacao_real or "").strip())
-    aplicacao_html = html.escape(str(aplicacao_regra or "").strip())
-    objetivo_html = html.escape(str(objetivo_regra or "").strip())
-    bizu_html = html.escape(str(bizu_memorizacao or "").strip())
-
-    bloco_caput = ""
-    if caput_texto and str(caput_texto).strip() and str(caput_texto).strip() != str(texto_original).strip():
-        bloco_caput = f"""
-        <div class="caput-contexto">
-            <div class="caput-titulo">📜 Contexto do Artigo Principal — Caput de Origem</div>
-            <div class="caput-texto">“{html.escape(str(caput_texto).strip())}”</div>
-        </div>
-        """
-
-    html_resultado = f"""
-    <style>
-        .resultado-status {{
-            background: {status_bg};
-            border: 1px solid {status_border};
-            border-radius: 14px;
-            padding: 16px 18px;
-            margin: 16px 0 14px 0;
-            color: {status_color};
-        }}
-        .resultado-status-top {{
-            display: flex;
-            align-items: center;
-            gap: 12px;
-        }}
-        .resultado-icone {{
-            width: 34px;
-            height: 34px;
-            min-width: 34px;
-            border-radius: 50%;
-            background: {status_color};
-            color: white;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-weight: 800;
-            font-size: 18px;
-        }}
-        .resultado-titulo {{
-            font-size: 16px;
-            font-weight: 800;
-            margin-bottom: 3px;
-        }}
-        .resultado-sub {{
-            font-size: 13px;
-            line-height: 1.5;
-        }}
-        .resultado-pegadinha {{
-            margin-top: 12px;
-            padding: 10px 12px;
-            background: rgba(255,255,255,.75);
-            border-radius: 9px;
-            font-size: 12.5px;
-        }}
-        .lei-card {{
-            background: #f8fbff;
-            border: 1px solid #bfdbfe;
-            border-radius: 14px;
-            padding: 18px;
-            margin: 14px 0;
-        }}
-        .lei-card-titulo {{
-            color: #1d4ed8;
-            font-size: 14px;
-            font-weight: 800;
-            margin-bottom: 10px;
-        }}
-        .lei-card-texto {{
-            background: white;
-            border-left: 5px solid #3b82f6;
-            border-radius: 8px;
-            padding: 13px 15px;
-            color: #334155;
-            font-size: 14px;
-            line-height: 1.65;
-            font-style: italic;
-        }}
-        .caput-contexto {{
-            margin-top: 14px;
-            padding: 12px 14px;
-            background: #eff6ff;
-            border: 1px dashed #93c5fd;
-            border-radius: 10px;
-        }}
-        .caput-titulo {{
-            color: #1e3a8a;
-            font-size: 12.5px;
-            font-weight: 800;
-            margin-bottom: 5px;
-        }}
-        .caput-texto {{
-            color: #475569;
-            font-size: 12.5px;
-            line-height: 1.55;
-            font-style: italic;
-        }}
-        .exemplo-card {{
-            background: #fffbeb;
-            border: 1px solid #fcd34d;
-            border-radius: 14px;
-            padding: 18px;
-            margin: 14px 0;
-        }}
-        .exemplo-titulo {{
-            color: #92400e;
-            font-size: 14px;
-            font-weight: 800;
-            margin-bottom: 12px;
-        }}
-        .ia-badge, .exemplo-badge {{
-            display: inline-block;
-            margin-left: 7px;
-            padding: 3px 8px;
-            border-radius: 7px;
-            font-size: 10.5px;
-            font-weight: 700;
-            vertical-align: middle;
-        }}
-        .ia-badge {{
-            background: #fef3c7;
-            color: #b45309;
-        }}
-        .exemplo-badge {{
-            background: #dbeafe;
-            color: #1d4ed8;
-        }}
-        .exemplo-bloco {{
-            background: rgba(255,255,255,.72);
-            border-radius: 10px;
-            padding: 11px 13px;
-            margin: 8px 0;
-            color: #374151;
-            font-size: 13px;
-            line-height: 1.6;
-        }}
-        .exemplo-label {{
-            color: #78350f;
-            font-weight: 800;
-            display: block;
-            margin-bottom: 3px;
-        }}
-        .bizu-card {{
-            margin-top: 12px;
-            padding: 12px 14px;
-            background: #fff7ed;
-            border: 1px solid #fed7aa;
-            border-radius: 10px;
-            color: #9a3412;
-            font-size: 13px;
-            line-height: 1.55;
-        }}
-        .gabarito-label {{
-            font-size: 12px;
-            font-weight: 800;
-            text-transform: uppercase;
-            letter-spacing: .3px;
-            opacity: .8;
-        }}
-    </style>
-
-    <div class="resultado-status">
-        <div class="resultado-status-top">
-            <div class="resultado-icone">{status_icon}</div>
-            <div>
-                <div class="resultado-titulo">✨ {status_titulo}</div>
-                <div class="resultado-sub">
-                    <span class="gabarito-label">Gabarito oficial:</span>
-                    <strong>{"CERTO" if foi_correto else "ERRADO"}</strong>
-                    &nbsp;•&nbsp; {html.escape(status_txt)}
-                </div>
-            </div>
-        </div>
-        <div class="resultado-sub" style="margin-top:10px;">💡 {html.escape(detalhe_erro)}</div>
-        {resumo_erro_bloco}
-    </div>
-
-    <div class="lei-card">
-        <div class="lei-card-titulo">📖 DISPOSITIVO LITERAL DA LEI SECA — {html.escape(str(art_num))}</div>
-        <div class="lei-card-texto">“{texto_original_html}”</div>
-        {bloco_caput}
-    </div>
-
-    <div class="exemplo-card">
-        <div class="exemplo-titulo">💡 EXEMPLO PRÁTICO E OBJETIVO DA VIDA REAL {tag_ia}</div>
-
-        <div class="exemplo-bloco">
-            <span class="exemplo-label">👤 Situação concreta</span>
-            {situacao_html}
-        </div>
-
-        <div class="exemplo-bloco">
-            <span class="exemplo-label">⚙️ Aplicação prática</span>
-            {aplicacao_html}
-        </div>
-
-        <div class="exemplo-bloco">
-            <span class="exemplo-label">🎯 Objetivo da regra</span>
-            {objetivo_html}
-        </div>
-
-        <div class="bizu-card">
-            🧠 <strong>BIZU DE MEMORIZAÇÃO</strong><br>
-            {bizu_html}
-        </div>
-    </div>
-    """
-
-    return textwrap.dedent(html_resultado).strip()
+def obter_exemplo_pratico_contextualizado(art_num, texto_original):
+    ex = gerar_exemplo_gemini(art_num, texto_original)
+    if not ex:
+        ex = gerar_exemplo_openai(art_num, texto_original)
+    if not ex:
+        ex = gerar_exemplo_dinamico_heuristico(art_num, texto_original)
+    return ex
 
 # ==============================================================================
-# GERAÇÃO DE QUESTÕES COM FRAGMENTAÇÃO, NEXO JURÍDICO E SUPORTE GEMINI
+# MENU LATERAL E FLUXOS DA APLICAÇÃO
 # ==============================================================================
 
-def generate_questions_for_articles(discipline_id, law_id, article_ids, qtd_total, filter_id=None, motor_ia="♊ Gemini IA (Recomendado)", chave_ia_manual=None, progress_callback=None):
-    conn = db()
-    lei_row = conn.execute("SELECT nome FROM leis WHERE id=?", (law_id,)).fetchone()
-    nome_lei = lei_row["nome"] if lei_row else "Legislação Aplicável"
+st.sidebar.title("⚖ Decorando Lei Seca")
+st.sidebar.markdown(f"👤 Utilizador: **{USERNAME}**")
 
-    if article_ids:
-        placeholders = ",".join("?" * len(article_ids))
-        arts = conn.execute(f"SELECT * FROM artigos WHERE id IN ({placeholders}) ORDER BY id", article_ids).fetchall()
+menu = st.sidebar.radio(
+    "Navegação",
+    [
+        "📖 Estudar Leis",
+        "⚙ Gerenciar Leis & PDFs",
+        "🎯 Simulados & Questões",
+        "📊 Meu Desempenho",
+        "🔑 Configurar IA & API",
+        "👥 Gestão de Utilizadores" if is_admin_user else None
+    ]
+)
+menu = [m for m in menu if m is not None]
+
+if st.sidebar.button("🚪 Terminar Sessão"):
+    st.session_state["logged_in"] = False
+    st.session_state["user_id"] = None
+    st.session_state["username"] = None
+    st.rerun()
+
+# ------------------------------------------------------------------------------
+# 1. ESTUDAR LEIS
+# ------------------------------------------------------------------------------
+if menu == "📖 Estudar Leis":
+    st.header("📖 Leitura Direta e Casos Práticos")
+    disciplinas = get_disciplines()
+    if not disciplinas:
+        st.info("Nenhuma disciplina cadastrada. Vá em 'Gerenciar Leis & PDFs' para cadastrar.")
     else:
-        arts = conn.execute("SELECT * FROM artigos WHERE lei_id=? ORDER BY id", (law_id,)).fetchall()
+        d_map = {d["nome"]: d["id"] for d in disciplinas}
+        escolha_disc = st.selectbox("Selecione a Disciplina", list(d_map.keys()), key="estudo_disc")
+        disc_id = d_map[escolha_disc]
 
-    if not arts:
-        conn.close()
-        return 0
-
-    alvos = []
-    for art in arts:
-        texto_artigo = limpar_e_formatar_texto_lei(art["texto"])
-        alvos_artigo = fracionar_artigo_extenso(art["numero"], texto_artigo)
-        caput_artigo = obter_texto_caput(art["id"])
-        for alvo in alvos_artigo:
-            alvos.append({
-                "art": art,
-                "numero": alvo["numero"],
-                "texto": alvo["texto"],
-                "caput": caput_artigo
-            })
-
-    if not alvos:
-        conn.close()
-        return 0
-
-    random.shuffle(alvos)
-    generated = 0
-    now = datetime.now().isoformat()
-
-    usar_gemini = "Gemini" in motor_ia
-    usar_openai = "OpenAI" in motor_ia
-    
-    # Cache em memória para não repetir chamadas de IA sobre o mesmo artigo/dispositivo
-    cache_ia = {}
-
-    for i in range(qtd_total):
-        alvo = alvos[i % len(alvos)]
-        art = alvo["art"]
-        numero_dispositivo = alvo["numero"]
-        rotulo_dispositivo = obter_rotulo_dispositivo(numero_dispositivo)
-        text = limpar_e_formatar_texto_lei(alvo["texto"])
-        caput_texto = alvo.get("caput")
-        is_correct = random.choice([True, False])
-
-        if progress_callback:
-            try:
-                progress_callback((i + 1) / qtd_total, f"Processando questão {i+1} de {qtd_total}: {rotulo_dispositivo}...")
-            except Exception:
-                pass
-
-        exemplo_ia = None
-        chave_cache = (numero_dispositivo, text[:80])
-
-        if usar_gemini:
-            if chave_cache in cache_ia:
-                exemplo_ia = cache_ia[chave_cache]
-            else:
-                exemplo_ia = gerar_exemplo_gemini(rotulo_dispositivo, text, chave_manual=chave_ia_manual)
-                if exemplo_ia:
-                    cache_ia[chave_cache] = exemplo_ia
-        elif usar_openai:
-            if chave_cache in cache_ia:
-                exemplo_ia = cache_ia[chave_cache]
-            else:
-                exemplo_ia = gerar_exemplo_openai(rotulo_dispositivo, text, chave_manual=chave_ia_manual)
-                if exemplo_ia:
-                    cache_ia[chave_cache] = exemplo_ia
-
-        foi_ia_utilizada = bool(exemplo_ia is not None)
-        nome_ia = "Gemini IA" if usar_gemini else ("OpenAI" if usar_openai else "Inteligência Artificial")
-
-        # Higieniza a assertiva: remove marcadores como "XLIX - ", ajusta maiúscula e ponto final
-        assertiva_base = limpar_assertiva_dispositivo(text)
-        # Realiza ligação sintática com o Caput caso a oração seja dependente
-        assertiva_com_nexo = conectar_caput_com_dispositivo(caput_texto, assertiva_base, rotulo_dispositivo)
-
-        if is_correct:
-            assertiva_final = assertiva_com_nexo
-            gabarito = 1
-            enunciado = construir_enunciado_com_nexo(nome_lei, rotulo_dispositivo, assertiva_final, caput_texto=caput_texto, num_art=art["numero"])
-            explicacao = gerar_explicacao_humana(
-                numero_dispositivo,
-                text,
-                foi_correto=True,
-                exemplo_customizado=exemplo_ia,
-                foi_ia=foi_ia_utilizada,
-                nome_ia=nome_ia,
-                caput_texto=caput_texto
-            )
+        leis = get_laws(disc_id)
+        if not leis:
+            st.warning("Nenhuma lei cadastrada para esta disciplina.")
         else:
-            assertiva_final, tipo_troca = alterar_texto_para_errado(assertiva_com_nexo)
-            gabarito = 0
-            enunciado = construir_enunciado_com_nexo(nome_lei, rotulo_dispositivo, assertiva_final, caput_texto=caput_texto, num_art=art["numero"])
-            explicacao = gerar_explicacao_humana(
-                numero_dispositivo,
-                text,
-                foi_correto=False,
-                tipo_troca=tipo_troca,
-                texto_modificado=assertiva_final,
-                exemplo_customizado=exemplo_ia,
-                foi_ia=foi_ia_utilizada,
-                nome_ia=nome_ia,
-                caput_texto=caput_texto
-            )
+            l_map = {l["nome"]: l["id"] for l in leis}
+            escolha_lei = st.selectbox("Selecione a Lei / Norma", list(l_map.keys()), key="estudo_lei")
+            lei_id = l_map[escolha_lei]
 
-        try:
-            conn.execute("""
-                INSERT INTO questoes(lei_id, artigo_id, disciplina_id, filtro_id, artigo_numero, conteudo, enunciado, gabarito, explicacao, origem, criada_em)
-                VALUES(?,?,?,?,?,?,?,?,?,?,?)
-            """, (
-                law_id,
-                art["id"],
-                discipline_id,
-                filter_id,
-                numero_dispositivo,
-                numero_dispositivo,
-                enunciado,
-                gabarito,
-                explicacao,
-                motor_ia,
-                now
-            ))
-            generated += 1
-        except sqlite3.IntegrityError:
-            pass
+            artigos = get_articles(lei_id)
+            if not artigos:
+                st.warning("Esta lei não possui artigos importados.")
+            else:
+                art_map = {f"{a['numero']} - {a['texto'][:60]}...": a["id"] for a in artigos}
+                escolha_art = st.selectbox("Selecione o Artigo / Dispositivo", list(art_map.keys()), key="estudo_art")
+                art_id = art_map[escolha_art]
 
-    conn.commit()
-    conn.close()
-    return generated
+                art_obj = next((a for a in artigos if a["id"] == art_id), None)
+                if art_obj:
+                    st.markdown("---")
+                    st.subheader(f"Dispositivo: {art_obj['numero']}")
+                    
+                    texto_completo = limpar_e_formatar_texto_lei(art_obj["texto"])
+                    partes_fracionadas = fracionar_artigo_extenso(art_obj["numero"], texto_completo)
 
-def record_answer(question_id, answer, cycle):
-    conn = db()
-    q = conn.execute("SELECT * FROM questoes WHERE id=?", (question_id,)).fetchone()
-    correct = int(answer == q["gabarito"])
-    now = datetime.now()
-    conn.execute("""
-        INSERT INTO respostas(usuario_id, questao_id, resposta, acertou, respondida_em, ciclo)
-        VALUES(?, ?, ?, ?, ?, ?)
-    """, (USER_ID, question_id, answer, correct, now.isoformat(), cycle))
+                    for parte in partes_fracionadas:
+                        rotulo_parte = parte['numero']
+                        texto_parte = parte['texto']
 
-    old = conn.execute("SELECT * FROM revisoes WHERE usuario_id=? AND questao_id=?", (USER_ID, question_id)).fetchone()
-    if old:
-        errors = old["erros"] + (0 if correct else 1)
-        hits = old["acertos"] + (1 if correct else 0)
-    else:
-        errors = 0 if correct else 1
-        hits = 1 if correct else 0
+                        with st.container():
+                            st.markdown(f"### **{rotulo_parte}**")
+                            st.info(texto_parte)
 
-    if not correct:
-        priority = min(10, (old["prioridade"] if old else 1) + 2)
-        next_date = now
-    else:
-        priority = max(0, (old["prioridade"] if old else 1) - 1)
-        intervals = [1, 3, 7, 15, 30]
-        idx = min(len(intervals)-1, hits-1)
-        next_date = now + timedelta(days=intervals[idx])
+                            if st.button(f"💡 Ver Exemplo Prático e Bizu — {rotulo_parte}", key=f"btn_ex_{art_obj['id']}_{rotulo_parte}"):
+                                with st.spinner("Gerando exemplo prático fundamentado..."):
+                                    sit, ap, obj, biz = obter_exemplo_pratico_contextualizado(rotulo_parte, texto_parte)
+                                    st.success(f"**Caso Concreto:** {sit}")
+                                    st.markdown(ap)
+                                    st.markdown(f"• **Finalidade Normativa:** {obj}")
+                                    st.warning(f"🎯 **Bizu de Concurso:** {biz}")
+                            st.markdown("---")
 
-    conn.execute("""
-        INSERT OR REPLACE INTO revisoes(usuario_id, questao_id, prioridade, proxima_revisao, erros, acertos)
-        VALUES(?, ?, ?, ?, ?, ?)
-    """, (USER_ID, question_id, priority, next_date.isoformat(), errors, hits))
-
-    conn.commit()
-    conn.close()
-    return correct
-
-def zerar_historico_dashboard():
-    conn = db()
-    conn.execute("DELETE FROM respostas WHERE usuario_id = ?", (USER_ID,))
-    conn.execute("DELETE FROM revisoes WHERE usuario_id = ?", (USER_ID,))
-    conn.commit()
-    conn.close()
-
-def stats():
-    conn = db()
-    total = conn.execute("SELECT COUNT(*) n FROM respostas WHERE usuario_id=?", (USER_ID,)).fetchone()["n"]
-    hits = conn.execute("SELECT COALESCE(SUM(acertou),0) n FROM respostas WHERE usuario_id=?", (USER_ID,)).fetchone()["n"]
-    errors = total - hits
-    pct = (hits / total * 100) if total else 0
+# ------------------------------------------------------------------------------
+# 2. GERENCIAR LEIS & PDFS
+# ------------------------------------------------------------------------------
+elif menu == "⚙ Gerenciar Leis & PDFs":
+    st.header("⚙ Gestão de Disciplinas, Leis e Importação PDF")
     
-    b_disc = pd.read_sql_query("""
-        SELECT d.nome disciplina,
-               COUNT(r.id) respondidas,
-               COALESCE(SUM(r.acertou),0) acertos,
-               COUNT(r.id)-COALESCE(SUM(r.acertou),0) erros,
-               ROUND(COALESCE(SUM(r.acertou),0)*100.0/COUNT(r.id),1) percentual
-        FROM respostas r
-        JOIN questoes q ON q.id=r.questao_id
-        JOIN disciplinas d ON d.id=q.disciplina_id
-        WHERE r.usuario_id = ?
-        GROUP BY d.id ORDER BY percentual
-    """, conn, params=(USER_ID,))
+    tab_d, tab_l, tab_p = st.tabs(["📚 Disciplinas", "📜 Leis", "📤 Importar PDF"])
 
-    b_filt = pd.read_sql_query("""
-        SELECT f.nome filtro,
-               d.nome disciplina,
-               l.nome lei,
-               COUNT(r.id) respondidas,
-               COALESCE(SUM(r.acertou),0) acertos,
-               COUNT(r.id)-COALESCE(SUM(r.acertou),0) erros,
-               ROUND(COALESCE(SUM(r.acertou),0)*100.0/COUNT(r.id),1) percentual
-        FROM respostas r
-        JOIN questoes q ON q.id=r.questao_id
-        JOIN filtros_salvos f ON f.id=q.filtro_id
-        JOIN disciplinas d ON d.id=f.disciplina_id
-        JOIN leis l ON l.id=f.lei_id
-        WHERE r.usuario_id = ?
-        GROUP BY f.id ORDER BY r.id DESC
-    """, conn, params=(USER_ID,))
-
-    b_cont = pd.read_sql_query("""
-        SELECT d.nome disciplina, q.conteudo,
-               COUNT(r.id) respondidas,
-               COALESCE(SUM(r.acertou),0) acertos,
-               COUNT(r.id)-COALESCE(SUM(r.acertou),0) erros,
-               ROUND(COALESCE(SUM(r.acertou),0)*100.0/COUNT(r.id),1) percentual
-        FROM respostas r
-        JOIN questoes q ON q.id=r.questao_id
-        JOIN disciplinas d ON d.id=q.disciplina_id
-        WHERE r.usuario_id = ?
-        GROUP BY d.id,q.conteudo ORDER BY percentual
-    """, conn, params=(USER_ID,))
-
-    due = conn.execute("""
-        SELECT COUNT(*) n FROM revisoes
-        WHERE usuario_id = ? AND proxima_revisao <= ?
-    """, (USER_ID, datetime.now().isoformat())).fetchone()["n"]
-
-    conn.close()
-    return total, hits, errors, pct, b_disc, b_filt, b_cont, due
-
-# ==============================================================================
-# INTERFACE PRINCIPAL DO STREAMLIT: BARRA LATERAL & ABAS
-# ==============================================================================
-
-with st.sidebar:
-    st.markdown(f"👤 Utilizador: **{USERNAME}**")
-    if st.button("🚪 Sair / Logout"):
-        st.session_state["logged_in"] = False
-        st.session_state["user_id"] = None
-        st.session_state["username"] = None
-        st.rerun()
-    st.divider()
-
-    st.markdown("### 🤖 Inteligência Artificial (IA)")
-    chave_gemini_detectada = obter_chave_gemini()
-    status_ia = "🟢 Ativa (Google Gemini)" if chave_gemini_detectada else "⚪ Modo Regras / Offline"
-    st.caption(f"Status: **{status_ia}**")
-
-    with st.expander("🔑 Chave API Gemini (Google AI)", expanded=(not bool(chave_gemini_detectada))):
-        st.markdown(
-            "Insira sua chave gratuita do **Google AI Studio** para gerar exemplos práticos da vida real inéditos e adaptados a qualquer dispositivo:"
-        )
-        nova_chave_gemini = st.text_input(
-            "GEMINI_API_KEY:",
-            value=st.session_state.get("gemini_api_key", chave_gemini_detectada or ""),
-            type="password",
-            key="input_gemini_side"
-        )
-        col_s1, col_s2 = st.columns(2)
-        if col_s1.button("Salvar Chave", key="btn_save_key_side"):
-            if nova_chave_gemini.strip():
-                st.session_state["gemini_api_key"] = nova_chave_gemini.strip()
-                os.environ["GEMINI_API_KEY"] = nova_chave_gemini.strip()
-                st.success("Chave salva na sessão!")
+    with tab_d:
+        st.subheader("Cadastrar Nova Disciplina")
+        nova_disc = st.text_input("Nome da Disciplina", key="input_nova_disc")
+        if st.button("Salvar Disciplina"):
+            if nova_disc:
+                add_discipline(nova_disc)
+                st.success(f"Disciplina '{nova_disc}' cadastrada com sucesso!")
                 st.rerun()
             else:
-                st.session_state.pop("gemini_api_key", None)
-                st.info("Chave removida.")
-                st.rerun()
-        if col_s2.button("Testar IA", key="btn_test_ia_side"):
-            with st.spinner("Testando conexão com a IA..."):
-                t_key = nova_chave_gemini.strip() or chave_gemini_detectada
-                ex_test = gerar_exemplo_gemini("Art. 5º, II", "ninguém será obrigado a fazer ou deixar de fazer alguma coisa senão em virtude de lei", chave_manual=t_key)
-                if ex_test:
-                    st.success("✅ IA conectada e gerando exemplos com sucesso!")
-                else:
-                    st.error("❌ Erro ao conectar com Gemini. Verifique a chave inserida.")
+                st.warning("Insira o nome da disciplina.")
 
-        st.caption("Obtenha sua chave gratuita em: [Google AI Studio](https://aistudio.google.com/app/apikey)")
+        st.markdown("### Disciplinas Cadastradas")
+        for d in get_disciplines():
+            st.write(f"- {d['nome']}")
 
-    auto_ia_ativo = st.toggle(
-        "⚡ Gerar IA ao responder questão",
-        value=st.session_state.get("auto_ia_responder", True),
-        key="toggle_auto_ia",
-        help="Ao responder Certo/Errado em uma questão, a IA cria e salva um exemplo da vida real sob medida caso ainda não exista!"
-    )
-    st.session_state["auto_ia_responder"] = auto_ia_ativo
-    st.divider()
-
-    if is_admin_user:
-        st.subheader("⚙ Atalho Admin")
-        with st.expander("👥 Gerir Utilizadores", expanded=False):
-            usuarios_cadastrados = listar_usuarios()
-            st.write(f"**Total de utilizadores:** {len(usuarios_cadastrados)}")
-            for u in usuarios_cadastrados:
-                st.markdown(f"**{u['username']}**")
-                c_status, c_del = st.columns([3, 1])
-                is_this_admin = u['username'].strip().lower() == ADMIN_EMAIL
-                if is_this_admin:
-                    c_status.caption("👑 Admin Principal")
-                else:
-                    status_atual = bool(u['autorizado'])
-                    novo_status = c_status.toggle("Autorizado", value=status_atual, key=f"aut_side_{u['id']}")
-                    if novo_status != status_atual:
-                        alterar_status_autorizacao(u['id'], 1 if novo_status else 0)
-                        st.toast(f"Status de {u['username']} alterado!")
-                        st.rerun()
-                    if c_del.button("❌", key=f"del_side_{u['id']}", help="Excluir Utilizador"):
-                        excluir_usuario(u['id'])
-                        st.success(f"Utilizador {u['username']} removido!")
-                        st.rerun()
-                st.divider()
-
-st.title("⚖ Decorando Lei Seca")
-
-is_admin_user = bool(USERNAME and USERNAME.strip().lower() == ADMIN_EMAIL)
-
-if is_admin_user:
-    tab1, tab2, tab3, tab4, tab5, tab_admin = st.tabs([
-        "📚 Importar Leis",
-        "🎯 Criar Caderno / Filtro",
-        "📝 Resolver Questões",
-        "📊 Desempenho",
-        "🔄 Revisões",
-        "🛡 Painel Admin"
-    ])
-else:
-    tab1, tab2, tab3, tab4, tab5 = st.tabs([
-        "📚 Importar Leis",
-        "🎯 Criar Caderno / Filtro",
-        "📝 Resolver Questões",
-        "📊 Desempenho",
-        "🔄 Revisões"
-    ])
-
-with tab1:
-    st.header("Importar Nova Lei (PDF)")
-    discs = get_disciplines()
-    disc_names = [d["nome"] for d in discs]
-    
-    col1, col2 = st.columns(2)
-    with col1:
-        new_disc = st.text_input("Nova Disciplina (ou selecione ao lado):")
-        if st.button("Cadastrar Disciplina"):
-            if new_disc:
-                add_discipline(new_disc)
-                st.success(f"Disciplina '{new_disc}' cadastrada!")
-                st.rerun()
-
-    with col2:
-        disc_sel = st.selectbox("Selecione a Disciplina:", [""] + disc_names)
-
-    st.subheader("Upload do PDF da Lei")
-    law_title = st.text_input("Nome da Lei (ex: CF/88, Código Penal, etc.):")
-    uploaded_file = st.file_uploader("Escolha o ficheiro PDF da lei", type=["pdf"])
-
-    if st.button("Processar e Salvar Lei"):
-        if not disc_sel:
-            st.error("Selecione uma disciplina!")
-        elif not law_title:
-            st.error("Informe o nome da lei!")
-        elif not uploaded_file:
-            st.error("Envie um ficheiro PDF!")
+    with tab_l:
+        st.subheader("Cadastrar Lei vinculada a Disciplina")
+        discs = get_disciplines()
+        if not discs:
+            st.info("Cadastre uma disciplina primeiro.")
         else:
-            disc_id = [d["id"] for d in discs if d["nome"] == disc_sel][0]
-            file_path = PDF_DIR / uploaded_file.name
-            with open(file_path, "wb") as f:
-                f.write(uploaded_file.getbuffer())
+            d_map = {d["nome"]: d["id"] for d in discs}
+            d_escolha = st.selectbox("Disciplina", list(d_map.keys()), key="lei_disc_sel")
+            nome_lei = st.text_input("Nome da Lei / Norma (ex: Constituição Federal, Código Penal)")
+            if st.button("Criar Registo de Lei"):
+                if nome_lei:
+                    add_law(d_map[d_escolha], nome_lei, "")
+                    st.success(f"Lei '{nome_lei}' criada!")
+                    st.rerun()
+                else:
+                    st.warning("Informe o nome da lei.")
 
-            law_id = add_law(disc_id, law_title, uploaded_file.name)
-            qtd = parse_and_store_pdf(file_path, law_id)
-            st.success(f"Lei processada com sucesso! {qtd} artigos importados.")
-
-    st.divider()
-    st.subheader("🗑 Leis Cadastradas por Disciplina")
-    todas_leis = get_laws()
-    if todas_leis:
-        leis_por_disciplina = {}
-        for l in todas_leis:
-            disc_nome = l['disciplina_nome']
-            if disc_nome not in leis_por_disciplina:
-                leis_por_disciplina[disc_nome] = []
-            leis_por_disciplina[disc_nome].append(l)
-
-        for disc_nome, lista_leis in leis_por_disciplina.items():
-            with st.expander(f"📚 **{disc_nome}** ({len(lista_leis)} Lei(s))", expanded=False):
-                for l in lista_leis:
-                    lc1, lc2 = st.columns([4, 1])
-                    lc1.write(f"📄 **{l['nome']}**")
-                    if lc2.button("Excluir Lei", key=f"del_law_{l['id']}"):
+            st.markdown("### Leis Existentes")
+            for l in get_laws():
+                col1, col2 = st.columns([4, 1])
+                with col1:
+                    st.write(f"**{l['disciplina_nome']}** ➔ {l['nome']}")
+                with col2:
+                    if st.button("🗑 Excluir", key=f"del_law_{l['id']}"):
                         delete_law(l['id'])
-                        st.success(f"Lei '{l['nome']}' excluída com sucesso!")
-                        st.rerun()
-    else:
-        st.info("Nenhuma lei cadastrada ainda.")
-
-with tab2:
-    st.header("Criar Caderno de Questões por Filtro")
-    discs = get_disciplines()
-    disc_dict = {d["nome"]: d["id"] for d in discs}
-    
-    disc_f = st.selectbox("1. Selecione a Disciplina", [""] + list(disc_dict.keys()), key="f_disc")
-    
-    if disc_f:
-        d_id = disc_dict[disc_f]
-        laws = get_laws(d_id)
-        law_dict = {l["nome"]: l["id"] for l in laws}
-        
-        law_f = st.selectbox("2. Selecione a Lei", [""] + list(law_dict.keys()), key="f_law")
-        
-        if law_f:
-            l_id = law_dict[law_f]
-            articles = get_articles(l_id)
-            art_dict = {f"{a['numero']} - {a['texto'][:60]}...": a["id"] for a in articles}
-            
-            selected_arts = st.multiselect("3. Selecione os Artigos/Trechos (deixe vazio para TODOS):", list(art_dict.keys()))
-            
-            total_arts_selecionados = len(selected_arts) if selected_arts else len(articles)
-            sugestao_qtd = max(total_arts_selecionados * 2, 10)
-            
-            st.info(f"💡 **Sugestão do Sistema:** Esta lei/seleção possui **{total_arts_selecionados} artigo(s)/dispositivo(s)**.")
-
-            qtd_q = st.number_input(
-                "4. Quantidade de questões para este filtro:",
-                min_value=1,
-                max_value=500,
-                value=sugestao_qtd
-            )
-            
-            motor_ia = st.radio(
-                "5. Selecione o Motor para Geração de Questões:",
-                ["♊ Gemini IA (Recomendado - Exemplos Reais sob Medida)", "⚙️ Regra Padrão / Motor Contextual Integrado", "🤖 OpenAI (Nuvem)"],
-                index=0
-            )
-
-            chave_atual = obter_chave_gemini()
-            chave_informada_caderno = None
-            if "Gemini" in motor_ia:
-                if not chave_atual:
-                    st.warning("⚠️ Nenhuma chave Gemini detectada. Insira abaixo para ativar a IA em todas as questões ou use o motor contextual.")
-                    chave_informada_caderno = st.text_input(
-                        "🔑 Chave Gemini API (Google AI Studio):",
-                        type="password",
-                        key="gemini_caderno_input",
-                        help="Obtenha grátis em aistudio.google.com/app/apikey"
-                    )
-                    if chave_informada_caderno.strip():
-                        st.session_state["gemini_api_key"] = chave_informada_caderno.strip()
-                else:
-                    st.success("🟢 Inteligência Artificial (Gemini) pronta para criar casos práticos reais sob medida!")
-
-            filter_name = st.text_input("6. Nome do seu Caderno / Filtro:")
-
-            if st.button("Salvar Caderno e Gerar Questões", type="primary"):
-                if not filter_name:
-                    st.error("Informe um nome para o seu caderno!")
-                else:
-                    chave_usar = chave_informada_caderno or chave_atual
-                    prog_bar = st.progress(0, text="Iniciando motor de fragmentação e IA...")
-                    
-                    def atualizar_progresso(pct, texto):
-                        prog_bar.progress(min(max(pct, 0.0), 1.0), text=texto)
-
-                    art_ids = [art_dict[k] for k in selected_arts]
-                    f_id = save_filter(filter_name, d_id, l_id, art_ids, qtd_q)
-                    qtd_geradas = generate_questions_for_articles(
-                        d_id, l_id, art_ids, qtd_q,
-                        filter_id=f_id,
-                        motor_ia=motor_ia,
-                        chave_ia_manual=chave_usar,
-                        progress_callback=atualizar_progresso
-                    )
-                    prog_bar.progress(1.0, text="Concluído com sucesso!")
-                    st.success(f"🎉 Caderno '{filter_name}' criado com sucesso! {qtd_geradas} questões fragmentadas geradas com exemplos objetivos.")
-
-    st.divider()
-    st.subheader("🗑 Meus Cadernos / Filtros Salvos por Disciplina")
-    meus_filtros = get_saved_filters()
-    
-    if meus_filtros:
-        filtros_por_disciplina = {}
-        for mf in meus_filtros:
-            disc = mf['disciplina']
-            if disc not in filtros_por_disciplina:
-                filtros_por_disciplina[disc] = []
-            filtros_por_disciplina[disc].append(mf)
-
-        for disc_nome, lista_filtros in filtros_por_disciplina.items():
-            with st.expander(f"📚 **{disc_nome}** ({len(lista_filtros)} Caderno(s))", expanded=False):
-                for mf in lista_filtros:
-                    fc1, fc2 = st.columns([4, 1])
-                    fc1.write(f"📁 **{mf['nome']}** _(Lei: {mf['lei']})_")
-                    if fc2.button("Excluir Caderno", key=f"del_filt_{mf['id']}"):
-                        delete_filter(mf['id'])
-                        st.success(f"Caderno '{mf['nome']}' removido com sucesso!")
+                        st.success("Lei excluída!")
                         st.rerun()
 
-# ==============================================================================
-# RESOLVER QUESTÕES (FORMATADO COMO A IMAGEM 2 E COM SUPORTE AO GEMINI AO VIVO)
-# ==============================================================================
-
-with tab3:
-    st.header("Resolver Questões")
-    
-    discs = get_disciplines()
-    disc_options = {"Todas as Disciplinas": None}
-    for d in discs:
-        disc_options[d["nome"]] = d["id"]
-
-    selected_disc_label = st.selectbox("Selecione a Disciplina:", list(disc_options.keys()), key="res_disc_filter")
-    selected_disc_id = disc_options[selected_disc_label]
-
-    saved_filters = get_saved_filters(selected_disc_id)
-    
-    if not saved_filters:
-        st.info("Nenhum caderno de questões encontrado para a disciplina selecionada.")
-    else:
-        f_options = {f"{f['nome']} ({f['disciplina']} - {f['lei']})": f["id"] for f in saved_filters}
-        sel_filter_label = st.selectbox("Selecione o Caderno para Treinar:", list(f_options.keys()), key="res_caderno_filter")
-        sel_filter_id = f_options[sel_filter_label]
-
-        if "last_filter_id" not in st.session_state or st.session_state["last_filter_id"] != sel_filter_id:
-            st.session_state["last_filter_id"] = sel_filter_id
-            st.session_state["q_index"] = 0
-            st.session_state["answered_q"] = {}
-
-        conn = db()
-        questoes = conn.execute("SELECT * FROM questoes WHERE filtro_id=? ORDER BY id", (sel_filter_id,)).fetchall()
-        conn.close()
-
-        if not questoes:
-            st.warning("Nenhuma questão gerada para este caderno.")
+    with tab_p:
+        st.subheader("Importar Artigos via PDF (Lei Seca)")
+        discs = get_disciplines()
+        if not discs:
+            st.info("Cadastre uma disciplina e uma lei primeiro.")
         else:
-            if "q_index" not in st.session_state:
-                st.session_state["q_index"] = 0
-            if "answered_q" not in st.session_state:
-                st.session_state["answered_q"] = {}
-
-            idx = st.session_state["q_index"]
-            if idx >= len(questoes):
-                st.success("🎉 Concluiu todas as questões deste caderno!")
-                if st.button("Reiniciar Caderno"):
-                    st.session_state["q_index"] = 0
-                    st.session_state["answered_q"] = {}
-                    st.rerun()
+            d_map = {d["nome"]: d["id"] for d in discs}
+            d_sel = st.selectbox("Disciplina para Importação", list(d_map.keys()), key="pdf_d_sel")
+            leis = get_laws(d_map[d_sel])
+            if not leis:
+                st.warning("Cadastre uma lei para esta disciplina.")
             else:
-                q = questoes[idx]
-                st.subheader(f"Questão {idx + 1} de {len(questoes)}")
+                l_map = {l["nome"]: l["id"] for l in leis}
+                l_sel = st.selectbox("Lei Destino", list(l_map.keys()), key="pdf_l_sel")
                 
-                num_disp = q['artigo_numero']
-                rotulo_formatado = obter_rotulo_dispositivo(num_disp)
-                
-                col_disp, col_badge = st.columns([4, 1])
-                with col_disp:
-                    st.markdown(f"**Dispositivo em Estudo:** `{rotulo_formatado}`")
-                with col_badge:
-                    tamanho = len(q["enunciado"])
-                    if tamanho < 250:
-                        st.caption("⚡ Dispositivo Curto / Direto")
-                    else:
-                        st.caption("🧩 Dispositivo Fragmentado")
-
-                # Contexto transparente do Caput para incisos, parágrafos e alíneas
-                is_subdevice = any(tag in num_disp.lower() for tag in ["§", "parágrafo", "inciso", "alínea", "alinea"]) or re.search(rf'\b{REGEX_ROMANO}\b', num_disp, re.IGNORECASE)
-                if is_subdevice:
-                    caput_text = obter_texto_caput(q["artigo_id"])
-                    if caput_text:
-                        with st.expander("📜 Contexto: Artigo Principal (Caput)", expanded=False):
-                            st.markdown(
-                                f"""
-                                <div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:10px;padding:12px 14px;color:#334155;line-height:1.6;">
-                                    <div style="font-weight:800;color:#1e3a8a;margin-bottom:6px;">📜 Texto do Caput</div>
-                                    <div style="font-style:italic;">“{html.escape(str(caput_text))}”</div>
-                                </div>
-                                """,
-                                unsafe_allow_html=True
-                            )
-
-                renderizar_enunciado_estudo(q["enunciado"], num_disp=num_disp)
-
-                q_id = q["id"]
-                ja_respondida = q_id in st.session_state["answered_q"]
-
-                resp = st.radio("A sua resposta:", ["Certo", "Errado"], key=f"q_{q_id}", disabled=ja_respondida)
-                
-                if not ja_respondida:
-                    if st.button("Responder", key=f"btn_{q_id}", type="primary"):
-                        val = 1 if resp == "Certo" else 0
-                        acertou = record_answer(q_id, val, cycle=1)
-                        st.session_state["answered_q"][q_id] = {
-                            "acertou": acertou,
-                            "resposta": resp
-                        }
-
-                        # Auto-geração com IA ao vivo ao responder, caso ainda não tenha IA e esteja configurada
-                        chave_ia = obter_chave_gemini()
-                        auto_gerar = st.session_state.get("auto_ia_responder", True)
-                        explicacao_atual = q["explicacao"] or ""
-                        ja_tem_ia = ("✨ Gerado com Gemini IA" in explicacao_atual) or ("✨ Gerado com OpenAI" in explicacao_atual)
-
-                        if chave_ia and auto_gerar and not ja_tem_ia:
-                            caput_text = obter_texto_caput(q["artigo_id"])
-                            trechos_aspas = re.findall(r'"([^"]+)"', q["enunciado"])
-                            texto_limpo_lei = trechos_aspas[-1] if trechos_aspas else q["enunciado"]
-
-                            novo_ex_ia = gerar_exemplo_gemini(rotulo_formatado, texto_limpo_lei, chave_manual=chave_ia)
-                            if novo_ex_ia:
-                                nova_exp = gerar_explicacao_humana(
-                                    num_disp,
-                                    texto_limpo_lei,
-                                    foi_correto=(val == q["gabarito"]),
-                                    tipo_troca=None if q["gabarito"] == 1 else "Alteração indevida da literalidade legal",
-                                    exemplo_customizado=novo_ex_ia,
-                                    foi_ia=True,
-                                    nome_ia="Gemini IA",
-                                    caput_texto=caput_text
-                                )
-                                st.session_state[f"custom_explicacao_{q_id}"] = nova_exp
-                                try:
-                                    conn_u = db()
-                                    conn_u.execute("UPDATE questoes SET explicacao = ? WHERE id = ?", (nova_exp, q_id))
-                                    conn_u.commit()
-                                    conn_u.close()
-                                except Exception:
-                                    pass
-                        st.rerun()
-                else:
-                    dados_resp = st.session_state["answered_q"][q_id]
+                uploaded_pdf = st.file_uploader("Selecione o arquivo PDF da Lei", type=["pdf"])
+                if uploaded_pdf and st.button("Processar e Indexar Artigos do PDF"):
+                    filepath = PDF_DIR / uploaded_pdf.name
+                    with open(filepath, "wb") as f:
+                        f.write(uploaded_pdf.getbuffer())
                     
-                    # RENDERIZAÇÃO VISUAL EM CARTÕES MODERNOS
-                    if dados_resp["acertou"]:
-                        card_status_html = f"""
-                        <div style="background-color: #ecfdf5; border: 1px solid #a7f3d0; border-radius: 12px; padding: 15px; margin-bottom: 14px; display: flex; align-items: center; gap: 12px;">
-                            <div style="background-color: #059669; color: white; border-radius: 50%; width: 28px; height: 28px; display: flex; align-items: center; justify-content: center; font-weight: bold; font-size: 16px;">✓</div>
-                            <div>
-                                <div style="font-weight: 700; color: #065f46; font-size: 15px;">✨ Parabéns! Resposta Correta!</div>
-                                <div style="color: #047857; font-size: 13px; margin-top: 2px;">Gabarito oficial: <strong>{'CERTO' if q['gabarito'] == 1 else 'ERRADO'}</strong></div>
-                            </div>
-                        </div>
-                        """
-                    else:
-                        card_status_html = f"""
-                        <div style="background-color: #fff1f2; border: 1px solid #fecdd3; border-radius: 12px; padding: 15px; margin-bottom: 14px; display: flex; align-items: center; gap: 12px;">
-                            <div style="background-color: #e11d48; color: white; border-radius: 50%; width: 28px; height: 28px; display: flex; align-items: center; justify-content: center; font-weight: bold; font-size: 16px;">✕</div>
-                            <div>
-                                <div style="font-weight: 700; color: #9f1239; font-size: 15px;">❌ Resposta Incorreta! Atenção aos detalhes!</div>
-                                <div style="color: #be123c; font-size: 13px; margin-top: 2px;">Gabarito oficial: <strong>{'CERTO' if q['gabarito'] == 1 else 'ERRADO'}</strong></div>
-                            </div>
-                        </div>
-                        """
-                    
-                    st.markdown(card_status_html, unsafe_allow_html=True)
-                    
-                    # Se o usuário pediu para a IA gerar um novo exemplo ao vivo nesta questão:
-                    explicacao_exibir = st.session_state.get(f"custom_explicacao_{q_id}", q['explicacao'])
-                    # Corrige também explicações antigas já salvas no banco que possuem indentação.
-                    # Sem dedent, o Streamlit pode interpretar o HTML como bloco de código.
-                    explicacao_html = limpar_conteudo_html_para_renderizacao(textwrap.dedent(str(explicacao_exibir or "")))
-                    st.markdown(explicacao_html, unsafe_allow_html=True)
+                    with st.spinner("Extraindo e estruturando artigos do PDF..."):
+                        qtd = parse_and_store_pdf(filepath, l_map[l_sel])
+                    st.success(f"Processamento concluído! {qtd} artigos extraídos e indexados com sucesso.")
 
-                    c_btn_ia, c_btn_prox = st.columns([1, 1])
-                    with c_btn_ia:
-                        if st.button("✨ Gerar / Atualizar com IA (Gemini)", key=f"btn_ai_{q_id}"):
-                            chave_ia = obter_chave_gemini()
-                            if not chave_ia:
-                                st.warning("⚠️ Insira a GEMINI_API_KEY na barra lateral à esquerda ou configure no Streamlit Secrets.")
-                            else:
-                                with st.spinner("Solicitando novo exemplo prático inédito ao Gemini..."):
-                                    caput_text = obter_texto_caput(q["artigo_id"])
-                                    trechos_aspas = re.findall(r'"([^"]+)"', q["enunciado"])
-                                    texto_limpo_lei = trechos_aspas[-1] if trechos_aspas else q["enunciado"]
-                                    novo_exemplo_ia = gerar_exemplo_gemini(rotulo_formatado, texto_limpo_lei, chave_manual=chave_ia)
-                                    if novo_exemplo_ia:
-                                        nova_exp = gerar_explicacao_humana(
-                                            num_disp,
-                                            texto_limpo_lei,
-                                            foi_correto=(dados_resp["acertou"] == 1),
-                                            tipo_troca=None if q["gabarito"] == 1 else "Alteração indevida da regra legal",
-                                            exemplo_customizado=novo_exemplo_ia,
-                                            foi_ia=True,
-                                            nome_ia="Gemini IA",
-                                            caput_texto=caput_text
-                                        )
-                                        st.session_state[f"custom_explicacao_{q_id}"] = nova_exp
-                                        try:
-                                            conn_u = db()
-                                            conn_u.execute("UPDATE questoes SET explicacao = ? WHERE id = ?", (nova_exp, q_id))
-                                            conn_u.commit()
-                                            conn_u.close()
-                                        except Exception:
-                                            pass
-                                        st.toast("Exemplo da vida real gerado pelo Gemini e salvo com sucesso!")
-                                        st.rerun()
-                                    else:
-                                        st.error("Não foi possível conectar ao Gemini. Verifique a chave ou conexão.")
-
-                    with c_btn_prox:
-                        if st.button("Próxima Questão ➡️", key=f"next_{q_id}", type="primary"):
-                            st.session_state["q_index"] += 1
-                            st.rerun()
-
-with tab4:
-    st.header("O seu Desempenho")
-    tot, ac, err, pct, b_disc, b_filt, b_cont, due = stats()
+# ------------------------------------------------------------------------------
+# 3. SIMULADOS & QUESTÕES
+# ------------------------------------------------------------------------------
+elif menu == "🎯 Simulados & Questões":
+    st.header("🎯 Simulados de Lei Seca (Padrão Cebraspe / Certo ou Errado)")
     
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Total Respondidas", tot)
-    c2.metric("Acertos", ac)
-    c3.metric("Erros", err)
-    c4.metric("Aproveitamento", f"{pct:.1f}%")
+    tab_gerar, tab_praticar, tab_salvos = st.tabs(["⚡ Gerar Simulado", "📝 Responder Questões", "💾 Filtros Salvos"])
 
-    st.subheader("Desempenho por Caderno / Filtro")
-    if not b_filt.empty:
-        st.dataframe(b_filt, use_container_width=True)
-    else:
-        st.info("Nenhuma questão respondida ainda.")
+    with tab_gerar:
+        st.subheader("Configurar Novo Simulado Personalizado")
+        discs = get_disciplines()
+        if not discs:
+            st.info("Cadastre disciplinas e leis para gerar simulados.")
+        else:
+            d_map = {d["nome"]: d["id"] for d in discs}
+            d_sel = st.selectbox("Disciplina", list(d_map.keys()), key="sim_d_sel")
+            leis = get_laws(d_map[d_sel])
+            if not leis:
+                st.warning("Nenhuma lei cadastrada para esta disciplina.")
+            else:
+                l_map = {l["nome"]: l["id"] for l in leis}
+                l_sel = st.selectbox("Lei", list(l_map.keys()), key="sim_l_sel")
+                lei_id = l_map[l_sel]
 
-    st.subheader("Desempenho por Disciplina")
-    if not b_disc.empty:
-        st.dataframe(b_disc, use_container_width=True)
+                artigos = get_articles(lei_id)
+                if not artigos:
+                    st.warning("Esta lei não possui artigos cadastrados.")
+                else:
+                    st.markdown("### Selecione os Artigos para o Simulado")
+                    todos_art_ids = [a["id"] for a in artigos]
+                    selecionar_todos = st.checkbox("Selecionar Todos os Artigos", value=True)
 
-    st.divider()
-    st.subheader("⚠ Redefinir Estatísticas")
-    if st.button("Zerar Histórico de Respostas / Limpar Dashboard", type="secondary"):
-        zerar_historico_dashboard()
-        st.success("O seu histórico de respostas e indicadores do dashboard foram zerados!")
-        st.rerun()
+                    art_selecionados = []
+                    for a in artigos:
+                        chk = st.checkbox(f"{a['numero']} - {a['texto'][:80]}...", value=selecionar_todos, key=f"art_chk_{a['id']}")
+                        if chk:
+                            art_selecionados.append(a["id"])
 
-with tab5:
-    st.header("Revisão Espaçada")
-    tot, ac, err, pct, b_disc, b_filt, b_cont, due = stats()
-    st.metric("Questões Pendentes para Revisão Hoje", due)
+                    qtd_questoes = st.slider("Quantidade de Questões", min_value=5, max_value=50, value=10, step=5)
+                    nome_filtro = st.text_input("Nome do Filtro / Simulado para Salvar (opcional)", value=f"Simulado {l_sel} - {datetime.now().strftime('%d/%m/%Y')}")
 
-    if due > 0:
+                    if st.button("🚀 Gerar Questões de Simulado", type="primary"):
+                        if not art_selecionados:
+                            st.warning("Selecione pelo menos um artigo.")
+                        else:
+                            filter_id = save_filter(nome_filtro, d_map[d_sel], lei_id, art_selecionados, qtd_questoes)
+                            
+                            conn = db()
+                            conn.execute("DELETE FROM questoes WHERE filtro_id = ?", (filter_id,))
+                            
+                            artigos_escolhidos = conn.execute(
+                                f"SELECT * FROM artigos WHERE id IN ({','.join(['?']*len(art_selecionados))})",
+                                art_selecionados
+                            ).fetchall()
+
+                            geradas = 0
+                            while geradas < qtd_questoes and artigos_escolhidos:
+                                art = random.choice(artigos_escolhidos)
+                                texto_limpo = limpar_e_formatar_texto_lei(art["texto"])
+                                partes = fracionar_artigo_extenso(art["numero"], texto_limpo)
+                                parte = random.choice(partes)
+
+                                rotulo = parte["numero"]
+                                conteudo_base = parte["texto"]
+
+                                caput = obter_texto_caput(art["id"])
+                                assertiva_limpa = limpar_assertiva_dispositivo(conteudo_base)
+                                assertiva_com_nexo = conectar_caput_com_dispositivo(caput, assertiva_limpa, rotulo)
+
+                                # 50% chance de Certo (1) ou Errado (0)
+                                gabarito = random.choice([0, 1])
+                                if gabarito == 1:
+                                    assertiva_final = assertiva_com_nexo
+                                    explicacao = f"O item está **CERTO**, pois reproduz exatamente o texto literal do dispositivo legal ({rotulo})."
+                                else:
+                                    assertiva_final, tipo_troca = alterar_texto_para_errado(assertiva_com_nexo)
+                                    explicacao = f"O item está **ERRADO**, por incorreção material ({tipo_troca}) em relação ao texto literal do dispositivo ({rotulo})."
+
+                                enunciado = construir_enunciado_com_nexo(l_sel, rotulo, assertiva_final, caput, art["numero"])
+
+                                conn.execute("""
+                                    INSERT INTO questoes (lei_id, artigo_id, disciplina_id, filtro_id, artigo_numero, conteudo, enunciado, gabarito, explicacao, criada_em)
+                                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                """, (
+                                    lei_id, art["id"], d_map[d_sel], filter_id, rotulo, conteudo_base, enunciado, gabarito, explicacao, datetime.now().isoformat()
+                                ))
+                                geradas += 1
+
+                            conn.commit()
+                            conn.close()
+                            st.success(f"Simulado gerado com sucesso! Vá para a aba 'Responder Questões' para iniciar.")
+
+    with tab_praticar:
+        st.subheader("Praticar Questões Geradas")
+        filtros = get_saved_filters()
+        if not filtros:
+            st.info("Nenhum simulado gerado ou salvo. Crie um na aba 'Gerenciar/Gerar Simulado'.")
+        else:
+            f_map = {f"[{f['disciplina']}] {f['nome']} ({f['qtd_questoes']} questões - {f['criado_em'][:10]})": f["id"] for f in filtros}
+            f_sel = st.selectbox("Selecione o Simulado", list(f_map.keys()), key="praticar_f_sel")
+            filtro_id_ativo = f_map[f_sel]
+
+            conn = db()
+            questoes = conn.execute("SELECT * FROM questoes WHERE filtro_id = ? ORDER BY id", (filtro_id_ativo,)).fetchall()
+            conn.close()
+
+            if not questoes:
+                st.warning("Este simulado não possui questões gravadas.")
+            else:
+                if "q_idx" not in st.session_state:
+                    st.session_state["q_idx"] = 0
+
+                if st.session_state["q_idx"] >= len(questoes):
+                    st.session_state["q_idx"] = 0
+
+                q = questoes[st.session_state["q_idx"]]
+                st.markdown(f"### Questão {st.session_state['q_idx'] + 1} de {len(questoes)}")
+
+                renderizar_enunciado_estudo(q["enunciado"], q["artigo_numero"])
+
+                resp_key = f"resp_q_{q['id']}"
+                col_c, col_e = st.columns(2)
+                
+                with col_c:
+                    if st.button("🟢 CERTO", key=f"btn_c_{q['id']}", use_container_width=True):
+                        st.session_state[resp_key] = 1
+                with col_e:
+                    if st.button("🔴 ERRADO", key=f"btn_e_{q['id']}", use_container_width=True):
+                        st.session_state[resp_key] = 0
+
+                if resp_key in st.session_state:
+                    usuario_resp = st.session_state[resp_key]
+                    acertou = (usuario_resp == q["gabarito"])
+                    
+                    if acertou:
+                        st.success("🎉 **Resposta Correta!** Parabéns!")
+                    else:
+                        st.error("❌ **Resposta Incorreta!**")
+
+                    st.markdown("### 📋 Gabarito & Fundamentação Legal")
+                    st.info(f"**Gabarito Oficial:** {'CERTO' if q['gabarito'] == 1 else 'ERRADO'}\n\n{q['explicacao']}")
+
+                    conn = db()
+                    existente = conn.execute("SELECT * FROM respostas WHERE usuario_id = ? AND questao_id = ?", (USER_ID, q["id"])).fetchone()
+                    if not existente:
+                        conn.execute(
+                            "INSERT INTO respostas (usuario_id, questao_id, resposta, acertou, respondida_em, ciclo) VALUES (?, ?, ?, ?, ?, ?)",
+                            (USER_ID, q["id"], usuario_resp, 1 if acertou else 0, datetime.now().isoformat(), 1)
+                        )
+                        conn.commit()
+                    conn.close()
+
+                st.markdown("---")
+                col_ant, col_prox = st.columns(2)
+                with col_ant:
+                    if st.button("⬅ Questão Anterior") and st.session_state["q_idx"] > 0:
+                        st.session_state["q_idx"] -= 1
+                        st.rerun()
+                with col_prox:
+                    if st.button("Próxima Questão ➡") and st.session_state["q_idx"] < len(questoes) - 1:
+                        st.session_state["q_idx"] += 1
+                        st.rerun()
+
+    with tab_salvos:
+        st.subheader("Gestão de Filtros Salvos")
+        filtros = get_saved_filters()
+        if not filtros:
+            st.info("Nenhum filtro salvo.")
+        else:
+            for f in filtros:
+                col1, col2 = st.columns([4, 1])
+                with col1:
+                    st.write(f"**{f['disciplina']}** — {f['nome']} | Qtd: {f['qtd_questoes']} | Criado em: {f['criado_em'][:10]}")
+                with col2:
+                    if st.button("🗑 Excluir Filtro", key=f"del_f_{f['id']}"):
+                        delete_filter(f['id'])
+                        st.success("Filtro excluído!")
+                        st.rerun()
+
+# ------------------------------------------------------------------------------
+# 4. MEU DESEMPENHO
+# ------------------------------------------------------------------------------
+elif menu == "📊 Meu Desempenho":
+    st.header("📊 Estatísticas de Desempenho e Ciclo de Estudos")
+    
+    conn = db()
+    total_resp = conn.execute("SELECT COUNT(*) as total FROM respostas WHERE usuario_id = ?", (USER_ID,)).fetchone()["total"]
+    total_acertos = conn.execute("SELECT COUNT(*) as total FROM respostas WHERE usuario_id = ? AND acertou = 1", (USER_ID,)).fetchone()["total"]
+    conn.close()
+
+    taxa_acerto = (total_acertos / total_resp * 100) if total_resp > 0 else 0.0
+
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Questões Respondidas", total_resp)
+    col2.metric("Acertos Totais", total_acertos)
+    col3.metric("Taxa de Acerto", f"{taxa_acerto:.1f}%")
+
+    st.markdown("---")
+    st.subheader("Evolução e Análise por Matéria")
+    if pd and total_resp > 0:
         conn = db()
-        agora_str = datetime.now().isoformat()
-        revs = conn.execute("""
-            SELECT q.* FROM revisoes r
+        df_resp = pd.read_sql_query("""
+            SELECT d.nome as disciplina, r.acertou, r.respondida_em
+            FROM respostas r
             JOIN questoes q ON q.id = r.questao_id
-            WHERE r.usuario_id = ? AND r.proxima_revisao <= ?
-            ORDER BY r.proxima_revisao ASC
-            LIMIT 1
-        """, (USER_ID, agora_str)).fetchone()
-        
-        if not revs:
-            revs = conn.execute("""
-                SELECT q.* FROM revisoes r
-                JOIN questoes q ON q.id = r.questao_id
-                WHERE r.usuario_id = ?
-                LIMIT 1
-            """, (USER_ID,)).fetchone()
-            
+            JOIN disciplinas d ON d.id = q.disciplina_id
+            WHERE r.usuario_id = ?
+        """, conn, params=(USER_ID,))
         conn.close()
-
-        if revs:
-            st.subheader("Questão para Revisão")
-            
-            num_disp = revs['artigo_numero']
-            st.markdown(f"**Dispositivo:** `{obter_rotulo_dispositivo(num_disp)}`")
-
-            is_subdevice = any(tag in num_disp.lower() for tag in ["§", "parágrafo", "inciso", "alínea", "alinea"]) or re.search(rf'\b{REGEX_ROMANO}\b', num_disp, re.IGNORECASE)
-            if is_subdevice and "artigo_id" in revs.keys() and revs["artigo_id"]:
-                caput_text = obter_texto_caput(revs["artigo_id"])
-                if caput_text:
-                    with st.expander("📜 Contexto: Artigo Principal (Caput)", expanded=False):
-                        st.write(f"_{caput_text}_")
-
-            renderizar_enunciado_estudo(revs["enunciado"], num_disp=num_disp)
-            
-            q_id_rev = revs["id"]
-            resp_rev = st.radio("A sua resposta:", ["Certo", "Errado"], key=f"rev_ans_{q_id_rev}")
-            
-            if st.button("Enviar Resposta da Revisão", key=f"btn_rev_{q_id_rev}", type="primary"):
-                val = 1 if resp_rev == "Certo" else 0
-                acertou = record_answer(q_id_rev, val, cycle=2)
-                if acertou:
-                    st.success("✨ Excelente! Próxima revisão agendada.")
-                else:
-                    st.error("❌ Errou! Ela voltará para revisão em breve.")
-                st.markdown(f"{revs['explicacao']}", unsafe_allow_html=True)
-                st.rerun()
-        else:
-            st.info("Nenhuma questão detalhada encontrada para revisão neste momento.")
+        
+        if not df_resp.empty:
+            st.bar_chart(df_resp.groupby("disciplina")["acertou"].mean() * 100)
     else:
-        st.success("Tudo em dia! Não há revisões pendentes para hoje.")
+        st.info("Resolva questões para visualizar gráficos analíticos de desempenho.")
 
-if is_admin_user:
-    with tab_admin:
-        st.header("🛡 Painel de Controlo do Administrador")
-        st.write("Gerencie e aprove o acesso de novos utilizadores ao sistema de forma rápida e segura.")
-        
-        usuarios_cadastrados = listar_usuarios()
-        st.info(f"**Total de utilizadores cadastrados no sistema:** {len(usuarios_cadastrados)}")
-        
-        st.subheader("👥 Lista de Utilizadores e Autorizações")
-        for u in usuarios_cadastrados:
-            with st.container(border=True):
-                col_info, col_toggle, col_del = st.columns([3, 2, 1])
-                
-                col_info.markdown(f"**E-mail / Utilizador:** `{u['username']}`")
-                col_info.caption(f"Criado em: {u['criado_em'][:10]}")
-                
-                is_this_admin = u['username'].strip().lower() == ADMIN_EMAIL
-                
-                if is_this_admin:
-                    col_toggle.markdown("👑 **Administrador Principal**")
-                else:
-                    status_atual = bool(u['autorizado'])
-                    novo_status = col_toggle.toggle("Acesso Autorizado", value=status_atual, key=f"aut_tab_{u['id']}")
-                    if novo_status != status_atual:
-                        alterar_status_autorizacao(u['id'], 1 if novo_status else 0)
-                        st.toast(f"Status de autorização de {u['username']} atualizado com sucesso!")
-                        st.rerun()
+# ------------------------------------------------------------------------------
+# 5. CONFIGURAR IA & API
+# ------------------------------------------------------------------------------
+elif menu == "🔑 Configurar IA & API":
+    st.header("🔑 Chaves de API para Inteligência Artificial")
+    st.markdown("Insira sua chave da API Google Gemini ou OpenAI para potencializar a geração dinâmica de exemplos práticos avançados.")
 
-                    if col_del.button("🗑️ Excluir", key=f"del_tab_{u['id']}", help="Remover Utilizador"):
-                        excluir_usuario(u['id'])
-                        st.success(f"Utilizador {u['username']} removido do sistema!")
-                        st.rerun()
+    gemini_key_input = st.text_input("Chave API Google Gemini (GEMINI_API_KEY)", type="password", value=st.session_state.get("gemini_api_key", ""))
+    openai_key_input = st.text_input("Chave API OpenAI (OPENAI_API_KEY)", type="password", value=st.session_state.get("openai_api_key", ""))
 
-        st.divider()
-        st.subheader("➕ Criar Novo Utilizador Autorizado Diretamente")
-        col_au1, col_au2 = st.columns(2)
-        with col_au1:
-            adm_new_u = st.text_input("E-mail do Novo Utilizador", key="adm_u_tab")
-        with col_au2:
-            adm_new_p = st.text_input("Palavra-passe Inicial", type="password", key="adm_p_tab")
-            
-        if st.button("Cadastrar e Autorizar Imediatamente", type="primary"):
-            if adm_new_u and adm_new_p:
-                ok, msg = cadastrar_usuario(adm_new_u, adm_new_p, autorizado=1)
-                if ok:
-                    st.success(msg)
+    if st.button("Guardar Chaves"):
+        st.session_state["gemini_api_key"] = gemini_key_input.strip()
+        st.session_state["openai_api_key"] = openai_key_input.strip()
+        st.success("Chaves de API guardadas com sucesso na sessão!")
+
+# ------------------------------------------------------------------------------
+# 6. GESTÃO DE UTILIZADORES (ADMIN)
+# ------------------------------------------------------------------------------
+elif menu == "👥 Gestão de Utilizadores" and is_admin_user:
+    st.header("👥 Painel de Administração de Utilizadores")
+    st.markdown(f"Administrador loggado: **{USERNAME}**")
+
+    users = listar_usuarios()
+    for u in users:
+        col1, col2, col3, col4 = st.columns([2, 1, 1, 1])
+        with col1:
+            st.write(f"**{u['username']}** {'👑 (Admin)' if u['username'].lower() == ADMIN_EMAIL else ''}")
+        with col2:
+            st.write("🟢 Autorizado" if u['autorizado'] == 1 else "⏳ Pendente")
+        with col3:
+            if u['username'].lower() != ADMIN_EMAIL:
+                novo_status = 0 if u['autorizado'] == 1 else 1
+                label_btn = "Bloquear" if u['autorizado'] == 1 else "Aprovar"
+                if st.button(label_btn, key=f"st_{u['id']}"):
+                    alterar_status_autorizacao(u['id'], novo_status)
+                    st.success(f"Status do utilizador atualizado!")
                     st.rerun()
-                else:
-                    st.error(msg)
-            else:
-                st.warning("Preencha todos os campos para prosseguir.")
+        with col4:
+            if u['username'].lower() != ADMIN_EMAIL:
+                if st.button("🗑 Excluir", key=f"del_u_{u['id']}"):
+                    excluir_usuario(u['id'])
+                    st.success("Utilizador excluído!")
+                    st.rerun()
 
 
 
