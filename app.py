@@ -693,7 +693,7 @@ def save_filter(name, discipline_id, law_id, article_ids, qtd_questoes):
     conn = db()
     art_str = ",".join(map(str, article_ids))
     cur = conn.execute("""
-        INSERT INTO filtros_salvos (usuario_id, nome, discipline_id, lei_id, artigos_ids, qtd_questoes, criado_em)
+        INSERT INTO filtros_salvos (usuario_id, nome, disciplina_id, lei_id, artigos_ids, qtd_questoes, criado_em)
         VALUES (?, ?, ?, ?, ?, ?, ?)
     """, (USER_ID, name, discipline_id, law_id, art_str, qtd_questoes, datetime.now().isoformat()))
     filter_id = cur.lastrowid
@@ -1599,5 +1599,6 @@ if is_admin_user:
                     st.error(msg)
             else:
                 st.warning("Preencha todos os campos para prosseguir.")
+
 
 
