@@ -828,7 +828,11 @@ with st.sidebar:
 
     st.markdown("### 🤖 Inteligência Artificial")
     chave_det = obter_chave_gemini()
-    st.caption(f"Status: **{'🟢 Ativa' : '⚪ Offline'}**" if chave_det else "Status: **⚪ Offline**")
+    
+    # LINHA CORRIGIDA ABAIXO:
+    status_texto = "🟢 Ativa" if chave_det else "⚪ Offline"
+    st.caption(f"Status: **{status_texto}**")
+    
     nova_chave = st.text_input("GEMINI_API_KEY:", value=st.session_state.get("gemini_api_key", chave_det or ""), type="password")
     if st.button("Salvar Chave API"):
         if nova_chave.strip():
@@ -987,7 +991,7 @@ with tab5:
     st.header("🔄 Revisões Inteligentes (Spaced Repetition)")
     conn = db()
     revisoes_pendentes = conn.execute("""
-        r.*, q.enunciado, q.explicacao, d.nome disciplina
+        SELECT r.*, q.enunciado, q.explicacao, d.nome disciplina
         FROM revisoes r
         JOIN questoes q ON q.id = r.questao_id
         JOIN disciplinas d ON d.id = q.disciplina_id
