@@ -294,87 +294,7 @@ if not st.session_state["logged_in"]:
 
 USER_ID = st.session_state["user_id"]
 USERNAME = st.session_state["username"]
-
 is_admin_user = bool(USERNAME and USERNAME.strip().lower() == ADMIN_EMAIL)
-
-with st.sidebar:
-    st.markdown(f"👤 Utilizador: **{USERNAME}**")
-    if st.button("🚪 Sair / Logout"):
-        st.session_state["logged_in"] = False
-        st.session_state["user_id"] = None
-        st.session_state["username"] = None
-        st.rerun()
-    st.divider()
-
-    st.markdown("### 🤖 Inteligência Artificial (IA)")
-    chave_gemini_detectada = obter_chave_gemini()
-    status_ia = "🟢 Ativa (Google Gemini)" if chave_gemini_detectada else "⚪ Modo Regras / Offline"
-    st.caption(f"Status: **{status_ia}**")
-
-    with st.expander("🔑 Chave API Gemini (Google AI)", expanded=(not bool(chave_gemini_detectada))):
-        st.markdown(
-            "Insira sua chave gratuita do **Google AI Studio** para gerar exemplos práticos da vida real inéditos e adaptados a qualquer dispositivo:"
-        )
-        nova_chave_gemini = st.text_input(
-            "GEMINI_API_KEY:",
-            value=st.session_state.get("gemini_api_key", chave_gemini_detectada or ""),
-            type="password",
-            key="input_gemini_side"
-        )
-        col_s1, col_s2 = st.columns(2)
-        if col_s1.button("Salvar Chave", key="btn_save_key_side"):
-            if nova_chave_gemini.strip():
-                st.session_state["gemini_api_key"] = nova_chave_gemini.strip()
-                os.environ["GEMINI_API_KEY"] = nova_chave_gemini.strip()
-                st.success("Chave salva na sessão!")
-                st.rerun()
-            else:
-                st.session_state.pop("gemini_api_key", None)
-                st.info("Chave removida.")
-                st.rerun()
-        if col_s2.button("Testar IA", key="btn_test_ia_side"):
-            with st.spinner("Testando conexão com a IA..."):
-                t_key = nova_chave_gemini.strip() or chave_gemini_detectada
-                ex_test = gerar_exemplo_gemini("Art. 5º, II", "ninguém será obrigado a fazer ou deixar de fazer alguma coisa senão em virtude de lei", chave_manual=t_key)
-                if ex_test:
-                    st.success("✅ IA conectada e gerando exemplos com sucesso!")
-                else:
-                    st.error("❌ Erro ao conectar com Gemini. Verifique a chave inserida.")
-
-        st.caption("Obtenha sua chave gratuita em: [Google AI Studio](https://aistudio.google.com/app/apikey)")
-
-    auto_ia_ativo = st.toggle(
-        "⚡ Gerar IA ao responder questão",
-        value=st.session_state.get("auto_ia_responder", True),
-        key="toggle_auto_ia",
-        help="Ao responder Certo/Errado em uma questão, a IA cria e salva um exemplo da vida real sob medida caso ainda não exista!"
-    )
-    st.session_state["auto_ia_responder"] = auto_ia_ativo
-    st.divider()
-
-    if is_admin_user:
-        st.subheader("⚙ Atalho Admin")
-        with st.expander("👥 Gerir Utilizadores", expanded=False):
-            usuarios_cadastrados = listar_usuarios()
-            st.write(f"**Total de utilizadores:** {len(usuarios_cadastrados)}")
-            for u in usuarios_cadastrados:
-                st.markdown(f"**{u['username']}**")
-                c_status, c_del = st.columns([3, 1])
-                is_this_admin = u['username'].strip().lower() == ADMIN_EMAIL
-                if is_this_admin:
-                    c_status.caption("👑 Admin Principal")
-                else:
-                    status_atual = bool(u['autorizado'])
-                    novo_status = c_status.toggle("Autorizado", value=status_atual, key=f"aut_side_{u['id']}")
-                    if novo_status != status_atual:
-                        alterar_status_autorizacao(u['id'], 1 if novo_status else 0)
-                        st.toast(f"Status de {u['username']} alterado!")
-                        st.rerun()
-                    if c_del.button("❌", key=f"del_side_{u['id']}", help="Excluir Utilizador"):
-                        excluir_usuario(u['id'])
-                        st.success(f"Utilizador {u['username']} removido!")
-                        st.rerun()
-                st.divider()
 
 def add_discipline(name):
     conn = db()
@@ -1635,6 +1555,89 @@ def stats():
     conn.close()
     return total, hits, errors, pct, b_disc, b_filt, b_cont, due
 
+# ==============================================================================
+# INTERFACE PRINCIPAL DO STREAMLIT: BARRA LATERAL & ABAS
+# ==============================================================================
+
+with st.sidebar:
+    st.markdown(f"👤 Utilizador: **{USERNAME}**")
+    if st.button("🚪 Sair / Logout"):
+        st.session_state["logged_in"] = False
+        st.session_state["user_id"] = None
+        st.session_state["username"] = None
+        st.rerun()
+    st.divider()
+
+    st.markdown("### 🤖 Inteligência Artificial (IA)")
+    chave_gemini_detectada = obter_chave_gemini()
+    status_ia = "🟢 Ativa (Google Gemini)" if chave_gemini_detectada else "⚪ Modo Regras / Offline"
+    st.caption(f"Status: **{status_ia}**")
+
+    with st.expander("🔑 Chave API Gemini (Google AI)", expanded=(not bool(chave_gemini_detectada))):
+        st.markdown(
+            "Insira sua chave gratuita do **Google AI Studio** para gerar exemplos práticos da vida real inéditos e adaptados a qualquer dispositivo:"
+        )
+        nova_chave_gemini = st.text_input(
+            "GEMINI_API_KEY:",
+            value=st.session_state.get("gemini_api_key", chave_gemini_detectada or ""),
+            type="password",
+            key="input_gemini_side"
+        )
+        col_s1, col_s2 = st.columns(2)
+        if col_s1.button("Salvar Chave", key="btn_save_key_side"):
+            if nova_chave_gemini.strip():
+                st.session_state["gemini_api_key"] = nova_chave_gemini.strip()
+                os.environ["GEMINI_API_KEY"] = nova_chave_gemini.strip()
+                st.success("Chave salva na sessão!")
+                st.rerun()
+            else:
+                st.session_state.pop("gemini_api_key", None)
+                st.info("Chave removida.")
+                st.rerun()
+        if col_s2.button("Testar IA", key="btn_test_ia_side"):
+            with st.spinner("Testando conexão com a IA..."):
+                t_key = nova_chave_gemini.strip() or chave_gemini_detectada
+                ex_test = gerar_exemplo_gemini("Art. 5º, II", "ninguém será obrigado a fazer ou deixar de fazer alguma coisa senão em virtude de lei", chave_manual=t_key)
+                if ex_test:
+                    st.success("✅ IA conectada e gerando exemplos com sucesso!")
+                else:
+                    st.error("❌ Erro ao conectar com Gemini. Verifique a chave inserida.")
+
+        st.caption("Obtenha sua chave gratuita em: [Google AI Studio](https://aistudio.google.com/app/apikey)")
+
+    auto_ia_ativo = st.toggle(
+        "⚡ Gerar IA ao responder questão",
+        value=st.session_state.get("auto_ia_responder", True),
+        key="toggle_auto_ia",
+        help="Ao responder Certo/Errado em uma questão, a IA cria e salva um exemplo da vida real sob medida caso ainda não exista!"
+    )
+    st.session_state["auto_ia_responder"] = auto_ia_ativo
+    st.divider()
+
+    if is_admin_user:
+        st.subheader("⚙ Atalho Admin")
+        with st.expander("👥 Gerir Utilizadores", expanded=False):
+            usuarios_cadastrados = listar_usuarios()
+            st.write(f"**Total de utilizadores:** {len(usuarios_cadastrados)}")
+            for u in usuarios_cadastrados:
+                st.markdown(f"**{u['username']}**")
+                c_status, c_del = st.columns([3, 1])
+                is_this_admin = u['username'].strip().lower() == ADMIN_EMAIL
+                if is_this_admin:
+                    c_status.caption("👑 Admin Principal")
+                else:
+                    status_atual = bool(u['autorizado'])
+                    novo_status = c_status.toggle("Autorizado", value=status_atual, key=f"aut_side_{u['id']}")
+                    if novo_status != status_atual:
+                        alterar_status_autorizacao(u['id'], 1 if novo_status else 0)
+                        st.toast(f"Status de {u['username']} alterado!")
+                        st.rerun()
+                    if c_del.button("❌", key=f"del_side_{u['id']}", help="Excluir Utilizador"):
+                        excluir_usuario(u['id'])
+                        st.success(f"Utilizador {u['username']} removido!")
+                        st.rerun()
+                st.divider()
+
 st.title("⚖ Decorando Lei Seca")
 
 is_admin_user = bool(USERNAME and USERNAME.strip().lower() == ADMIN_EMAIL)
@@ -2150,6 +2153,7 @@ if is_admin_user:
                     st.error(msg)
             else:
                 st.warning("Preencha todos os campos para prosseguir.")
+
 
 
 
