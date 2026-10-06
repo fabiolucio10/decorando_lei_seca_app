@@ -157,6 +157,23 @@ def db():
 def hash_password(password):
     return hashlib.sha256(password.encode("utf-8")).hexdigest()
 
+def limpar_conteudo_html_para_renderizacao(conteudo):
+    """
+    Remove cercas de código Markdown que possam ter sido salvas em versões
+    anteriores e normaliza HTML escapado antes da renderização no Streamlit.
+    Isso impede que <div>, <style> etc. apareçam como código na tela.
+    """
+    if conteudo is None:
+        return ""
+    texto = str(conteudo).strip()
+    # Remove blocos ```html ... ``` ou ``` ... ```
+    texto = re.sub(r"^\s*```(?:html|HTML)?\s*", "", texto)
+    texto = re.sub(r"\s*```\s*$", "", texto)
+    # Caso uma versão anterior tenha armazenado o HTML escapado
+    if "&lt;div" in texto or "&lt;style" in texto or "&gt;" in texto:
+        texto = html.unescape(texto)
+    return texto.strip()
+
 def limpar_e_formatar_texto_lei(texto):
     if not texto:
         return ""
@@ -843,41 +860,64 @@ def obter_rotulo_dispositivo(numero_dispositivo):
 
 
 def renderizar_enunciado_estudo(enunciado, num_disp=None):
-    """
-    Renderiza o enunciado em cartões visuais, sem alterar o conteúdo da questão.
-    O texto salvo no banco continua no mesmo formato; apenas a apresentação é melhorada.
+    """Renderiza a questão em cartões visuais.
+
+    Também corrige questões antigas que tenham sido salvas com o HTML dentro
+    de ```html ... ``` ou com HTML escapado. O banco não precisa ser recriado.
     """
     if not enunciado:
         return
 
-    texto = str(enunciado).strip()
+    texto = limpar_conteudo_html_para_renderizacao(enunciado)
 
-    # Extrai referência normativa, comando e assertiva do formato atual.
-    linhas = [linha.strip() for linha in texto.splitlines() if linha.strip()]
-    referencia = ""
-    comando = ""
-    assertiva = ""
+    # ------------------------------------------------------------------
+    # Questões antigas: algumas versões anteriores salvaram os próprios
+    # cartões HTML dentro do campo enunciado. Recuperamos apenas o texto
+    # necessário e reconstruímos os cartões corretamente.
+    # ------------------------------------------------------------------
+    if "questao-comando-card" in texto or "questao-assertiva-card" in texto:
+        ref_match = re.search(
+            r'(?:Referência Normativa:\s*)(.*?)(?=<div\s+class=["\']questao-comando-card|$)',
+            texto,
+            flags=re.IGNORECASE | re.DOTALL
+        )
+        referencia = ref_match.group(1).strip() if ref_match else ""
 
-    if linhas:
-        referencia = re.sub(r'\*\*', '', linhas[0]).strip()
+        comando_match = re.search(
+            r'<div\s+class=["\']questao-comando-text["\']\s*>(.*?)</div>',
+            texto, flags=re.IGNORECASE | re.DOTALL
+        )
+        assertiva_match = re.search(
+            r'<div\s+class=["\']questao-assertiva-text["\']\s*>(.*?)</div>',
+            texto, flags=re.IGNORECASE | re.DOTALL
+        )
 
-    m = re.search(r'À luz da literalidade.*?(?:\n\n|\n|$)', texto, flags=re.IGNORECASE | re.DOTALL)
-    if m:
-        comando = re.sub(r'\s+', ' ', m.group(0)).strip()
+        comando = html.unescape(re.sub(r'<[^>]+>', '', comando_match.group(1))) if comando_match else "À luz da literalidade da legislação e do dispositivo legal em exame, julgue o item a seguir:"
+        assertiva = html.unescape(re.sub(r'<[^>]+>', '', assertiva_match.group(1))) if assertiva_match else ""
+        referencia = html.unescape(re.sub(r'<[^>]+>', '', referencia))
     else:
-        comando = "À luz da literalidade da legislação e do dispositivo legal em exame, julgue o item a seguir:"
+        # Formato original salvo pelo gerador: Markdown + assertiva entre > "..."
+        linhas = [linha.strip() for linha in texto.splitlines() if linha.strip()]
+        referencia = re.sub(r'\*\*', '', linhas[0]).strip() if linhas else ""
 
-    m_assertiva = re.search(r'>\s*"([\s\S]*)"\s*$', texto)
-    if m_assertiva:
-        assertiva = m_assertiva.group(1).strip()
-    else:
-        # Fallback para questões antigas que eventualmente não estejam no formato esperado.
-        partes = texto.split('\n\n')
-        assertiva = partes[-1].strip().lstrip('> ').strip('"') if partes else texto
+        m = re.search(
+            r'(À luz da literalidade.*?)(?:\n\n|\n|$)',
+            texto,
+            flags=re.IGNORECASE | re.DOTALL
+        )
+        comando = re.sub(r'\s+', ' ', m.group(1)).strip() if m else "À luz da literalidade da legislação e do dispositivo legal em exame, julgue o item a seguir:"
 
-    referencia = html.escape(referencia)
-    comando = html.escape(comando)
-    assertiva = html.escape(assertiva)
+        m_assertiva = re.search(r'>\s*["“](.*?)["”]\s*$', texto, flags=re.DOTALL)
+        if m_assertiva:
+            assertiva = m_assertiva.group(1).strip()
+        else:
+            # Compatibilidade com questões antigas.
+            partes = texto.split('\n\n')
+            assertiva = partes[-1].strip().lstrip('> ').strip('"“”') if partes else texto
+
+    referencia = html.escape(referencia.strip())
+    comando = html.escape(comando.strip())
+    assertiva = html.escape(assertiva.strip())
 
     html_enunciado = f"""
     <div class="questao-estudo-wrapper">
@@ -897,7 +937,7 @@ def renderizar_enunciado_estudo(enunciado, num_disp=None):
         </div>
     </div>
     """
-    st.markdown(textwrap.dedent(html_enunciado).strip(), unsafe_allow_html=True)
+    st.markdown(limpar_conteudo_html_para_renderizacao(textwrap.dedent(html_enunciado)), unsafe_allow_html=True)
 
 def alterar_texto_para_errado(texto):
     """
@@ -2584,7 +2624,7 @@ with tab3:
                     explicacao_exibir = st.session_state.get(f"custom_explicacao_{q_id}", q['explicacao'])
                     # Corrige também explicações antigas já salvas no banco que possuem indentação.
                     # Sem dedent, o Streamlit pode interpretar o HTML como bloco de código.
-                    explicacao_html = textwrap.dedent(str(explicacao_exibir or "")).strip()
+                    explicacao_html = limpar_conteudo_html_para_renderizacao(textwrap.dedent(str(explicacao_exibir or "")))
                     st.markdown(explicacao_html, unsafe_allow_html=True)
 
                     c_btn_ia, c_btn_prox = st.columns([1, 1])
