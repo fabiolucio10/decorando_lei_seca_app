@@ -12,7 +12,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const app = express();
-const PORT = 3000;
+const PORT = Number(process.env.PORT) || 3000;
 
 app.use(express.json());
 
@@ -91,6 +91,51 @@ app.get('/api/python-code', (req, res) => {
     return res.status(404).send('Arquivo app.py não encontrado');
   } catch (err: any) {
     return res.status(500).send('Erro ao ler código python: ' + err.message);
+  }
+});
+
+// Endpoint to fetch requirements.txt
+app.get('/api/requirements', (req, res) => {
+  try {
+    const filePath = path.join(__dirname, 'requirements.txt');
+    if (fs.existsSync(filePath)) {
+      const content = fs.readFileSync(filePath, 'utf-8');
+      res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+      return res.send(content);
+    }
+    return res.status(404).send('Arquivo requirements.txt não encontrado');
+  } catch (err: any) {
+    return res.status(500).send('Erro ao ler requirements: ' + err.message);
+  }
+});
+
+// Endpoint to fetch render.yaml
+app.get('/api/render-yaml', (req, res) => {
+  try {
+    const filePath = path.join(__dirname, 'render.yaml');
+    if (fs.existsSync(filePath)) {
+      const content = fs.readFileSync(filePath, 'utf-8');
+      res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+      return res.send(content);
+    }
+    return res.status(404).send('Arquivo render.yaml não encontrado');
+  } catch (err: any) {
+    return res.status(500).send('Erro ao ler render.yaml: ' + err.message);
+  }
+});
+
+// Endpoint to fetch deployment instructions
+app.get('/api/instrucoes', (req, res) => {
+  try {
+    const filePath = path.join(__dirname, 'INSTRUCOES_VSCODE_E_RENDER.md');
+    if (fs.existsSync(filePath)) {
+      const content = fs.readFileSync(filePath, 'utf-8');
+      res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+      return res.send(content);
+    }
+    return res.status(404).send('Arquivo de instruções não encontrado');
+  } catch (err: any) {
+    return res.status(500).send('Erro ao ler instruções: ' + err.message);
   }
 });
 

@@ -292,60 +292,72 @@ export const QuestionSolver: React.FC<QuestionSolverProps> = ({
             </div>
 
             {/* Literal text of law */}
-            <div className="bg-slate-50 rounded-lg p-4 border border-slate-200 text-xs sm:text-sm">
-              <div className="flex items-center gap-2 font-semibold text-slate-800 mb-1.5">
+            <div className="bg-slate-50 rounded-xl p-5 border-2 border-blue-200 text-xs sm:text-sm shadow-xs">
+              <div className="flex items-center gap-2 font-bold text-blue-900 mb-2">
                 <BookOpen className="w-4 h-4 text-blue-600" />
-                <span>Dispositivo Literal da Lei Seca ({currentQ.deviceLabel})</span>
+                <span className="text-sm">Dispositivo Literal da Lei Seca ({currentQ.deviceLabel})</span>
               </div>
-              <blockquote className="text-slate-700 italic border-l-2 border-blue-400 pl-3 my-1">
+              <blockquote className="text-slate-900 font-medium italic border-l-4 border-blue-600 pl-3.5 my-2 leading-relaxed">
                 "{currentQ.explanation.literalText}"
               </blockquote>
               {currentQ.caputText && currentQ.caputText.trim() !== currentQ.explanation.literalText.trim() && (
-                <div className="mt-2.5 pt-2 border-t border-dashed border-slate-300 text-xs text-slate-600">
-                  <span className="font-semibold text-blue-900">📜 Contexto do Artigo Principal (Caput de Origem):</span>
-                  <p className="italic mt-0.5 text-slate-700">"{currentQ.caputText}"</p>
+                <div className="mt-3 pt-3 border-t border-dashed border-blue-200 text-xs">
+                  <span className="font-bold text-blue-950 flex items-center gap-1.5 mb-1">
+                    📜 Contexto do Artigo Principal (Caput de Origem):
+                  </span>
+                  <p className="italic text-slate-800 leading-relaxed font-medium">"{currentQ.caputText}"</p>
                 </div>
               )}
             </div>
 
             {/* The requested Objective Practical Example tailored to the device */}
-            <div className="bg-amber-50/60 rounded-xl p-5 border border-amber-200/80 text-xs sm:text-sm space-y-3">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2 font-bold text-amber-900">
+            <div className="bg-amber-50/80 rounded-xl p-6 border-2 border-amber-300 text-xs sm:text-sm space-y-3.5 shadow-xs">
+              <div className="flex items-center justify-between border-b border-amber-200/80 pb-3">
+                <div className="flex items-center gap-2 font-extrabold text-amber-950 text-sm">
                   <Lightbulb className="w-4 h-4 text-amber-600" />
                   <span>Exemplo Prático e Objetivo da Vida Real</span>
                 </div>
                 <button
                   onClick={handleGenerateAiExample}
                   disabled={isGeneratingAiExample}
-                  className="flex items-center gap-1 text-xs text-amber-800 hover:text-amber-950 underline font-medium cursor-pointer"
+                  className="flex items-center gap-1 text-xs bg-amber-100 hover:bg-amber-200 border border-amber-300 text-amber-900 px-2.5 py-1 rounded-lg font-semibold cursor-pointer transition-colors shadow-2xs"
                   title="Gerar variação com inteligência artificial"
                 >
-                  <Sparkles className="w-3 h-3 text-amber-600" />
-                  {isGeneratingAiExample ? 'Gerando...' : 'Gerar Novo Caso com IA'}
+                  <Sparkles className="w-3.5 h-3.5 text-amber-600" />
+                  <span>{isGeneratingAiExample ? 'Gerando com IA...' : 'Gerar Novo Caso com IA'}</span>
                 </button>
               </div>
 
-              <div className="text-slate-800 space-y-2 leading-relaxed">
-                <p>
-                  <strong>Situação Concreta:</strong>{' '}
-                  {aiExample?.situacaoReal || currentQ.explanation.realSituation}
-                </p>
+              <div className="space-y-2.5">
+                <div className="bg-white p-3 rounded-lg border border-amber-200/80 shadow-2xs">
+                  <span className="font-bold text-blue-700 block mb-0.5 text-xs">🏢 Situação Concreta:</span>
+                  <p className="text-slate-900 font-medium leading-relaxed">
+                    {aiExample?.situacaoReal || currentQ.explanation.realSituation}
+                  </p>
+                </div>
 
-                <p className="text-slate-700">
-                  <strong>Aplicação Prática:</strong>{' '}
-                  {aiExample?.aplicacaoRegra || currentQ.explanation.ruleApplication}
-                </p>
+                <div className="bg-white p-3 rounded-lg border border-amber-200/80 shadow-2xs">
+                  <span className="font-bold text-emerald-700 block mb-0.5 text-xs">⚖️ Aplicação Prática da Regra:</span>
+                  <p className="text-slate-900 font-medium leading-relaxed">
+                    {aiExample?.aplicacaoRegra || currentQ.explanation.ruleApplication}
+                  </p>
+                </div>
 
-                <p className="text-slate-700">
-                  <strong>Objetivo da Regra:</strong>{' '}
-                  {aiExample?.objetivoRegra || currentQ.explanation.ruleObjective}
-                </p>
+                <div className="bg-white p-3 rounded-lg border border-amber-200/80 shadow-2xs">
+                  <span className="font-bold text-purple-700 block mb-0.5 text-xs">🎯 Objetivo da Regra Legal:</span>
+                  <p className="text-slate-900 font-medium leading-relaxed">
+                    {aiExample?.objetivoRegra || currentQ.explanation.ruleObjective}
+                  </p>
+                </div>
 
                 {(aiExample?.bizuMemorizacao || currentQ.explanation.bizu) && (
-                  <div className="mt-3 pt-2 border-t border-amber-200/60 text-amber-900 font-medium">
-                    🎯 <strong>Bizu de Memorização:</strong>{' '}
-                    {aiExample?.bizuMemorizacao || currentQ.explanation.bizu}
+                  <div className="bg-gradient-to-r from-amber-100 to-amber-200/90 p-3.5 rounded-lg border border-amber-400 text-amber-950 font-medium shadow-2xs">
+                    <span className="font-extrabold text-amber-900 flex items-center gap-1 text-xs mb-0.5">
+                      ⚡ Bizu de Memorização:
+                    </span>
+                    <p className="text-amber-950 font-bold leading-relaxed">
+                      {aiExample?.bizuMemorizacao || currentQ.explanation.bizu}
+                    </p>
                   </div>
                 )}
               </div>

@@ -1,5 +1,7 @@
-streamlit==1.38.0
-PyMuPDF==1.24.9
-psycopg2-binary==2.9.9
-pandas==2.2.2
-SQLAlchemy==2.0.32
+# Dependências Python para execução local no VSCode e deploy no Render
+streamlit>=1.35.0
+pandas>=2.0.0
+pymupdf>=1.23.0
+google-genai>=0.1.0
+requests>=2.31.0
+python-dotenv>=1.0.0
