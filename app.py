@@ -802,7 +802,15 @@ def generate_questions_for_articles(discipline_id, law_id, article_ids, qtd_tota
                     explicacao = gerar_explicacao_humana(numero_dispositivo, text, False, tipo_troca, modified_text)
 
         elif "Gemini" in motor_ia:
-            gemini_key = st.secrets.get("GEMINI_API_KEY", os.getenv("GEMINI_API_KEY"))
+            # Tratamento seguro para st.secrets para evitar StreamlitSecretNotFoundError caso não haja secrets.toml configurado
+            gemini_key = None
+            try:
+                gemini_key = st.secrets.get("GEMINI_API_KEY")
+            except Exception:
+                pass
+            if not gemini_key:
+                gemini_key = os.getenv("GEMINI_API_KEY")
+
             if gemini_key and genai:
                 try:
                     prompt = (
@@ -817,13 +825,13 @@ def generate_questions_for_articles(discipline_id, law_id, article_ids, qtd_tota
                     if hasattr(genai, "Client"):
                         client = genai.Client(api_key=gemini_key)
                         response = client.models.generate_content(
-                            model="models/gemini-3.8-flash",
+                            model="models/gemini-2.5-flash",
                             contents=prompt
                         )
                         enunciado = response.text
                     else:
                         genai.configure(api_key=gemini_key)
-                        model = genai.GenerativeModel("models/gemini-3.8-flash")
+                        model = genai.GenerativeModel("models/gemini-1.5-flash")
                         response = model.generate_content(prompt)
                         enunciado = response.text
                         
@@ -853,7 +861,14 @@ def generate_questions_for_articles(discipline_id, law_id, article_ids, qtd_tota
                     explicacao = gerar_explicacao_humana(numero_dispositivo, text, False, tipo_troca, modified_text)
 
         elif "OpenAI" in motor_ia:
-            api_key = st.secrets.get("OPENAI_API_KEY", os.getenv("OPENAI_API_KEY"))
+            api_key = None
+            try:
+                api_key = st.secrets.get("OPENAI_API_KEY")
+            except Exception:
+                pass
+            if not api_key:
+                api_key = os.getenv("OPENAI_API_KEY")
+
             if api_key and openai:
                 try:
                     client = openai.OpenAI(api_key=api_key)
