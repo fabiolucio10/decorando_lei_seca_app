@@ -5,21 +5,11 @@ import random
 import re
 import sqlite3
 import logging
-import urllib.request
-import urllib.error
 from datetime import datetime, timedelta
 from pathlib import Path
 
-try:
-    import fitz  # PyMuPDF
-except ImportError:
-    fitz = None
-
-try:
-    import pandas as pd
-except ImportError:
-    pd = None
-
+import fitz  # PyMuPDF
+import pandas as pd
 import streamlit as st
 
 try:
@@ -27,6 +17,7 @@ try:
 except ImportError:
     openai = None
 
+# Suporte ao SDK atualizado google-genai e ao legado google.generativeai
 try:
     from google import genai
 except ImportError:
@@ -40,8 +31,10 @@ DB_FILE = APP_DIR / "decorando_lei.db"
 PDF_DIR = APP_DIR / "leis_importadas"
 PDF_DIR.mkdir(exist_ok=True)
 
+# Definição do e-mail de administrador exclusivo
 ADMIN_EMAIL = "fabiolucio277@gmail.com"
 
+# Configuração da página - Mantém a barra lateral sempre expandida por padrão
 st.set_page_config(
     page_title="Decorando Lei Seca",
     page_icon="⚖",
@@ -49,6 +42,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
+# Estilização CSS aprimorada para justificar os textos e alinhar o layout
 st.markdown("""
     <style>
     #MainMenu {visibility: hidden;}
@@ -63,16 +57,16 @@ st.markdown("""
     button[title="Gerenciar aplicativo"] {display: none !important;}
     div[class^="stActionButton"] {display: none !important;}
     
+    /* Garante alinhamento justificado e legibilidade perfeita dos enunciados e citações */
     .stMarkdown, p, div[data-testid="stMarkdownContainer"] {
         text-align: justify !important;
     }
-
+    
+    /* Garante que o botão de alternar/expandir a sidebar permaneça sempre visível */
     [data-testid="stSidebarCollapseButton"] {display: block !important; visibility: visible !important;}
     [data-testid="stHeader"] {background-color: transparent !important; z-index: 999;}
     </style>
 """, unsafe_allow_html=True)
-
-REGEX_ROMANO = r'(?=[MDCLXVI])M*(?:C[MD]|D?C{0,3})(?:X[CL]|L?X{0,3})(?:I[XV]|V?I{0,3})'
 
 def db():
     conn = sqlite3.connect(DB_FILE)
@@ -85,6 +79,7 @@ def hash_password(password):
 def limpar_e_formatar_texto_lei(texto):
     if not texto:
         return ""
+
     padroes_remover = [
         r'\((?:Redação|Incluído|Vigência|Regulamento|Vide)\s+dada?\s+pel[ao][^)]*\)',
         r'\((?:Incluído|Restabelecido|Acrescido)\s+pel[ao][^)]*\)',
@@ -93,10 +88,13 @@ def limpar_e_formatar_texto_lei(texto):
         r'DEL\d+compilado',
         r'\b\d+/\d+\b'
     ]
+    
     for padrao in padroes_remover:
         texto = re.sub(padrao, '', texto, flags=re.IGNORECASE)
-    texto = re.sub(r'[ \t]+', ' ', texto)
+
+    texto = re.sub(r' +', ' ', texto)
     texto = re.sub(r'\n\s*\n', '\n', texto)
+
     return texto.strip()
 
 def init_db():
@@ -189,10 +187,12 @@ def init_db():
         UNIQUE(usuario_id, questao_id)
     );
     """)
+    
     try:
         conn.execute("ALTER TABLE usuarios ADD COLUMN autorizado INTEGER DEFAULT 0")
     except sqlite3.OperationalError:
         pass
+
     conn.execute("UPDATE usuarios SET autorizado = 1 WHERE LOWER(TRIM(username)) = ?", (ADMIN_EMAIL,))
     conn.commit()
     conn.close()
@@ -202,7 +202,12 @@ init_db()
 def cadastrar_usuario(username, senha, autorizado=0):
     conn = db()
     u_clean = username.strip().lower()
-    autorizado = 1 if u_clean == ADMIN_EMAIL else 0
+    
+    if u_clean == ADMIN_EMAIL:
+        autorizado = 1
+    else:
+        autorizado = 0
+
     try:
         conn.execute(
             "INSERT INTO usuarios (username, senha, autorizado, criado_em) VALUES (?, ?, ?, ?)",
@@ -250,6 +255,7 @@ if "logged_in" not in st.session_state:
 if not st.session_state["logged_in"]:
     st.title("⚖ Decorando Lei Seca")
     tab_login, tab_cadastro = st.tabs(["🔑 Entrar", "📝 Criar Conta"])
+
     with tab_login:
         u = st.text_input("Utilizador / E-mail", key="login_user")
         p = st.text_input("Palavra-passe", type="password", key="login_pass")
@@ -263,24 +269,61 @@ if not st.session_state["logged_in"]:
                     st.success(f"Bem-vindo, {user['username']}!")
                     st.rerun()
                 else:
-                    st.warning("⚠️ A sua conta aguarda aprovação do administrador.")
+                    st.warning("⚠️ A sua conta aguarda aprovação do administrador. Entre em contacto para liberação.")
             else:
                 st.error("Utilizador ou palavra-passe incorretos.")
+
     with tab_cadastro:
         new_u = st.text_input("Escolha um Utilizador / E-mail", key="cad_user")
         new_p = st.text_input("Escolha uma Palavra-passe", type="password", key="cad_pass")
         if st.button("Cadastrar Conta"):
             if new_u and new_p:
                 ok, msg = cadastrar_usuario(new_u, new_p, autorizado=0)
-                if ok: st.info(msg)
-                else: st.error(msg)
+                if ok:
+                    st.info(msg)
+                else:
+                    st.error(msg)
             else:
                 st.warning("Preencha todos os campos.")
     st.stop()
 
 USER_ID = st.session_state["user_id"]
 USERNAME = st.session_state["username"]
+
 is_admin_user = bool(USERNAME and USERNAME.strip().lower() == ADMIN_EMAIL)
+
+with st.sidebar:
+    st.markdown(f"👤 Utilizador: **{USERNAME}**")
+    if st.button("🚪 Sair / Logout"):
+        st.session_state["logged_in"] = False
+        st.session_state["user_id"] = None
+        st.session_state["username"] = None
+        st.rerun()
+    st.divider()
+
+    if is_admin_user:
+        st.subheader("⚙ Atalho Admin")
+        with st.expander("👥 Gerir Utilizadores", expanded=False):
+            usuarios_cadastrados = listar_usuarios()
+            st.write(f"**Total de utilizadores:** {len(usuarios_cadastrados)}")
+            for u in usuarios_cadastrados:
+                st.markdown(f"**{u['username']}**")
+                c_status, c_del = st.columns([3, 1])
+                is_this_admin = u['username'].strip().lower() == ADMIN_EMAIL
+                if is_this_admin:
+                    c_status.caption("👑 Admin Principal")
+                else:
+                    status_atual = bool(u['autorizado'])
+                    novo_status = c_status.toggle("Autorizado", value=status_atual, key=f"aut_side_{u['id']}")
+                    if novo_status != status_atual:
+                        alterar_status_autorizacao(u['id'], 1 if novo_status else 0)
+                        st.toast(f"Status de {u['username']} alterado!")
+                        st.rerun()
+                    if c_del.button("❌", key=f"del_side_{u['id']}", help="Excluir Utilizador"):
+                        excluir_usuario(u['id'])
+                        st.success(f"Utilizador {u['username']} removido!")
+                        st.rerun()
+                st.divider()
 
 def add_discipline(name):
     conn = db()
@@ -315,21 +358,40 @@ def delete_law(law_id):
 def get_laws(discipline_id=None):
     conn = db()
     if discipline_id:
-        rows = conn.execute("SELECT l.*, d.nome as disciplina_nome FROM leis l JOIN disciplinas d ON d.id = l.disciplina_id WHERE l.disciplina_id=? ORDER BY d.nome, l.nome", (discipline_id,)).fetchall()
+        rows = conn.execute("""
+            SELECT l.*, d.nome as disciplina_nome 
+            FROM leis l 
+            JOIN disciplinas d ON d.id = l.disciplina_id 
+            WHERE l.disciplina_id=? 
+            ORDER BY d.nome, l.nome
+        """, (discipline_id,)).fetchall()
     else:
-        rows = conn.execute("SELECT l.*, d.nome as disciplina_nome FROM leis l JOIN disciplinas d ON d.id = l.disciplina_id ORDER BY d.nome, l.nome").fetchall()
+        rows = conn.execute("""
+            SELECT l.*, d.nome as disciplina_nome 
+            FROM leis l 
+            JOIN disciplinas d ON d.id = l.disciplina_id 
+            ORDER BY d.nome, l.nome
+        """).fetchall()
     conn.close()
     return rows
 
 def normalizar_estrutura_dispositivo(texto):
-    if not texto: return ""
+    if not texto:
+        return ""
+
     texto = texto.replace("\r", "\n")
     texto = re.sub(r'[ \t]+', ' ', texto)
-    texto = re.sub(r'(?:;|\.|\n|\s)\s*(§\s*\d+º?|Parágrafo único)\b', r'\n\1 ', texto, flags=re.IGNORECASE)
-    padrao_inciso = rf'(?:;|\.|\n|\s)\s*(?={REGEX_ROMANO}\s*[-–—\.]\s*)'
-    texto = re.sub(padrao_inciso, '\n', texto, flags=re.IGNORECASE)
-    texto = re.sub(r'(?:;|\.|\n|\s)\s*(?=[a-z]\s*[\)\-]\s*)', '\n', texto, flags=re.IGNORECASE)
-    texto = re.sub(r'(?<=[;])\s+(?=\d+[\)\.-]\s*)', '\n', texto)
+
+    texto = re.sub(r'\s+(§\s*\d+º?|Parágrafo único)\s+', r'\n\1 ', texto, flags=re.IGNORECASE)
+    texto = re.sub(
+        r'\s+(?=(?:I|II|III|IV|V|VI|VII|VIII|IX|X|XI|XII|XIII|XIV|XV|XVI|XVII|XVIII|XIX|XX)\s*-)',
+        '\n',
+        texto,
+        flags=re.IGNORECASE
+    )
+    texto = re.sub(r'\s+(?=[a-z]\s*[\)\-])', '\n', texto, flags=re.IGNORECASE)
+    texto = re.sub(r'(?<=[;])\s+(?=\d+[\)\.-]\s)', '\n', texto)
+
     texto = re.sub(r'\n{2,}', '\n', texto)
     return texto.strip()
 
@@ -337,112 +399,167 @@ def eh_marcador_paragrafo(linha):
     return bool(re.match(r'^(§\s*\d+º?|Parágrafo único)\b', linha.strip(), re.IGNORECASE))
 
 def eh_marcador_inciso(linha):
-    return bool(re.match(rf'^{REGEX_ROMANO}\s*[-–—\.]\s*', linha.strip(), re.IGNORECASE))
+    return bool(re.match(
+        r'^(?:I|II|III|IV|V|VI|VII|VIII|IX|X|XI|XII|XIII|XIV|XV|XVI|XVII|XVIII|XIX|XX)\s*-',
+        linha.strip(), re.IGNORECASE
+    ))
 
 def eh_marcador_alinea(linha):
     return bool(re.match(r'^[a-z]\s*[\)\-]\s*', linha.strip(), re.IGNORECASE))
 
 def extrair_blocos_por_marcador(texto, tipo):
     linhas = [l.strip() for l in texto.split('\n') if l.strip()]
-    if not linhas: return []
-    matcher = eh_marcador_paragrafo if tipo == 'paragrafo' else (eh_marcador_inciso if tipo == 'inciso' else eh_marcador_alinea)
+    if not linhas:
+        return []
+
+    if tipo == 'paragrafo':
+        matcher = eh_marcador_paragrafo
+    elif tipo == 'inciso':
+        matcher = eh_marcador_inciso
+    else:
+        matcher = eh_marcador_alinea
+
     blocos = []
     atual_marcador = None
     atual_texto = []
+
     for linha in linhas:
         if matcher(linha):
             if atual_marcador is not None:
                 blocos.append((atual_marcador, ' '.join(atual_texto).strip()))
-            m = re.match(r'^(§\s*\d+º?|Parágrafo único)', linha, re.IGNORECASE) if tipo == 'paragrafo' else (re.match(rf'^({REGEX_ROMANO}\s*[-–—\.]\s*)', linha, re.IGNORECASE) if tipo == 'inciso' else re.match(r'^([a-z]\s*[\)\-]\s*)', linha, re.IGNORECASE))
+            if tipo == 'paragrafo':
+                m = re.match(r'^(§\s*\d+º?|Parágrafo único)', linha, re.IGNORECASE)
+            elif tipo == 'inciso':
+                m = re.match(r'^((?:I|II|III|IV|V|VI|VII|VIII|IX|X|XI|XII|XIII|XIV|XV|XVI|XVII|XVIII|XIX|XX)\s*-)', linha, re.IGNORECASE)
+            else:
+                m = re.match(r'^([a-z]\s*[\)\-])', linha, re.IGNORECASE)
             atual_marcador = m.group(1).strip() if m else linha.split()[0]
             atual_texto = [linha[m.end():].strip() if m else linha]
         else:
             if atual_marcador is not None:
                 atual_texto.append(linha)
+            else:
+                blocos.append((None, linha))
+
     if atual_marcador is not None:
         blocos.append((atual_marcador, ' '.join(atual_texto).strip()))
-    return [(m, t) for m, t in blocos if m and t.strip()]
 
-def fragmentar_texto_muito_longo(rotulo_base, texto, max_chars=450):
-    texto = texto.strip()
-    if len(texto) <= max_chars: return [{'numero': rotulo_base, 'texto': texto}]
-    partes = [p.strip() for p in re.split(r'(?<=;)\s+|(?<=\.)\s+', texto) if len(p.strip()) > 15]
-    if len(partes) <= 1: return [{'numero': rotulo_base, 'texto': texto}]
-    resultado = []
-    acumulado = ""
-    parte_idx = 1
-    for p in partes:
-        if len(acumulado) + len(p) + 1 <= max_chars:
-            acumulado = f"{acumulado} {p}".strip()
-        else:
-            if acumulado:
-                resultado.append({'numero': f"{rotulo_base} (trecho {parte_idx})", 'texto': acumulado})
-                parte_idx += 1
-            acumulado = p
-    if acumulado:
-        resultado.append({'numero': f"{rotulo_base} (trecho {parte_idx})" if parte_idx > 1 else rotulo_base, 'texto': acumulado})
-    return resultado if resultado else [{'numero': rotulo_base, 'texto': texto}]
+    return [(m, t) for m, t in blocos if t.strip()]
 
 def fracionar_artigo_extenso(num_art, corpo_limpo):
     texto = normalizar_estrutura_dispositivo(corpo_limpo)
+
+    if len(corpo_limpo) <= 700:
+        return [{'numero': num_art, 'texto': corpo_limpo.strip()}]
+
     paragrafos = extrair_blocos_por_marcador(texto, 'paragrafo')
     incisos = extrair_blocos_por_marcador(texto, 'inciso')
-    if len(paragrafos) == 0 and len(incisos) == 0:
-        if len(corpo_limpo) > 500: return fragmentar_texto_muito_longo(f"{num_art} (caput)", corpo_limpo)
-        return [{'numero': f"{num_art} (caput)" if len(corpo_limpo) > 100 else num_art, 'texto': corpo_limpo.strip()}]
-    alvos = []
-    padroes_primeiro = [r'(?m)^§\s*\d+º?', r'(?m)^Parágrafo único\b', rf'(?m)^{REGEX_ROMANO}\s*[-–—\.]\s*']
-    marcadores = [re.search(p, texto, re.IGNORECASE).start() for p in padroes_primeiro if re.search(p, texto, re.IGNORECASE)]
-    inicio = texto[:min(marcadores)].strip() if marcadores else texto.strip()
-    if inicio and len(inicio) > 10:
-        inicio_limpo = re.sub(r'^Art\.\s*\d+[\w\-]*[\.\º\ª]?\s*[-–—]?\s*', '', inicio, flags=re.IGNORECASE).strip()
-        if inicio_limpo: alvos.append({'numero': f'{num_art} (caput)', 'texto': inicio_limpo})
-    
-    posicao_primeiro_paragrafo = re.search(r'(?m)^(?:§\s*\d+º?|Parágrafo único)\b', texto, re.IGNORECASE).start() if paragrafos else None
-    trecho_incisos_caput = texto[:posicao_primeiro_paragrafo].strip() if posicao_primeiro_paragrafo is not None else texto
-    incisos_caput = extrair_blocos_por_marcador(trecho_incisos_caput, 'inciso')
-    numeros_existentes = {a['numero'] for a in alvos}
 
-    for marcador, texto_inciso in incisos_caput:
+    if len(paragrafos) == 0 and len(incisos) == 0:
+        return [{'numero': num_art, 'texto': corpo_limpo.strip()}]
+
+    alvos = []
+
+    inicio = texto
+    marcadores = []
+    for padrao in [
+        r'(?m)^§\s*\d+º?',
+        r'(?m)^Parágrafo único\b',
+        r'(?m)^(?:I|II|III|IV|V|VI|VII|VIII|IX|X|XI|XII|XIII|XIV|XV|XVI|XVII|XVIII|XIX|XX)\s*-'
+    ]:
+        m = re.search(padrao, texto, re.IGNORECASE)
+        if m:
+            marcadores.append(m.start())
+    if marcadores:
+        inicio = texto[:min(marcadores)].strip()
+    else:
+        inicio = texto.strip()
+
+    if inicio and len(inicio) > 10:
+        alvos.append({'numero': f'{num_art} (caput)', 'texto': inicio})
+
+    posicao_primeiro_paragrafo = None
+    if paragrafos:
+        m = re.search(r'(?m)^(?:§\s*\d+º?|Parágrafo único)\b', texto, re.IGNORECASE)
+        if m:
+            posicao_primeiro_paragrafo = m.start()
+
+    trecho_inicial = texto[:posicao_primeiro_paragrafo].strip() if posicao_primeiro_paragrafo is not None else texto
+    incisos_iniciais = extrair_blocos_por_marcador(trecho_inicial, 'inciso')
+    for marcador, texto_inciso in incisos_iniciais:
         if marcador and texto_inciso and len(texto_inciso) > 5:
-            clean_marc = str(marcador).rstrip("-–—.").strip()
-            num_formatado = f'{num_art}, Inciso {clean_marc}'
-            alvos.append({'numero': num_formatado, 'texto': f'{marcador} {texto_inciso}'.strip()})
-            numeros_existentes.add(num_formatado)
+            alvos.append({'numero': f'{num_art}, inciso {marcador.rstrip("-").strip()}', 'texto': f'{marcador} {texto_inciso}'.strip()})
 
     for marcador_par, texto_par in paragrafos:
-        if marcador_par and texto_par and len(texto_par) > 5:
-            num_par = f'{num_art}, {marcador_par}'
-            alvos.append({'numero': num_par, 'texto': f'{marcador_par} {texto_par}'.strip()})
-            numeros_existentes.add(num_par)
+        if not marcador_par or not texto_par or len(texto_par) <= 5:
+            continue
 
-    return alvos if alvos else [{'numero': num_art, 'texto': corpo_limpo.strip()}]
+        texto_par_estruturado = normalizar_estrutura_dispositivo(texto_par)
+        alíneas = [(m, t) for m, t in extrair_blocos_por_marcador(texto_par_estruturado, 'alinea') if m]
+        if alíneas:
+            for idx, (marcador_al, texto_al) in enumerate(alíneas):
+                if not marcador_al or not texto_al or len(texto_al) <= 5:
+                    continue
+                texto_alvo = f'{marcador_al} {texto_al}'.strip()
+                alvos.append({
+                    'numero': f'{num_art}, {marcador_par}, alínea {marcador_al[0].lower()}',
+                    'texto': texto_alvo
+                })
+        else:
+            alvos.append({
+                'numero': f'{num_art}, {marcador_par}',
+                'texto': f'{marcador_par} {texto_par}'.strip()
+            })
+
+    todos_incisos = extrair_blocos_por_marcador(texto, 'inciso')
+    numeros_existentes = {a['numero'] for a in alvos}
+    for marcador, texto_inciso in todos_incisos:
+        if marcador and texto_inciso and len(texto_inciso) > 5:
+            numero = f'{num_art}, inciso {marcador.rstrip("-").strip()}'
+            if numero not in numeros_existentes:
+                alvos.append({'numero': numero, 'texto': f'{marcador} {texto_inciso}'.strip()})
+                numeros_existentes.add(numero)
+
+    if not alvos:
+        return [{'numero': num_art, 'texto': corpo_limpo.strip()}]
+
+    return alvos
 
 def parse_and_store_pdf(pdf_path, law_id):
     doc = fitz.open(pdf_path)
     full_text = "\n".join([page.get_text() for page in doc])
     doc.close()
+
     artigo_regex = re.compile(r'(?m)^(Art\.\s*\d+[\w\-]*[\.\º\ª]?)', re.IGNORECASE)
     partes = artigo_regex.split(full_text)
     artigos_brutos = []
+
     if len(partes) > 1:
         for i in range(1, len(partes), 2):
             num_art = partes[i].strip()
-            corpo_limpo = limpar_e_formatar_texto_lei(partes[i + 1] if (i + 1) < len(partes) else "")
-            if corpo_limpo and len(corpo_limpo) > 10: artigos_brutos.append((num_art, corpo_limpo))
+            corpo_art = partes[i + 1] if (i + 1) < len(partes) else ""
+            corpo_limpo = limpar_e_formatar_texto_lei(corpo_art)
+            if corpo_limpo and len(corpo_limpo) > 10:
+                artigos_brutos.append((num_art, corpo_limpo))
     else:
         artigo_regex_alt = re.compile(r'(Art\.\s*\d+[\w\-]*[\.\º\ª]?)', re.IGNORECASE)
         partes = artigo_regex_alt.split(full_text)
         for i in range(1, len(partes), 2):
             num_art = partes[i].strip()
-            corpo_limpo = limpar_e_formatar_texto_lei(partes[i + 1] if (i + 1) < len(partes) else "")
-            if corpo_limpo and len(corpo_limpo) > 10: artigos_brutos.append((num_art, corpo_limpo))
+            corpo_art = partes[i + 1] if (i + 1) < len(partes) else ""
+            corpo_limpo = limpar_e_formatar_texto_lei(corpo_art)
+            if corpo_limpo and len(corpo_limpo) > 10:
+                artigos_brutos.append((num_art, corpo_limpo))
 
     conn = db()
     quantidade = 0
     for num_art, corpo_limpo in artigos_brutos:
-        conn.execute("INSERT INTO artigos(lei_id, numero, titulo, texto) VALUES(?,?,?,?)", (law_id, num_art, num_art, corpo_limpo))
+        conn.execute(
+            "INSERT INTO artigos(lei_id, numero, titulo, texto) VALUES(?,?,?,?)",
+            (law_id, num_art, num_art, corpo_limpo)
+        )
         quantidade += 1
+
     conn.commit()
     conn.close()
     return quantidade
@@ -456,7 +573,10 @@ def get_articles(law_id):
 def save_filter(name, discipline_id, law_id, article_ids, qtd_questoes):
     conn = db()
     art_str = ",".join(map(str, article_ids))
-    cur = conn.execute("INSERT INTO filtros_salvos (usuario_id, nome, disciplina_id, lei_id, artigos_ids, qtd_questoes, criado_em) VALUES (?, ?, ?, ?, ?, ?, ?)", (USER_ID, name, discipline_id, law_id, art_str, qtd_questoes, datetime.now().isoformat()))
+    cur = conn.execute("""
+        INSERT INTO filtros_salvos (usuario_id, nome, disciplina_id, lei_id, artigos_ids, qtd_questoes, criado_em)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+    """, (USER_ID, name, discipline_id, law_id, art_str, qtd_questoes, datetime.now().isoformat()))
     filter_id = cur.lastrowid
     conn.commit()
     conn.close()
@@ -472,219 +592,343 @@ def delete_filter(filter_id):
 def get_saved_filters(discipline_id=None):
     conn = db()
     if discipline_id:
-        rows = conn.execute("SELECT f.*, d.nome disciplina, l.nome lei FROM filtros_salvos f JOIN disciplinas d ON d.id = f.disciplina_id JOIN leis l ON l.id = f.lei_id WHERE f.usuario_id = ? AND f.disciplina_id = ? ORDER BY d.nome, f.id DESC", (USER_ID, discipline_id)).fetchall()
+        rows = conn.execute("""
+            SELECT f.*, d.nome disciplina, l.nome lei
+            FROM filtros_salvos f
+            JOIN disciplinas d ON d.id = f.disciplina_id
+            JOIN leis l ON l.id = f.lei_id
+            WHERE f.usuario_id = ? AND f.disciplina_id = ?
+            ORDER BY d.nome, f.id DESC
+        """, (USER_ID, discipline_id)).fetchall()
     else:
-        rows = conn.execute("SELECT f.*, d.nome disciplina, l.nome lei FROM filtros_salvos f JOIN disciplinas d ON d.id = f.disciplina_id JOIN leis l ON l.id = f.lei_id WHERE f.usuario_id = ? ORDER BY f.id DESC", (USER_ID,)).fetchall()
+        rows = conn.execute("""
+            SELECT f.*, d.nome disciplina, l.nome lei
+            FROM filtros_salvos f
+            JOIN disciplinas d ON d.id = f.disciplina_id
+            JOIN leis l ON l.id = f.lei_id
+            WHERE f.usuario_id = ?
+            ORDER BY d.nome, f.id DESC
+        """, (USER_ID,)).fetchall()
     conn.close()
     return rows
 
 def obter_texto_caput(artigo_id):
-    if not artigo_id: return None
+    if not artigo_id:
+        return None
     conn = db()
     artigo = conn.execute("SELECT texto FROM artigos WHERE id = ?", (artigo_id,)).fetchone()
     conn.close()
     if artigo and artigo["texto"]:
         texto_limpo = limpar_e_formatar_texto_lei(artigo["texto"])
         texto_normalizado = normalizar_estrutura_dispositivo(texto_limpo)
-        m = re.search(rf'(?m)^(?:§\s*\d+º?|Parágrafo único\b|{REGEX_ROMANO}\s*[-–—\.]\s*)', texto_normalizado, re.IGNORECASE)
-        return texto_normalizado[:m.start()].strip() if m else texto_normalizado.strip()
+        
+        m = re.search(
+            r'(?m)^(?:§\s*\d+º?|Parágrafo único\b|(?:I|II|III|IV|V|VI|VII|VIII|IX|X|XI|XII|XIII|XIV|XV|XVI|XVII|XVIII|XIX|XX)\s*-)', 
+            texto_normalizado, 
+            re.IGNORECASE
+        )
+        if m:
+            caput = texto_normalizado[:m.start()].strip()
+        else:
+            caput = texto_normalizado.strip()
+            
+        return caput if caput else texto_normalizado.strip()
     return None
-
-def limpar_assertiva_dispositivo(texto):
-    if not texto: return ""
-    t = texto.strip()
-    t = re.sub(rf'^(?:{REGEX_ROMANO}\s*[-–—\.]\s*|§\s*\d+º?\s*[-–—\.]?\s*|Parágrafo único\s*[-–—\.]?\s*|[a-z]\s*[\)\-]\s*)', '', t, flags=re.IGNORECASE).strip()
-    t = re.sub(r'[\s;:,]+$', '', t).strip()
-    if not t: return texto.strip()
-    t = t[0].upper() + t[1:]
-    if not t.endswith('.'): t += '.'
-    return t
-
-def conectar_caput_com_dispositivo(caput_texto, assertiva_limpa, rotulo_dispositivo):
-    if not caput_texto or not assertiva_limpa: return assertiva_limpa
-    cap = caput_texto.strip()
-    if re.search(r'compete\s+privativamente\s+ao\s+presidente\s+da\s+república', cap, re.IGNORECASE):
-        if not re.search(r'compete', assertiva_limpa, re.IGNORECASE):
-            return f"Compete privativamente ao Presidente da República {assertiva_limpa[0].lower() + assertiva_limpa[1:]}"
-    if cap.endswith(':') and len(cap) < 120:
-        return f"{cap.rstrip(':').strip()} {assertiva_limpa[0].lower() + assertiva_limpa[1:]}"
-    return assertiva_limpa
-
-def formatar_nome_lei_contextual(nome_lei):
-    if not nome_lei: return "Constituição Federal / Lei Seca"
-    nl = str(nome_lei).strip()
-    if re.match(r'^art(?:igo)?s?\.?\s*\d+', nl, re.IGNORECASE):
-        return f"Constituição Federal de 1988 ({nl})"
-    return nl
-
-def construir_enunciado_com_nexo(nome_lei, rotulo_dispositivo, assertiva_texto, caput_texto=None, num_art=None):
-    ref_rotulo = obter_rotulo_dispositivo(rotulo_dispositivo)
-    lei_formatada = formatar_nome_lei_contextual(nome_lei)
-    vinculo = f" (pertencente ao {num_art})" if num_art and num_art not in ref_rotulo else ""
-    return f"**Referência Normativa:** {lei_formatada} — **{ref_rotulo}**{vinculo}\n\nÀ luz da literalidade da legislação e do dispositivo legal em exame, julgue o item a seguir:\n\n> \"{assertiva_texto}\""
-
-def obter_rotulo_dispositivo(numero_dispositivo):
-    if not numero_dispositivo: return "Dispositivo da Lei"
-    s = str(numero_dispositivo).strip()
-    return re.sub(r'^(?:Inciso|Parágrafo|Alínea|Artigo)\s*\((.+)\)$', r'\1', s, flags=re.IGNORECASE)
 
 def alterar_texto_para_errado(texto):
     substituicoes = [
-        (r'\brespeito à integridade física e moral\b', 'respeito à integridade física, sendo dispensada a tutela de sua integridade moral', 'restrição indevida: a CF/88 assegura o respeito à integridade física E moral'),
-        (r'\b24 \(vinte e quatro\) horas\b', '48 (quarenta e oito) horas', 'alteração indevida de prazo legal'),
-        (r'\bdeverá\b', 'poderá', 'troca de comando obrigatório por faculdade'),
-        (r'\bpoderá\b', 'deverá obrigatoriamente', 'troca de faculdade por obrigação'),
+        (r'\bdeverá\b', 'poderá', 'troca de obrigação ("deverá") por faculdade ("poderá")'),
+        (r'\bpoderá\b', 'deverá', 'troca de faculdade ("poderá") por obrigação ("deverá")'),
+        (r'\b24 \(vinte e quatro\) horas\b', '48 (quarenta e oito) horas', 'alteração de prazo legal de 24h para 48h'),
+        (r'\b72 \(setenta e duas\) horas\b', '24 (vinte e quatro) horas', 'alteração de prazo legal de 72h para 24h'),
+        (r'\b12 \(doze\) horas\b', '24 (vinte e quatro) horas', 'alteração do prazo de manifestação de 12h para 24h'),
+        (r'\b30 \(trinta\) dias\b', '15 (quinze) dias', 'alteração do prazo de fornecimento de dados'),
+        (r'\bpermitido\b', 'vedado', 'inversão de permissão para proibição'),
         (r'\bvedado\b', 'permitido', 'inversão de proibição para permissão'),
-        (r'\bpermitido\b', 'vedado', 'inversão de permissão para proibição')
+        (r'\bexigido\b', 'dispensado', 'troca de exigência por dispensa'),
+        (r'\bdispensado\b', 'exigido', 'troca de dispensa por exigência'),
+        (r'\bobrigatório\b', 'facultativo', 'troca de obrigação por faculdade'),
+        (r'\bfacultativo\b', 'obrigatório', 'troca de faculdade por obrigação'),
+        (r'\bindependentemente de autorização judicial\b', 'mediante autorização judicial', 'exigência indevida de autorização judicial'),
+        (r'\bmediante autorização judicial\b', 'independente de autorização judicial', 'supressão da necessidade de autorização judicial')
     ]
+    
     texto_modificado = texto
     tipo_troca = None
-    for padrao, sub, desc in substituicoes:
+    
+    for padrao, sub, descricao in substituicoes:
         if re.search(padrao, texto_modificado, re.IGNORECASE):
             texto_modificado = re.sub(padrao, sub, texto_modificado, count=1, flags=re.IGNORECASE)
-            tipo_troca = desc
+            tipo_troca = descricao
             break
+            
     if not tipo_troca:
-        inversoes = [
-            (r'^É assegurado\b', 'Não é assegurado', 'inversão do direito assegurado'),
-            (r'^É vedad[oa]\b', 'É permitido', 'inversão de vedação'),
-            (r'\bnão será\b', 'será', 'supressão da negativa')
-        ]
-        for padrao, sub, desc in inversoes:
-            if re.search(padrao, texto_modificado, re.IGNORECASE):
-                texto_modificado = re.sub(padrao, sub, texto_modificado, count=1, flags=re.IGNORECASE)
-                tipo_troca = desc
-                break
-    if not tipo_troca:
-        texto_modificado = f"{texto_modificado.rstrip('.')}, ressalvada decisão discricionária em sentido contrário."
-        tipo_troca = 'criação de ressalva não prevista na lei'
-    if texto_modificado:
-        texto_modificado = texto_modificado[0].upper() + texto_modificado[1:]
-        if not texto_modificado.endswith('.'): texto_modificado += '.'
+        if " não " in texto_modificado:
+            texto_modificado = texto_modificado.replace(" não ", " ", 1)
+            tipo_troca = 'supressão da negação "não"'
+        else:
+            words = texto_modificado.split()
+            if len(words) > 3:
+                words.insert(3, "não")
+                texto_modificado = " ".join(words)
+                tipo_troca = 'inserção indevida da negação "não"'
+
     return texto_modificado, tipo_troca
 
-def obter_chave_gemini(chave_manual=None):
-    if chave_manual and str(chave_manual).strip(): return str(chave_manual).strip()
-    if st.session_state.get("gemini_api_key"): return str(st.session_state["gemini_api_key"]).strip()
-    try:
-        if "GEMINI_API_KEY" in st.secrets: return str(st.secrets["GEMINI_API_KEY"]).strip()
-    except Exception:
-        pass
-    return os.getenv("GEMINI_API_KEY")
+def obter_rotulo_dispositivo(numero_dispositivo):
+    num_lower = numero_dispositivo.lower()
 
-def extrair_json_exemplo(raw_text, rotulo_dispositivo):
-    if not raw_text: return None
-    clean = re.sub(r'```(?:json)?\s*', '', raw_text)
-    clean = re.sub(r'```', '', clean).strip()
-    m = re.search(r'\{[\s\S]*\}', clean)
-    if m:
-        try:
-            d = json.loads(m.group(0))
-            sit = d.get("situacao_real") or d.get("caso_concreto")
-            ap = d.get("aplicacao_regra")
-            obj = d.get("objetivo_regra")
-            biz = d.get("bizu_memorizacao")
-            if sit:
-                return (sit.strip(), f"• **Aplicação no {rotulo_dispositivo}:** {ap.strip() if ap else 'Aplicação direta.'}", obj.strip() if obj else "Garantir a segurança jurídica.", biz.strip() if biz else "Atenção às palavras-chave.")
-        except Exception:
-            pass
-    return None
+    if "alínea" in num_lower or "alinea" in num_lower:
+        return f"Alínea ({numero_dispositivo})"
+    elif "§" in num_lower or "parágrafo" in num_lower or "paragrafo" in num_lower:
+        return f"Parágrafo ({numero_dispositivo})"
+    elif "inciso" in num_lower or re.search(r'\b(I|II|III|IV|V|VI|VII|VIII|IX|X|XI|XII|XIII|XIV|XV|XVI|XVII|XVIII|XIX|XX)\b', numero_dispositivo):
+        return f"Inciso ({numero_dispositivo})"
+    else:
+        return f"Artigo ({numero_dispositivo})"
 
-def gerar_exemplo_gemini(rotulo_dispositivo, texto_dispositivo, chave_manual=None):
-    chave = obter_chave_gemini(chave_manual)
-    if not chave: return None
-    prompt = f"Dispositivo legal: {rotulo_dispositivo} - \"{texto_dispositivo}\". Crie um exemplo prático da vida real em JSON com as chaves: 'situacao_real', 'aplicacao_regra', 'objetivo_regra', 'bizu_memorizacao'."
-    for model_name in ["gemini-2.5-flash", "gemini-1.5-flash"]:
-        try:
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={chave}"
-            req = urllib.request.Request(url, data=json.dumps({"contents": [{"parts": [{"text": prompt}]}]}).encode("utf-8"), headers={"Content-Type": "application/json"}, method="POST")
-            with urllib.request.urlopen(req, timeout=10) as resp:
-                res = json.loads(resp.read().decode("utf-8"))
-                txt = res["candidates"][0]["content"]["parts"][0]["text"]
-                parsed = extrair_json_exemplo(txt, rotulo_dispositivo)
-                if parsed: return parsed
-        except Exception:
-            pass
-    return None
+def gerar_explicacao_humana(art_num, texto_original, foi_correto=False, tipo_troca=None, texto_modificado=None):
+    txt_lower = texto_original.lower()
 
-def extrair_exemplo_objetivo_personalizado(art_num, texto_original):
-    return (
-        f"Num caso prático envolvendo o {art_num}, aplicou-se rigorosamente a norma legal para assegurar a justiça e a legalidade na situação concreta.",
-        f"• **Aplicação no {art_num}:** Observância estrita da literalidade normativa.",
-        "Garantir a eficácia da lei e a segurança jurídica.",
-        "Atente-se aos termos literais e prazos previstos."
-    )
+    if "sinal" in txt_lower or "estação de cobertura" in txt_lower or "radiofrequência" in txt_lower:
+        situacao_real = "Em uma investigação de sequestro, a polícia requisita às operadoras de telefonia o sinal da antena de celular utilizada pelo suspeito para localizar a região onde a vítima está mantida em cativeiro."
+        aplicacao_regra = f"• **Aplicação do {art_num}:**\n  - O ofício enviado à operadora deve conter a identificação da unidade de polícia judiciária responsável.\n  - Fornece apenas a localização aproximada (antena/ERB), sem dar acesso ao conteúdo das conversas."
+        objetivo_regra = "Agilizar a localização geográfica de vítimas/suspeitos sem violar o sigilo do conteúdo das chamadas sem ordem do juiz."
+    elif "remessa" in txt_lower or "instituto de identificação" in txt_lower:
+        situacao_real = "Ao concluir o inquérito de um crime e enviá-lo para a Vara Criminal responsável, a autoridade policial envia um comunicado ao Instituto de Identificação e Estatística."
+        aplicacao_regra = f"• **Aplicação do {art_num}:**\n  - O comunicado deve conter os dados do investigado, o crime cometido e o juízo para o qual os autos foram distribuídos."
+        objetivo_regra = "Registrar o crime e o local do processo no histórico criminal do investigado."
+    elif "prazo" in txt_lower or "esgotado" in txt_lower:
+        situacao_real = "Um prazo legal de investigação ou diligência especial chega ao fim e nenhuma prorrogação foi solicitada formalmente."
+        aplicacao_regra = f"• **Aplicação do {art_num}:**\n  - A autoridade deve encerrar a medida imediatamente e apresentar o relatório das diligências efetuadas."
+        objetivo_regra = "Forçar o encerramento imediato da medida, impedindo prazos indefinidos ou abusivos na persecução penal."
+    elif "dados" in txt_lower or "informações cadastrais" in txt_lower:
+        situacao_real = "Em investigações de crimes graves (como tráfico de pessoas), a polícia precisa identificar rapidamente a qualificação dos envolvidos."
+        aplicacao_regra = f"• **Aplicação do {art_num}:**\n  - Delegado ou Promotor requisitam dados cadastrais (nome, CPF, endereço) diretamente a órgãos ou empresas."
+        objetivo_regra = "Obter qualificação básica de suspeitos com agilidade e sem burocracia desnecessária."
+    else:
+        situacao_real = "A aplicação prática deste dispositivo ocorre nas rotinas e atos oficiais de investigação criminal da polícia judiciária."
+        aplicacao_regra = f"• **Aplicação do {art_num}:**\n  - O dispositivo fixa procedimentos formais obrigatórios a serem respeitados pelas autoridades."
+        objetivo_regra = "Garantir a legalidade, a segurança jurídica e a padronização dos procedimentos no inquérito policial."
 
-def gerar_explicacao_humana(art_num, texto_original, foi_correto=False, tipo_troca=None, texto_modificado=None, exemplo_customizado=None, foi_ia=False, nome_ia="Gemini IA", caput_texto=None):
-    situacao_real, aplicacao_regra, objetivo_regra, bizu_memorizacao = exemplo_customizado or extrair_exemplo_objetivo_personalizado(art_num, texto_original)
-    status_txt = "O item está **CORRETO**." if foi_correto else "O item está **ERRADO**."
-    detalhe_erro = "O enunciado reproduz com exatidão a literalidade da legislação." if foi_correto else f"<br>⚠️ <strong>Pegadinha:</strong> {tipo_troca or 'Alteração indevida'}"
-    tag_ia = f'<span style="background-color: #fef3c7; color: #b45309; padding: 2px 8px; border-radius: 6px; font-size: 11px; font-weight: 600;">✨ Gerado com {nome_ia}</span>' if foi_ia else '<span style="background-color: #eff6ff; color: #1d4ed8; padding: 2px 8px; border-radius: 6px; font-size: 11px; font-weight: 600;">⚖️ Exemplo Prático</span>'
-    
-    bloco_caput = ""
-    if caput_texto and str(caput_texto).strip() and str(caput_texto).strip() != str(texto_original).strip():
-        bloco_caput = f"""
-        <div style="margin-top: 10px; padding-top: 8px; border-top: 1px dashed #cbd5e1; font-size: 12.5px; color: #475569;">
-            <span style="font-weight: 600; color: #1e3a8a;">📜 Contexto do Artigo Principal (Caput de Origem):</span><br>
-            <span style="font-style: italic;">"{str(caput_texto).strip()}"</span>
-        </div>
-        """
+    if foi_correto:
+        status_txt = "O item está **CORRETO**."
+        detalhe_erro = f"O enunciado reproduz com exatidão o disposto na legislação."
+        resumo_erro_bloco = ""
+    else:
+        status_txt = "O item está **ERRADO**."
+        detalhe_erro = f"O enunciado alterou a regra legal."
+        resumo_erro_bloco = f"\n⚠️ **Pegadinha da Questão:** Alteração mediante **{tipo_troca or 'modificação de termos'}**."
 
-    return f"""
-    <div style="margin-bottom: 10px; font-size: 13.5px;">💡 <strong>Gabarito e Justificativa:</strong> {status_txt} {detalhe_erro}</div>
-    <div style="background-color: #f8fafc; border: 1px solid #bfdbfe; border-radius: 10px; padding: 15px; margin-bottom: 14px;">
-        <div style="font-weight: 600; color: #1e3a8a; font-size: 13.5px; margin-bottom: 6px;">📖 Dispositivo Literal ({art_num})</div>
-        <div style="color: #334155; font-style: italic; border-left: 3px solid #3b82f6; padding-left: 12px;">"{texto_original}"</div>
-        {bloco_caput}
-    </div>
-    <div style="background-color: #fffbeb; border: 1px solid #fde68a; border-radius: 12px; padding: 18px; margin-bottom: 14px;">
-        <div style="display: flex; justify-content: space-between; margin-bottom: 10px; font-weight: 700; color: #78350f;">💡 Exemplo Prático {tag_ia}</div>
-        <div style="color: #1f2937; font-size: 13px;">
-            <p style="margin-bottom: 8px;"><strong>Situação:</strong> {situacao_real}</p>
-            <p style="margin-bottom: 8px;"><strong>Aplicação:</strong> {aplicacao_regra}</p>
-            <p style="margin-bottom: 8px;"><strong>Objetivo:</strong> {objetivo_regra}</p>
-            <div style="margin-top: 10px; border-top: 1px solid #fef3c7; color: #92400e; font-weight: 600; padding-top: 6px;">🎯 <strong>Bizu:</strong> {bizu_memorizacao}</div>
-        </div>
-    </div>
-    """
+    explicacao_formatada = f"""💡 **Gabarito e Justificativa:** {status_txt} {detalhe_erro}{resumo_erro_bloco}
 
-def generate_questions_for_articles(discipline_id, law_id, article_ids, qtd_total, filter_id=None, motor_ia="♊ Gemini IA", chave_ia_manual=None, progress_callback=None):
+📖 **Texto Correto da Lei Seca:**
+> "{texto_original}"
+
+📌 **Exemplo Prático da Vida Real:**
+{situacao_real}
+
+{aplicacao_regra}
+
+**Objetivo:** {objetivo_regra}
+"""
+    return explicacao_formatada
+
+def generate_questions_for_articles(discipline_id, law_id, article_ids, qtd_total, filter_id=None, motor_ia="⚙️ Regra Padrão"):
     conn = db()
-    lei_row = conn.execute("SELECT nome FROM leis WHERE id=?", (law_id,)).fetchone()
-    nome_lei = lei_row["nome"] if lei_row else "Legislação"
-    arts = conn.execute(f"SELECT * FROM artigos WHERE id IN ({','.join('?'*len(article_ids))}) ORDER BY id", article_ids).fetchall() if article_ids else conn.execute("SELECT * FROM artigos WHERE lei_id=? ORDER BY id", (law_id,)).fetchall()
+    if article_ids:
+        placeholders = ",".join("?" * len(article_ids))
+        arts = conn.execute(f"SELECT * FROM artigos WHERE id IN ({placeholders}) ORDER BY id", article_ids).fetchall()
+    else:
+        arts = conn.execute("SELECT * FROM artigos WHERE lei_id=? ORDER BY id", (law_id,)).fetchall()
+
     if not arts:
         conn.close()
         return 0
-    alvos = [{'art': a, 'numero': a['numero'], 'texto': limpar_e_formatar_texto_lei(a['texto']), 'caput': obter_texto_caput(a['id'])} for a in arts]
+
+    alvos = []
+    for art in arts:
+        texto_artigo = limpar_e_formatar_texto_lei(art["texto"])
+        alvos_artigo = fracionar_artigo_extenso(art["numero"], texto_artigo)
+        for alvo in alvos_artigo:
+            alvos.append({
+                "art": art,
+                "numero": alvo["numero"],
+                "texto": alvo["texto"]
+            })
+
+    if not alvos:
+        conn.close()
+        return 0
+
     random.shuffle(alvos)
     generated = 0
     now = datetime.now().isoformat()
-    usar_gemini = "Gemini" in motor_ia
 
     for i in range(qtd_total):
         alvo = alvos[i % len(alvos)]
-        art, num, text, caput = alvo['art'], alvo['numero'], alvo['texto'], alvo['caput']
-        rotulo = obter_rotulo_dispositivo(num)
+        art = alvo["art"]
+        numero_dispositivo = alvo["numero"]
+        rotulo_dispositivo = obter_rotulo_dispositivo(numero_dispositivo)
+        text = limpar_e_formatar_texto_lei(alvo["texto"])
         is_correct = random.choice([True, False])
-        exemplo_ia = gerar_exemplo_gemini(rotulo, text, chave_manual=chave_ia_manual) if usar_gemini else None
-        
-        assertiva = limpar_assertiva_dispositivo(text)
-        assertiva_nexo = conectar_caput_com_dispositivo(caput, assertiva, rotulo)
-        
-        if is_correct:
-            enunciado = construir_enunciado_com_nexo(nome_lei, rotulo, assertiva_nexo, caput_texto=caput, num_art=art["numero"])
-            explicacao = gerar_explicacao_humana(num, text, foi_correto=True, exemplo_customizado=exemplo_ia, foi_ia=bool(exemplo_ia), caput_texto=caput)
-            gabarito = 1
-        else:
-            assertiva_errada, tipo_troca = alterar_texto_para_errado(assertiva_nexo)
-            enunciado = construir_enunciado_com_nexo(nome_lei, rotulo, assertiva_errada, caput_texto=caput, num_art=art["numero"])
-            explicacao = gerar_explicacao_humana(num, text, foi_correto=False, tipo_troca=tipo_troca, exemplo_customizado=exemplo_ia, foi_ia=bool(exemplo_ia), caput_texto=caput)
-            gabarito = 0
 
-        conn.execute("INSERT INTO questoes(lei_id, artigo_id, disciplina_id, filtro_id, artigo_numero, conteudo, enunciado, gabarito, explicacao, origem, criada_em) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
-                     (law_id, art["id"], discipline_id, filter_id, num, num, enunciado, gabarito, explicacao, motor_ia, now))
-        generated += 1
+        if "Ollama" in motor_ia:
+            import requests
+            try:
+                prompt = (
+                    "Crie uma questão Certo/Errado curta baseada EXCLUSIVAMENTE no trecho literal "
+                    f"do {rotulo_dispositivo}. Preserve o sentido jurídico e não invente informações.\n\n"
+                    f"{text}"
+                )
+                res = requests.post("http://localhost:11434/api/generate", json={
+                    "model": "llama3",
+                    "prompt": prompt,
+                    "stream": False
+                }, timeout=5)
+                data = res.json()
+                enunciado = data.get("response", f"De acordo com o **{rotulo_dispositivo}**:\n\n\"{text}\"")
+                gabarito = 1 if is_correct else 0
+                explicacao = gerar_explicacao_humana(numero_dispositivo, text, is_correct)
+            except Exception:
+                if is_correct:
+                    enunciado = f"De acordo com o **{rotulo_dispositivo}**:\n\n\"{text}\""
+                    gabarito = 1
+                    explicacao = gerar_explicacao_humana(numero_dispositivo, text, True)
+                else:
+                    modified_text, tipo_troca = alterar_texto_para_errado(text)
+                    enunciado = f"De acordo com o **{rotulo_dispositivo}**:\n\n\"{modified_text}\""
+                    gabarito = 0
+                    explicacao = gerar_explicacao_humana(numero_dispositivo, text, False, tipo_troca, modified_text)
+
+        elif "Gemini" in motor_ia:
+            gemini_key = st.secrets.get("GEMINI_API_KEY", os.getenv("GEMINI_API_KEY"))
+            if gemini_key and genai:
+                try:
+                    prompt = (
+                        "Você é uma banca examinadora de concursos públicos. "
+                        "Crie uma afirmação de Certo ou Errado focada estritamente no trecho da lei fornecido. "
+                        "Mantenha o enunciado conciso e direto. Não invente informações.\n\n"
+                        f"Dispositivo: {rotulo_dispositivo}\n"
+                        f"Texto legal: {text}\n"
+                        f"Gabarito pretendido: {'CERTO' if is_correct else 'ERRADO'}"
+                    )
+                    
+                    if hasattr(genai, "Client"):
+                        client = genai.Client(api_key=gemini_key)
+                        response = client.models.generate_content(
+                            model="models/gemini-3.8-flash",
+                            contents=prompt
+                        )
+                        enunciado = response.text
+                    else:
+                        genai.configure(api_key=gemini_key)
+                        model = genai.GenerativeModel("models/gemini-3.8-flash")
+                        response = model.generate_content(prompt)
+                        enunciado = response.text
+                        
+                    gabarito = 1 if is_correct else 0
+                    explicacao = gerar_explicacao_humana(numero_dispositivo, text, is_correct)
+                except Exception as e:
+                    logging.warning(f"Erro na API Gemini: {e}. Aplicando motor de regra padrão.")
+                    if is_correct:
+                        enunciado = f"De acordo com o **{rotulo_dispositivo}**:\n\n\"{text}\""
+                        gabarito = 1
+                        explicacao = gerar_explicacao_humana(numero_dispositivo, text, True)
+                    else:
+                        modified_text, tipo_troca = alterar_texto_para_errado(text)
+                        enunciado = f"De acordo com o **{rotulo_dispositivo}**:\n\n\"{modified_text}\""
+                        gabarito = 0
+                        explicacao = gerar_explicacao_humana(numero_dispositivo, text, False, tipo_troca, modified_text)
+            else:
+                logging.warning("Biblioteca ou Chave do Gemini (GEMINI_API_KEY) não configurada.")
+                if is_correct:
+                    enunciado = f"De acordo com o **{rotulo_dispositivo}**:\n\n\"{text}\""
+                    gabarito = 1
+                    explicacao = gerar_explicacao_humana(numero_dispositivo, text, True)
+                else:
+                    modified_text, tipo_troca = alterar_texto_para_errado(text)
+                    enunciado = f"De acordo com o **{rotulo_dispositivo}**:\n\n\"{modified_text}\""
+                    gabarito = 0
+                    explicacao = gerar_explicacao_humana(numero_dispositivo, text, False, tipo_troca, modified_text)
+
+        elif "OpenAI" in motor_ia:
+            api_key = st.secrets.get("OPENAI_API_KEY", os.getenv("OPENAI_API_KEY"))
+            if api_key and openai:
+                try:
+                    client = openai.OpenAI(api_key=api_key)
+                    prompt_system = (
+                        "Você é uma banca examinadora de concursos públicos. "
+                        "Crie uma afirmação de Certo ou Errado focada estritamente no trecho da lei fornecido. "
+                        "Mantenha o enunciado conciso e direto. Não invente informações."
+                    )
+                    completion = client.chat.completions.create(
+                        model="gpt-4o-mini",
+                        messages=[
+                            {"role": "system", "content": prompt_system},
+                            {"role": "user", "content": (
+                                f"Dispositivo: {rotulo_dispositivo}\n"
+                                f"Texto legal: {text}\n\n"
+                                f"Gabarito pretendido: {'CERTO' if is_correct else 'ERRADO'}"
+                            )}
+                        ]
+                    )
+                    enunciado = completion.choices[0].message.content
+                    gabarito = 1 if is_correct else 0
+                    explicacao = gerar_explicacao_humana(numero_dispositivo, text, is_correct)
+                except Exception:
+                    if is_correct:
+                        enunciado = f"De acordo com o **{rotulo_dispositivo}**:\n\n\"{text}\""
+                        gabarito = 1
+                        explicacao = gerar_explicacao_humana(numero_dispositivo, text, True)
+                    else:
+                        modified_text, tipo_troca = alterar_texto_para_errado(text)
+                        enunciado = f"De acordo com o **{rotulo_dispositivo}**:\n\n\"{modified_text}\""
+                        gabarito = 0
+                        explicacao = gerar_explicacao_humana(numero_dispositivo, text, False, tipo_troca, modified_text)
+            else:
+                if is_correct:
+                    enunciado = f"De acordo com o **{rotulo_dispositivo}**:\n\n\"{text}\""
+                    gabarito = 1
+                    explicacao = gerar_explicacao_humana(numero_dispositivo, text, True)
+                else:
+                    modified_text, tipo_troca = alterar_texto_para_errado(text)
+                    enunciado = f"De acordo com o **{rotulo_dispositivo}**:\n\n\"{modified_text}\""
+                    gabarito = 0
+                    explicacao = gerar_explicacao_humana(numero_dispositivo, text, False, tipo_troca, modified_text)
+
+        else:
+            if is_correct:
+                enunciado = f"De acordo com o **{rotulo_dispositivo}**:\n\n\"{text}\""
+                gabarito = 1
+                explicacao = gerar_explicacao_humana(numero_dispositivo, text, True)
+            else:
+                modified_text, tipo_troca = alterar_texto_para_errado(text)
+                enunciado = f"De acordo com o **{rotulo_dispositivo}**:\n\n\"{modified_text}\""
+                gabarito = 0
+                explicacao = gerar_explicacao_humana(numero_dispositivo, text, False, tipo_troca, modified_text)
+
+        try:
+            conn.execute("""
+                INSERT INTO questoes(lei_id, artigo_id, disciplina_id, filtro_id, artigo_numero, conteudo, enunciado, gabarito, explicacao, origem, criada_em)
+                VALUES(?,?,?,?,?,?,?,?,?,?,?)
+            """, (
+                law_id,
+                art["id"],
+                discipline_id,
+                filter_id,
+                numero_dispositivo,
+                numero_dispositivo,
+                enunciado,
+                gabarito,
+                explicacao,
+                motor_ia,
+                now
+            ))
+            generated += 1
+        except sqlite3.IntegrityError:
+            pass
+
     conn.commit()
     conn.close()
     return generated
@@ -694,9 +938,33 @@ def record_answer(question_id, answer, cycle):
     q = conn.execute("SELECT * FROM questoes WHERE id=?", (question_id,)).fetchone()
     correct = int(answer == q["gabarito"])
     now = datetime.now()
-    conn.execute("INSERT INTO respostas(usuario_id, questao_id, resposta, acertou, respondida_em, ciclo) VALUES(?,?,?,?,?,?)", (USER_ID, question_id, answer, correct, now.isoformat(), cycle))
-    conn.execute("INSERT OR REPLACE INTO revisoes(usuario_id, questao_id, prioridade, proxima_revisao, erros, acertos) VALUES(?,?,?,?,?,?)",
-                 (USER_ID, question_id, 1, (now + timedelta(days=1)).isoformat(), 0 if correct else 1, 1 if correct else 0))
+    conn.execute("""
+        INSERT INTO respostas(usuario_id, questao_id, resposta, acertou, respondida_em, ciclo)
+        VALUES(?, ?, ?, ?, ?, ?)
+    """, (USER_ID, question_id, answer, correct, now.isoformat(), cycle))
+
+    old = conn.execute("SELECT * FROM revisoes WHERE usuario_id=? AND questao_id=?", (USER_ID, question_id)).fetchone()
+    if old:
+        errors = old["erros"] + (0 if correct else 1)
+        hits = old["acertos"] + (1 if correct else 0)
+    else:
+        errors = 0 if correct else 1
+        hits = 1 if correct else 0
+
+    if not correct:
+        priority = min(10, (old["prioridade"] if old else 1) + 2)
+        next_date = now
+    else:
+        priority = max(0, (old["prioridade"] if old else 1) - 1)
+        intervals = [1, 3, 7, 15, 30]
+        idx = min(len(intervals)-1, hits-1)
+        next_date = now + timedelta(days=intervals[idx])
+
+    conn.execute("""
+        INSERT OR REPLACE INTO revisoes(usuario_id, questao_id, prioridade, proxima_revisao, erros, acertos)
+        VALUES(?, ?, ?, ?, ?, ?)
+    """, (USER_ID, question_id, priority, next_date.isoformat(), errors, hits))
+
     conn.commit()
     conn.close()
     return correct
@@ -714,169 +982,430 @@ def stats():
     hits = conn.execute("SELECT COALESCE(SUM(acertou),0) n FROM respostas WHERE usuario_id=?", (USER_ID,)).fetchone()["n"]
     errors = total - hits
     pct = (hits / total * 100) if total else 0
-    b_disc = pd.read_sql_query("SELECT d.nome disciplina, COUNT(r.id) respondidas, COALESCE(SUM(r.acertou),0) acertos FROM respostas r JOIN questoes q ON q.id=r.questao_id JOIN disciplinas d ON d.id=q.disciplina_id WHERE r.usuario_id = ? GROUP BY d.id", conn, params=(USER_ID,)) if pd else None
-    b_filt = pd.read_sql_query("SELECT f.nome filtro, COUNT(r.id) respondidas FROM respostas r JOIN questoes q ON q.id=r.questao_id JOIN filtros_salvos f ON f.id=q.filtro_id WHERE r.usuario_id = ? GROUP BY f.id", conn, params=(USER_ID,)) if pd else None
-    b_cont = pd.read_sql_query("SELECT d.nome disciplina, q.conteudo, COUNT(r.id) respondidas FROM respostas r JOIN questoes q ON q.id=r.questao_id JOIN disciplinas d ON d.id=q.disciplina_id WHERE r.usuario_id = ? GROUP BY d.id, q.conteudo", conn, params=(USER_ID,)) if pd else None
-    due = conn.execute("SELECT COUNT(*) n FROM revisoes WHERE usuario_id = ? AND proxima_revisao <= ?", (USER_ID, datetime.now().isoformat())).fetchone()["n"]
+    
+    b_disc = pd.read_sql_query("""
+        SELECT d.nome disciplina,
+               COUNT(r.id) respondidas,
+               COALESCE(SUM(r.acertou),0) acertos,
+               COUNT(r.id)-COALESCE(SUM(r.acertou),0) erros,
+               ROUND(COALESCE(SUM(r.acertou),0)*100.0/COUNT(r.id),1) percentual
+        FROM respostas r
+        JOIN questoes q ON q.id=r.questao_id
+        JOIN disciplinas d ON d.id=q.disciplina_id
+        WHERE r.usuario_id = ?
+        GROUP BY d.id ORDER BY percentual
+    """, conn, params=(USER_ID,))
+
+    b_filt = pd.read_sql_query("""
+        SELECT f.nome filtro,
+               d.nome disciplina,
+               l.nome lei,
+               COUNT(r.id) respondidas,
+               COALESCE(SUM(r.acertou),0) acertos,
+               COUNT(r.id)-COALESCE(SUM(r.acertou),0) erros,
+               ROUND(COALESCE(SUM(r.acertou),0)*100.0/COUNT(r.id),1) percentual
+        FROM respostas r
+        JOIN questoes q ON q.id=r.questao_id
+        JOIN filtros_salvos f ON f.id=q.filtro_id
+        JOIN disciplinas d ON d.id=f.disciplina_id
+        JOIN leis l ON l.id=f.lei_id
+        WHERE r.usuario_id = ?
+        GROUP BY f.id ORDER BY r.id DESC
+    """, conn, params=(USER_ID,))
+
+    b_cont = pd.read_sql_query("""
+        SELECT d.nome disciplina, q.conteudo,
+               COUNT(r.id) respondidas,
+               COALESCE(SUM(r.acertou),0) acertos,
+               COUNT(r.id)-COALESCE(SUM(r.acertou),0) erros,
+               ROUND(COALESCE(SUM(r.acertou),0)*100.0/COUNT(r.id),1) percentual
+        FROM respostas r
+        JOIN questoes q ON q.id=r.questao_id
+        JOIN disciplinas d ON d.id=q.disciplina_id
+        WHERE r.usuario_id = ?
+        GROUP BY d.id,q.conteudo ORDER BY percentual
+    """, conn, params=(USER_ID,))
+
+    due = conn.execute("""
+        SELECT COUNT(*) n FROM revisoes
+        WHERE usuario_id = ? AND proxima_revisao <= ?
+    """, (USER_ID, datetime.now().isoformat())).fetchone()["n"]
+
     conn.close()
     return total, hits, errors, pct, b_disc, b_filt, b_cont, due
 
-with st.sidebar:
-    st.markdown(f"👤 Utilizador: **{USERNAME}**")
-    if st.button("🚪 Sair"):
-        st.session_state.clear()
-        st.rerun()
-    st.divider()
-    st.markdown("### 🤖 Inteligência Artificial")
-    chave_gemini_detectada = obter_chave_gemini()
-    status_ia = "🟢 Ativa" if chave_gemini_detectada else "⚪ Offline"
-    st.caption(f"Status: **{status_ia}**")
-    
-    with st.expander("🔑 Chave API Gemini", expanded=False):
-        nova_chave = st.text_input("GEMINI_API_KEY:", type="password", key="sidebar_key")
-        if st.button("Salvar Chave", key="sidebar_save_key"):
-            if nova_chave.strip():
-                st.session_state["gemini_api_key"] = nova_chave.strip()
-                st.success("Salvo!")
-                st.rerun()
-
 st.title("⚖ Decorando Lei Seca")
+
+is_admin_user = bool(USERNAME and USERNAME.strip().lower() == ADMIN_EMAIL)
 
 if is_admin_user:
     tab1, tab2, tab3, tab4, tab5, tab_admin = st.tabs([
-        "📚 Importar Leis", "🎯 Criar Caderno", "📝 Resolver Questões", "📊 Desempenho", "🔄 Revisões", "🛡 Painel Admin"
+        "📚 Importar Leis",
+        "🎯 Criar Caderno / Filtro",
+        "📝 Resolver Questões",
+        "📊 Desempenho",
+        "🔄 Revisões",
+        "🛡 Painel Admin"
     ])
 else:
     tab1, tab2, tab3, tab4, tab5 = st.tabs([
-        "📚 Importar Leis", "🎯 Criar Caderno", "📝 Resolver Questões", "📊 Desempenho", "🔄 Revisões"
+        "📚 Importar Leis",
+        "🎯 Criar Caderno / Filtro",
+        "📝 Resolver Questões",
+        "📊 Desempenho",
+        "🔄 Revisões"
     ])
 
 with tab1:
-    st.header("Importar Nova Lei")
+    st.header("Importar Nova Lei (PDF)")
     discs = get_disciplines()
     disc_names = [d["nome"] for d in discs]
+    
     col1, col2 = st.columns(2)
     with col1:
-        new_disc = st.text_input("Nova Disciplina:")
-        if st.button("Cadastrar Disciplina") and new_disc:
-            add_discipline(new_disc)
-            st.rerun()
+        new_disc = st.text_input("Nova Disciplina (ou selecione ao lado):")
+        if st.button("Cadastrar Disciplina"):
+            if new_disc:
+                add_discipline(new_disc)
+                st.success(f"Disciplina '{new_disc}' cadastrada!")
+                st.rerun()
+
     with col2:
-        disc_sel = st.selectbox("Disciplina:", [""] + disc_names)
-    law_title = st.text_input("Nome da Lei:")
-    uploaded_file = st.file_uploader("PDF", type=["pdf"])
-    if st.button("Processar Lei") and disc_sel and law_title and uploaded_file:
-        d_id = [d["id"] for d in discs if d["nome"] == disc_sel][0]
-        path = PDF_DIR / uploaded_file.name
-        with open(path, "wb") as f: f.write(uploaded_file.getbuffer())
-        law_id = add_law(d_id, law_title, uploaded_file.name)
-        parse_and_store_pdf(path, law_id)
-        st.success("Lei processada com sucesso!")
+        disc_sel = st.selectbox("Selecione a Disciplina:", [""] + disc_names)
+
+    st.subheader("Upload do PDF da Lei")
+    law_title = st.text_input("Nome da Lei (ex: CF/88, Código Penal, etc.):")
+    uploaded_file = st.file_uploader("Escolha o ficheiro PDF da lei", type=["pdf"])
+
+    if st.button("Processar e Salvar Lei"):
+        if not disc_sel:
+            st.error("Selecione uma disciplina!")
+        elif not law_title:
+            st.error("Informe o nome da lei!")
+        elif not uploaded_file:
+            st.error("Envie um ficheiro PDF!")
+        else:
+            disc_id = [d["id"] for d in discs if d["nome"] == disc_sel][0]
+            file_path = PDF_DIR / uploaded_file.name
+            with open(file_path, "wb") as f:
+                f.write(uploaded_file.getbuffer())
+
+            law_id = add_law(disc_id, law_title, uploaded_file.name)
+            qtd = parse_and_store_pdf(file_path, law_id)
+            st.success(f"Lei processada com sucesso! {qtd} artigos importados.")
+
+    st.divider()
+    st.subheader("🗑 Leis Cadastradas por Disciplina")
+    todas_leis = get_laws()
+    if todas_leis:
+        leis_por_disciplina = {}
+        for l in todas_leis:
+            disc_nome = l['disciplina_nome']
+            if disc_nome not in leis_por_disciplina:
+                leis_por_disciplina[disc_nome] = []
+            leis_por_disciplina[disc_nome].append(l)
+
+        for disc_nome, lista_leis in leis_por_disciplina.items():
+            with st.expander(f"📚 **{disc_nome}** ({len(lista_leis)} Lei(s))", expanded=False):
+                for l in lista_leis:
+                    lc1, lc2 = st.columns([4, 1])
+                    lc1.write(f"📄 **{l['nome']}**")
+                    if lc2.button("Excluir Lei", key=f"del_law_{l['id']}"):
+                        delete_law(l['id'])
+                        st.success(f"Lei '{l['nome']}' excluída com sucesso!")
+                        st.rerun()
+    else:
+        st.info("Nenhuma lei cadastrada ainda.")
 
 with tab2:
-    st.header("Criar Caderno")
+    st.header("Criar Caderno de Questões por Filtro")
     discs = get_disciplines()
     disc_dict = {d["nome"]: d["id"] for d in discs}
-    disc_f = st.selectbox("Disciplina:", [""] + list(disc_dict.keys()), key="c_disc")
+    
+    disc_f = st.selectbox("1. Selecione a Disciplina", [""] + list(disc_dict.keys()), key="f_disc")
+    
     if disc_f:
         d_id = disc_dict[disc_f]
         laws = get_laws(d_id)
         law_dict = {l["nome"]: l["id"] for l in laws}
-        law_f = st.selectbox("Lei:", [""] + list(law_dict.keys()), key="c_law")
+        
+        law_f = st.selectbox("2. Selecione a Lei", [""] + list(law_dict.keys()), key="f_law")
+        
         if law_f:
             l_id = law_dict[law_f]
-            arts = get_articles(l_id)
-            art_dict = {f"{a['numero']} - {a['texto'][:50]}...": a["id"] for a in arts}
-            sel_arts = st.multiselect("Artigos:", list(art_dict.keys()))
-            qtd = st.number_input("Quantidade:", min_value=1, value=10)
-            f_name = st.text_input("Nome do Caderno:")
-            if st.button("Gerar Caderno") and f_name:
-                art_ids = [art_dict[k] for k in sel_arts] if sel_arts else [a["id"] for a in arts]
-                f_id = save_filter(f_name, d_id, l_id, art_ids, qtd)
-                generate_questions_for_articles(d_id, l_id, art_ids, qtd, filter_id=f_id)
-                st.success("Caderno gerado com sucesso!")
+            articles = get_articles(l_id)
+            art_dict = {f"{a['numero']} - {a['texto'][:60]}...": a["id"] for a in articles}
+            
+            selected_arts = st.multiselect("3. Selecione os Artigos/Trechos (deixe vazio para TODOS):", list(art_dict.keys()))
+            
+            total_arts_selecionados = len(selected_arts) if selected_arts else len(articles)
+            sugestao_qtd = max(total_arts_selecionados * 2, 10)
+            
+            st.info(f"💡 **Sugestão do Sistema:** Esta lei/seleção possui **{total_arts_selecionados} artigo(s)/dispositivo(s)**.")
+
+            qtd_q = st.number_input(
+                "4. Quantidade de questões para este filtro:",
+                min_value=total_arts_selecionados if total_arts_selecionados > 0 else 1,
+                max_value=500,
+                value=sugestao_qtd
+            )
+            
+            motor_ia = st.radio(
+                "5. Selecione o Motor para Geração de Questões:",
+                ["⚙️ Regra Padrão", "🦙 Ollama (Local)", "🤖 OpenAI (Nuvem)", "♊ Gemini (Nuvem)"]
+            )
+
+            filter_name = st.text_input("6. Nome do seu Caderno / Filtro:")
+
+            if st.button("Salvar Caderno e Gerar Questões"):
+                if not filter_name:
+                    st.error("Informe um nome para o seu caderno!")
+                else:
+                    with st.spinner("Aguarde sincronização... Gerando questões e estruturando o caderno..."):
+                        art_ids = [art_dict[k] for k in selected_arts]
+                        f_id = save_filter(filter_name, d_id, l_id, art_ids, qtd_q)
+                        qtd_geradas = generate_questions_for_articles(d_id, l_id, art_ids, qtd_q, filter_id=f_id, motor_ia=motor_ia)
+                    st.success(f"Caderno '{filter_name}' criado com sucesso! {qtd_geradas} questões geradas.")
+
+    st.divider()
+    st.subheader("🗑 Meus Cadernos / Filtros Salvos por Disciplina")
+    meus_filtros = get_saved_filters()
+    
+    if meus_filtros:
+        filtros_por_disciplina = {}
+        for mf in meus_filtros:
+            disc = mf['disciplina']
+            if disc not in filtros_por_disciplina:
+                filtros_por_disciplina[disc] = []
+            filtros_por_disciplina[disc].append(mf)
+
+        for disc_nome, lista_filtros in filtros_por_disciplina.items():
+            with st.expander(f"📚 **{disc_nome}** ({len(lista_filtros)} Caderno(s))", expanded=False):
+                for mf in lista_filtros:
+                    fc1, fc2 = st.columns([4, 1])
+                    fc1.write(f"📁 **{mf['nome']}** _(Lei: {mf['lei']})_")
+                    if fc2.button("Excluir Caderno", key=f"del_filt_{mf['id']}"):
+                        delete_filter(mf['id'])
+                        st.success(f"Caderno '{mf['nome']}' removido com sucesso!")
+                        st.rerun()
 
 with tab3:
     st.header("Resolver Questões")
-    filters = get_saved_filters()
-    if not filters:
-        st.info("Nenhum caderno criado.")
+    
+    discs = get_disciplines()
+    disc_options = {"Todas as Disciplinas": None}
+    for d in discs:
+        disc_options[d["nome"]] = d["id"]
+
+    selected_disc_label = st.selectbox("Selecione a Disciplina:", list(disc_options.keys()), key="res_disc_filter")
+    selected_disc_id = disc_options[selected_disc_label]
+
+    saved_filters = get_saved_filters(selected_disc_id)
+    
+    if not saved_filters:
+        st.info("Nenhum caderno de questões encontrado para a disciplina selecionada.")
     else:
-        f_map = {f"{f['nome']} ({f['disciplina']} - {f['lei']})": f["id"] for f in filters}
-        sel_label = st.selectbox("Caderno:", list(f_map.keys()))
-        f_id = f_map[sel_label]
+        f_options = {f"{f['nome']} ({f['disciplina']} - {f['lei']})": f["id"] for f in saved_filters}
+        sel_filter_label = st.selectbox("Selecione o Caderno para Treinar:", list(f_options.keys()), key="res_caderno_filter")
+        sel_filter_id = f_options[sel_filter_label]
+
+        if "last_filter_id" not in st.session_state or st.session_state["last_filter_id"] != sel_filter_id:
+            st.session_state["last_filter_id"] = sel_filter_id
+            st.session_state["q_index"] = 0
+            st.session_state["answered_q"] = {}
+
         conn = db()
-        questoes = conn.execute("SELECT * FROM questoes WHERE filtro_id=?", (f_id,)).fetchall()
+        questoes = conn.execute("SELECT * FROM questoes WHERE filtro_id=? ORDER BY id", (sel_filter_id,)).fetchall()
         conn.close()
+
         if not questoes:
-            st.warning("Sem questões.")
+            st.warning("Nenhuma questão gerada para este caderno.")
         else:
-            if "q_idx" not in st.session_state: st.session_state["q_idx"] = 0
-            idx = st.session_state["q_idx"]
+            if "q_index" not in st.session_state:
+                st.session_state["q_index"] = 0
+            if "answered_q" not in st.session_state:
+                st.session_state["answered_q"] = {}
+
+            idx = st.session_state["q_index"]
             if idx >= len(questoes):
-                st.success("Concluído!")
-                if st.button("Recomeçar"):
-                    st.session_state["q_idx"] = 0
+                st.success("🎉 Concluiu todas as questões deste caderno!")
+                if st.button("Reiniciar Caderno"):
+                    st.session_state["q_index"] = 0
+                    st.session_state["answered_q"] = {}
                     st.rerun()
             else:
                 q = questoes[idx]
-                st.markdown(f"**Dispositivo:** `{q['artigo_numero']}`")
+                st.subheader(f"Questão {idx + 1} de {len(questoes)}")
                 
-                # Contexto do Caput
-                is_subdevice = any(tag in q['artigo_numero'].lower() for tag in ["§", "parágrafo", "inciso", "alínea"]) or re.search(rf'\b{REGEX_ROMANO}\b', q['artigo_numero'], re.IGNORECASE)
-                if is_subdevice and q.get("artigo_id"):
+                num_disp = q['artigo_numero']
+                st.markdown(f"**Dispositivo:** {num_disp}")
+
+                is_subdevice = any(tag in num_disp.lower() for tag in ["§", "parágrafo", "inciso", "alínea", "alinea"]) or re.search(r'\b(I|II|III|IV|V|VI|VII|VIII|IX|X|XI|XII|XIII|XIV|XV|XVI|XVII|XVIII|XIX|XX)\b', num_disp)
+                if is_subdevice:
                     caput_text = obter_texto_caput(q["artigo_id"])
                     if caput_text:
-                        with st.expander("📜 Contexto: Artigo Principal (Caput)", expanded=False):
-                            st.write(f"_{caput_text}_")
+                        st.info(f"📜 **Artigo Principal (Caput):**\n\n\"{caput_text}\"")
 
                 st.markdown(q["enunciado"])
-                q_id = q["id"]
-                ja_respondida = q_id in st.session_state.get("answered_q", {})
-                
-                if "answered_q" not in st.session_state:
-                    st.session_state["answered_q"] = {}
 
-                resp = st.radio("Resposta:", ["Certo", "Errado"], key=f"ans_{q_id}", disabled=ja_respondida)
+                q_id = q["id"]
+                ja_respondida = q_id in st.session_state["answered_q"]
+
+                resp = st.radio("A sua resposta:", ["Certo", "Errado"], key=f"q_{q_id}", disabled=ja_respondida)
                 
                 if not ja_respondida:
-                    if st.button("Responder", type="primary", key=f"btn_resp_{q_id}"):
+                    if st.button("Responder", key=f"btn_{q_id}"):
                         val = 1 if resp == "Certo" else 0
-                        acertou = record_answer(q_id, val, 1)
-                        st.session_state["answered_q"][q_id] = {"acertou": acertou, "resposta": resp}
+                        acertou = record_answer(q_id, val, cycle=1)
+                        st.session_state["answered_q"][q_id] = {
+                            "acertou": acertou,
+                            "resposta": resp
+                        }
                         st.rerun()
                 else:
                     dados_resp = st.session_state["answered_q"][q_id]
                     if dados_resp["acertou"]:
-                        st.success("✨ Correto!")
+                        st.success("✨ Resposta Correta!")
                     else:
-                        st.error("❌ Incorreto!")
-                    
-                    # CORREÇÃO PRINCIPAL: unsafe_allow_html=True aplicado aqui!
-                    explicacao_exibir = st.session_state.get(f"custom_explicacao_{q_id}", q['explicacao'])
-                    st.markdown(explicacao_exibir, unsafe_allow_html=True)
-                    
-                    if st.button("Próxima Questão ➡️", key=f"next_{q_id}", type="primary"):
-                        st.session_state["q_idx"] += 1
+                        st.error("❌ Resposta Incorreta!")
+                    st.markdown(f"{q['explicacao']}")
+
+                    if st.button("Próxima Questão ➡️", key=f"next_{q_id}"):
+                        st.session_state["q_index"] += 1
                         st.rerun()
 
 with tab4:
-    st.header("Desempenho")
+    st.header("O seu Desempenho")
     tot, ac, err, pct, b_disc, b_filt, b_cont, due = stats()
+    
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Respondidas", tot)
+    c1.metric("Total Respondidas", tot)
     c2.metric("Acertos", ac)
     c3.metric("Erros", err)
     c4.metric("Aproveitamento", f"{pct:.1f}%")
 
+    st.subheader("Desempenho por Caderno / Filtro")
+    if not b_filt.empty:
+        st.dataframe(b_filt, use_container_width=True)
+    else:
+        st.info("Nenhuma questão respondida ainda.")
+
+    st.subheader("Desempenho por Disciplina")
+    if not b_disc.empty:
+        st.dataframe(b_disc, use_container_width=True)
+
+    st.divider()
+    st.subheader("⚠ Redefinir Estatísticas")
+    if st.button("Zerar Histórico de Respostas / Limpar Dashboard", type="secondary"):
+        zerar_historico_dashboard()
+        st.success("O seu histórico de respostas e indicadores do dashboard foram zerados!")
+        st.rerun()
+
 with tab5:
     st.header("Revisão Espaçada")
     tot, ac, err, pct, b_disc, b_filt, b_cont, due = stats()
-    st.metric("Pendentes", due)
+    st.metric("Questões Pendentes para Revisão Hoje", due)
+
+    if due > 0:
+        conn = db()
+        agora_str = datetime.now().isoformat()
+        revs = conn.execute("""
+            SELECT q.* FROM revisoes r
+            JOIN questoes q ON q.id = r.questao_id
+            WHERE r.usuario_id = ? AND r.proxima_revisao <= ?
+            ORDER BY r.proxima_revisao ASC
+            LIMIT 1
+        """, (USER_ID, agora_str)).fetchone()
+        
+        if not revs:
+            revs = conn.execute("""
+                SELECT q.* FROM revisoes r
+                JOIN questoes q ON q.id = r.questao_id
+                WHERE r.usuario_id = ?
+                LIMIT 1
+            """, (USER_ID,)).fetchone()
+            
+        conn.close()
+
+        if revs:
+            st.subheader("Questão para Revisão")
+            
+            num_disp = revs['artigo_numero']
+            st.markdown(f"**Dispositivo:** {num_disp}")
+
+            is_subdevice = any(tag in num_disp.lower() for tag in ["§", "parágrafo", "inciso", "alínea", "alinea"]) or re.search(r'\b(I|II|III|IV|V|VI|VII|VIII|IX|X|XI|XII|XIII|XIV|XV|XVI|XVII|XVIII|XIX|XX)\b', num_disp)
+            if is_subdevice and "artigo_id" in revs.keys() and revs["artigo_id"]:
+                caput_text = obter_texto_caput(revs["artigo_id"])
+                if caput_text:
+                    st.info(f"📜 **Artigo Principal (Caput):**\n\n\"{caput_text}\"")
+
+            st.markdown(revs["enunciado"])
+            
+            q_id_rev = revs["id"]
+            resp_rev = st.radio("A sua resposta:", ["Certo", "Errado"], key=f"rev_ans_{q_id_rev}")
+            
+            if st.button("Enviar Resposta da Revisão", key=f"btn_rev_{q_id_rev}"):
+                val = 1 if resp_rev == "Certo" else 0
+                acertou = record_answer(q_id_rev, val, cycle=2)
+                if acertou:
+                    st.success("✨ Excelente! Próxima revisão agendada.")
+                else:
+                    st.error("❌ Errou! Ela voltará para revisão.")
+                st.markdown(f"{revs['explicacao']}")
+                st.rerun()
+        else:
+            st.info("Nenhuma questão detalhada encontrada para revisão neste momento.")
+    else:
+        st.success("Tudo em dia! Não há revisões pendentes para hoje.")
 
 if is_admin_user:
     with tab_admin:
-        st.header("🛡 Painel Admin")
+        st.header("🛡 Painel de Controlo do Administrador")
+        st.write("Gerencie e aprove o acesso de novos utilizadores ao sistema de forma rápida e segura.")
+        
         usuarios_cadastrados = listar_usuarios()
+        st.info(f"**Total de utilizadores cadastrados no sistema:** {len(usuarios_cadastrados)}")
+        
+        st.subheader("👥 Lista de Utilizadores e Autorizações")
         for u in usuarios_cadastrados:
-            st.markdown(f"**{u['username']}** - Autorizado: {u['autorizado']}")
+            with st.container(border=True):
+                col_info, col_toggle, col_del = st.columns([3, 2, 1])
+                
+                col_info.markdown(f"**E-mail / Utilizador:** `{u['username']}`")
+                col_info.caption(f"Criado em: {u['criado_em'][:10]}")
+                
+                is_this_admin = u['username'].strip().lower() == ADMIN_EMAIL
+                
+                if is_this_admin:
+                    col_toggle.markdown("👑 **Administrador Principal**")
+                else:
+                    status_atual = bool(u['autorizado'])
+                    novo_status = col_toggle.toggle("Acesso Autorizado", value=status_atual, key=f"aut_tab_{u['id']}")
+                    if novo_status != status_atual:
+                        alterar_status_autorizacao(u['id'], 1 if novo_status else 0)
+                        st.toast(f"Status de autorização de {u['username']} atualizado com sucesso!")
+                        st.rerun()
+
+                    if col_del.button("🗑️ Excluir", key=f"del_tab_{u['id']}", help="Remover Utilizador"):
+                        excluir_usuario(u['id'])
+                        st.success(f"Utilizador {u['username']} removido do sistema!")
+                        st.rerun()
+
+        st.divider()
+        st.subheader("➕ Criar Novo Utilizador Autorizado Diretamente")
+        col_au1, col_au2 = st.columns(2)
+        with col_au1:
+            adm_new_u = st.text_input("E-mail do Novo Utilizador", key="adm_u_tab")
+        with col_au2:
+            adm_new_p = st.text_input("Palavra-passe Inicial", type="password", key="adm_p_tab")
+            
+        if st.button("Cadastrar e Autorizar Imediatamente", type="primary"):
+            if adm_new_u and adm_new_p:
+                ok, msg = cadastrar_usuario(adm_new_u, adm_new_p, autorizado=1)
+                if ok:
+                    st.success(msg)
+                    st.rerun()
+                else:
+                    st.error(msg)
+            else:
+                st.warning("Preencha todos os campos para prosseguir.")
