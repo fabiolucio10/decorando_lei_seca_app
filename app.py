@@ -1382,7 +1382,9 @@ def extrair_json_exemplo(raw_text, rotulo_dispositivo):
 
 def gerar_exemplo_gemini(rotulo_dispositivo, texto_dispositivo, chave_manual=None):
     """
-    Chama a Inteligência Artificial Gemini com tripla camada de redundância:
+    Chama a Inteligência Artificial Gemini para criar um exemplo prático e objetivo
+    da vida real estritamente contextualizado ao tema exato da assertiva jurídica.
+    Tripla camada de redundância:
     1. SDK google.genai moderno (v2.x)
     2. SDK google.generativeai legado (v0.x)
     3. Chamada HTTP REST nativa via urllib (sem dependência de bibliotecas, 100% à prova de falhas)
@@ -1392,79 +1394,88 @@ def gerar_exemplo_gemini(rotulo_dispositivo, texto_dispositivo, chave_manual=Non
         return None
 
     # Limpa texto para retirar cabeçalho de enunciado caso exista
-    texto_puro = texto_dispositivo
-    if "De acordo com o" in texto_puro:
-        m = re.search(r':\s*"(.*)"\s*$', texto_puro, re.DOTALL)
-        if m:
-            texto_puro = m.group(1).strip()
-        else:
-            partes = texto_puro.split("\n\n")
-            if len(partes) > 1:
-                texto_puro = partes[-1].strip('"\n ')
+    texto_puro = texto_dispositivo.strip('"\n ')
+    if "De acordo com" in texto_puro or "julgue o item" in texto_puro or "À luz da" in texto_puro:
+        m_aspas = re.findall(r'"([^"]+)"', texto_puro)
+        if m_aspas:
+            texto_puro = m_aspas[-1].strip()
 
-    prompt = f"""Você é um jurista e professor de Direito para concursos públicos no Brasil.
-Dispositivo legal em estudo: {rotulo_dispositivo}
-Texto literal da Lei Seca: "{texto_puro}"
+    prompt = f"""Você é um jurista renomado e professor especialista de Direito para concursos públicos no Brasil.
+Dispositivo legal / Referência: {rotulo_dispositivo}
+Texto exato da assertiva / regra da Lei Seca em exame: "{texto_puro}"
 
-Crie um exemplo prático e objetivo da vida real, extremamente claro e direto, demonstrando como esse dispositivo legal exato é aplicado na prática (em um tribunal, delegacia, repartição pública ou cotidiano do cidadão). Use nomes fictícios e uma narrativa simples de 2 a 3 frases.
+MISSÃO ESSENCIAL: Crie um "Exemplo Prático e Objetivo da Vida Real", direto e claro, demonstrando exatamente como esta regra jurídica específica é aplicada na prática (em um tribunal, delegacia, repartição pública ou cotidiano do cidadão).
+DIRETRIZ OBRIGATÓRIA: O exemplo DEVE corresponder estritamente ao tema da regra acima.
+- Se o texto for sobre proteção de dados pessoais (inclusive nos meios digitais), seu exemplo DEVE abordar vazamento, privacidade ou uso indevido de dados pessoais na internet/aplicativos;
+- Se for sobre inviolabilidade de domicílio, aborde entrada em residência;
+- Se for sobre herança, aborde inventário ou sucessão de herdeiros;
+- Se for sobre acesso à informação, aborde pedido de certidão ou documento a órgão público;
+- Se for sobre gratuidade de justiça ou defensoria pública, aborde hipossuficiência jurídica;
+- Se for sobre tribunal do júri, aborde crimes dolosos contra a vida.
+Use nomes fictícios simples (ex: Pedro, Maria, empresa Alfa) e uma narrativa fluida de 2 a 3 frases.
 
-Responda EXCLUSIVAMENTE em formato JSON com as chaves:
+Responda EXCLUSIVAMENTE em formato JSON com as 4 chaves a seguir (sem blocos markdown adicionais):
 {{
   "situacao_real": "Narrativa objetiva de 2 a 3 frases de um caso concreto real da vida cotidiana aplicando este dispositivo com nomes fictícios",
-  "aplicacao_regra": "Como a regra foi aplicada ao caso concreto",
+  "aplicacao_regra": "Como a regra foi aplicada ao caso concreto específico",
   "objetivo_regra": "Qual a finalidade protetiva ou jurídica da norma",
-  "bizu_memorizacao": "Uma dica rápida de memorização ou como as bancas de concurso tentam criar pegadinha neste dispositivo"
+  "bizu_memorizacao": "Uma dica rápida de memorização ou como as bancas de concurso costumam criar pegadinha neste dispositivo"
 }}"""
 
     # Estratégia 1: SDK google.genai moderno
     if genai and hasattr(genai, "Client"):
-        try:
-            client = genai.Client(api_key=chave)
-            resp = client.models.generate_content(
-                model="gemini-2.5-flash",
-                contents=prompt
-            )
-            res = extrair_json_exemplo(resp.text, rotulo_dispositivo)
-            if res:
-                return res
-        except Exception as e:
-            logging.info(f"Tentativa com google.genai falhou: {e}")
+        for m_name in ["gemini-flash-latest", "gemini-3.8-flash", "gemini-2.5-flash"]:
+            try:
+                client = genai.Client(api_key=chave)
+                resp = client.models.generate_content(
+                    model=m_name,
+                    contents=prompt
+                )
+                res = extrair_json_exemplo(resp.text, rotulo_dispositivo)
+                if res:
+                    return res
+            except Exception as e:
+                logging.info(f"Tentativa com google.genai ({m_name}) falhou: {e}")
 
     # Estratégia 2: SDK google.generativeai legado
     if genai and hasattr(genai, "configure"):
-        try:
-            genai.configure(api_key=chave)
-            model = genai.GenerativeModel("gemini-1.5-flash")
-            resp = model.generate_content(prompt)
-            res = extrair_json_exemplo(resp.text, rotulo_dispositivo)
-            if res:
-                return res
-        except Exception as e:
-            logging.info(f"Tentativa com google.generativeai falhou: {e}")
-
-    # Estratégia 3: Chamada REST nativa via urllib (funciona em qualquer Python, sem dependência externa)
-    for model_name in ["gemini-2.5-flash", "gemini-1.5-flash", "gemini-2.0-flash"]:
-        try:
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={chave}"
-            headers = {"Content-Type": "application/json"}
-            payload = {
-                "contents": [{"parts": [{"text": prompt}]}],
-                "generationConfig": {"temperature": 0.2}
-            }
-            req = urllib.request.Request(
-                url,
-                data=json.dumps(payload).encode("utf-8"),
-                headers=headers,
-                method="POST"
-            )
-            with urllib.request.urlopen(req, timeout=12) as response:
-                result_raw = json.loads(response.read().decode("utf-8"))
-                candidate = result_raw.get("candidates", [])[0]["content"]["parts"][0]["text"]
-                res = extrair_json_exemplo(candidate, rotulo_dispositivo)
+        for m_leg in ["gemini-1.5-flash", "gemini-pro"]:
+            try:
+                genai.configure(api_key=chave)
+                model = genai.GenerativeModel(m_leg)
+                resp = model.generate_content(prompt)
+                res = extrair_json_exemplo(resp.text, rotulo_dispositivo)
                 if res:
                     return res
-        except Exception as e_rest:
-            logging.warning(f"Chamada REST com {model_name} falhou: {e_rest}")
+            except Exception as e:
+                logging.info(f"Tentativa com google.generativeai ({m_leg}) falhou: {e}")
+
+    # Estratégia 3: Chamada REST nativa via urllib (funciona em qualquer Python, sem dependência externa)
+    for model_name in ["gemini-flash-latest", "gemini-3.8-flash", "gemini-2.5-flash", "gemini-1.5-flash"]:
+        for url_pattern in [
+            f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={chave}",
+            f"https://generativelanguage.googleapis.com/v1beta/{model_name}:generateContent?key={chave}"
+        ]:
+            try:
+                headers = {"Content-Type": "application/json"}
+                payload = {
+                    "contents": [{"parts": [{"text": prompt}]}],
+                    "generationConfig": {"temperature": 0.2, "responseMimeType": "application/json"}
+                }
+                req = urllib.request.Request(
+                    url_pattern,
+                    data=json.dumps(payload).encode("utf-8"),
+                    headers=headers,
+                    method="POST"
+                )
+                with urllib.request.urlopen(req, timeout=12) as response:
+                    result_raw = json.loads(response.read().decode("utf-8"))
+                    candidate = result_raw.get("candidates", [])[0]["content"]["parts"][0]["text"]
+                    res = extrair_json_exemplo(candidate, rotulo_dispositivo)
+                    if res:
+                        return res
+            except Exception as e_rest:
+                pass
 
     return None
 
@@ -1578,16 +1589,119 @@ def gerar_exemplo_dinamico_heuristico(art_num, texto_original):
 
     return situacao, aplicacao, objetivo, bizu
 
+def match_romano(romano, s):
+    return bool(re.search(rf'(?:inciso\s+|[\s,;]|^){re.escape(romano.lower())}(?:[\s,;.\-]|$)', s.lower()))
+
 def extrair_exemplo_objetivo_personalizado(art_num, texto_original):
     """
     Biblioteca rica de casos práticos reais e contextualizados para todos os temas
     de Direito Constitucional, Penal, Processual Penal e Administrativo.
+    Garante cobertura temática precisa, sem falsos positivos em algarismos romanos.
     """
     txt = texto_original.lower()
     art_lower = art_num.lower()
 
-    # Art. 5º, I - Igualdade entre homens e mulheres
-    if "art. 5" in art_lower and ("inciso i\b" in art_lower or "i -" in art_lower) or ("homens e mulheres são iguais" in txt):
+    # 1. Art. 5º, LXXIX - Proteção de dados pessoais inclusive nos meios digitais (EC 115/2022)
+    if any(k in txt for k in ["dados pessoais", "meios digitais", "proteção dos dados"]) or match_romano("lxxix", art_lower):
+        return (
+            "Uma plataforma de aplicativo de entregas e comércio eletrônico coletou CPFs, senhas e histórico de navegação de clientes e compartilhou com anunciantes na internet sem o consentimento dos titulares. Uma usuária vítima de golpes cibernéticos acionou a Justiça e obteve a exclusão imediata de seus dados dos servidores e indenização por violação ao direito fundamental de proteção aos dados pessoais nos meios digitais.",
+            f"• **Aplicação no {art_num}:** A proteção de dados pessoais, inclusive nos meios virtuais e digitais, é garantia individual fundamental autônoma (EC 115/2022), exigindo das empresas e do Estado padrões estritos de segurança cibernética, finalidade legítima e consentimento.",
+            "Garantir a autodeterminação informativa, a privacidade e a segurança dos indivíduos no ambiente digital contra a comercialização e vazamento abusivo de suas informações.",
+            "A proteção de dados pessoais (inclusive nos meios digitais) foi elevada a DIREITO FUNDAMENTAL no Art. 5º pela Emenda Constitucional 115/2022. Pegadinha clássica de concurso: afirmar que 'a proteção de dados é mera norma infraconstitucional (LGPD)' ou 'não abrange meios digitais'."
+        )
+
+    # 2. Art. 5º, XXXIII - Acesso à informação dos órgãos públicos (LAI)
+    if any(k in txt for k in ["interesse particular", "interesse coletivo ou geral", "prazo da lei, sob pena de responsabilidade", "informações de seu interesse"]) or match_romano("xxxiii", art_lower):
+        return (
+            "Um cidadão protocolou requerimento perante a prefeitura solicitando a prestação de contas detalhada e as notas fiscais das obras de reforma de uma escola pública. O órgão público é obrigado a fornecer as informações no prazo legal, sob pena de responsabilidade da autoridade, ressalvadas exclusivamente as matérias com sigilo imprescindível à segurança da sociedade e do Estado.",
+            f"• **Aplicação no {art_num}:** Consagra o princípio da máxima transparência administrativa, garantindo a qualquer pessoa o acesso a dados governamentais de interesse pessoal ou coletivo.",
+            "Viabilizar o controle social dos gastos e decisões estatais, combatendo a corrupção e o sigilo injustificado.",
+            "A publicidade é a regra geral da Administração; o sigilo é estrita exceção permitida apenas quando imprescindível à segurança da sociedade e do Estado."
+        )
+
+    # 3. Art. 5º, LXXIV - Assistência jurídica integral e gratuita (Defensoria Pública)
+    if any(k in txt for k in ["assistência jurídica", "insuficiência de recursos"]) or match_romano("lxxiv", art_lower):
+        return (
+            "Uma mãe desempregada e sem renda fixa precisou ajuizar ação para garantir o fornecimento de medicamento essencial ao seu filho com doença rara. Como não dispunha de recursos para contratar advogado particular, o Estado prestou assistência jurídica integral e gratuita por meio da Defensoria Pública, garantindo a defesa de seus direitos perante o Judiciário.",
+            f"• **Aplicação no {art_num}:** Impõe ao Estado o dever constitucional de prover assistência jurídica ampla (orientação judicial e extrajudicial) e gratuita a todos que comprovarem insuficiência de recursos.",
+            "Assegurar o acesso universal e efetivo à Justiça para os cidadãos economicamente hipossuficientes.",
+            "A CF exige assistência jurídica INTEGRAL e GRATUITA aos que COMPROVAREM insuficiência de recursos (para requerer basta declaração de hipossuficiência com presunção de veracidade)."
+        )
+
+    # 4. Art. 5º, XXX - Direito de herança
+    if any(k in txt for k in ["direito de herança", "herança"]) or match_romano("xxx", art_lower):
+        return (
+            "Após o falecimento de um cidadão, o patrimônio por ele construído em vida foi regularmente transmitido aos seus herdeiros necessários por meio de partilha e inventário legal, sem que o Estado ou terceiros pudessem reter ou confiscar arbitrariamente os bens deixados.",
+            f"• **Aplicação no {art_num}:** Garante o direito constitucional à sucessão hereditária e à transmissão do acervo patrimonial aos sucessores legítimos e testamentários.",
+            "Preservar a segurança jurídica patrimonial e proteger a subsistência econômica da entidade familiar.",
+            "O direito de herança é garantia individual fundamental expressa (Art. 5º, XXX); e a sucessão de bens de estrangeiros situados no país será regulada pela lei brasileira em benefício do cônjuge ou filhos brasileiros, se mais favorável (Art. 5º, XXXI)."
+        )
+
+    # 5. Art. 5º, XXXVII e LIII - Juiz Natural e Vedação a Tribunal de Exceção
+    if any(k in txt for k in ["tribunal de exceção", "juízo ou tribunal", "autoridade competente", "processado nem sentenciado"]) or match_romano("xxxvii", art_lower) or match_romano("liii", art_lower):
+        return (
+            "Durante uma crise institucional, uma autoridade política tentou instituir um conselho de emergência ad hoc para processar e julgar sumariamente manifestantes da oposição. O STF suspendeu o órgão imediatamente, pois a Constituição proíbe qualquer tribunal de exceção e assegura que ninguém será julgado senão pela autoridade judiciária pré-constituída por lei anterior aos fatos.",
+            f"• **Aplicação no {art_num}:** Princípio do Juiz Natural — garante que a competência do magistrado seja determinada por regras legais prévias e abstratas, vedando a criação de juízos posteriores aos acontecimentos.",
+            "Assegurar a imparcialidade do Poder Judiciário e coibir perseguições políticas ou julgamentos encomendados.",
+            "Não haverá juízo ou tribunal de exceção (Art. 5º, XXXVII) e ninguém será processado nem sentenciado senão pela autoridade competente (Art. 5º, LIII) — ambos consagram o Princípio do Juiz Natural."
+        )
+
+    # 6. Art. 5º, XVIII - Criação de associações e cooperativas independe de autorização
+    if any(k in txt for k in ["cooperativas independem", "criação de associações e, na forma da lei, a de cooperativas", "interferência estatal em seu funcionamento"]) or match_romano("xviii", art_lower):
+        return (
+            "Um grupo de pequenos agricultores reuniu-se para fundar uma cooperativa de beneficiamento de café. O prefeito local notificou os produtores exigindo autorização prévia da prefeitura e acesso às atas de assembleia. O Poder Judiciário trancou a intervenção, pois a criação independe de autorização e é vedada qualquer interferência estatal em seu funcionamento.",
+            f"• **Aplicação no {art_num}:** Consagra a plena liberdade de organização civil e comunitária, proibindo expressamente a ingerência do Estado na vida interna de cooperativas e associações.",
+            "Impedir o controle autoritário do governo sobre a auto-organização da sociedade civil.",
+            "A criação de associações e, na forma da lei, a de cooperativas INDEPENDEM de autorização, sendo VEDADA a interferência estatal em seu funcionamento."
+        )
+
+    # 7. Art. 5º, XXVIII - Direitos autorais, voz e imagem inclusive desportivas
+    if any(k in txt for k in ["participações individuais em obras coletivas", "imagem e voz humanas", "atividades desportivas", "obras coletivas"]) or match_romano("xxviii", art_lower):
+        return (
+            "Uma plataforma de streaming e uma federação desportiva comercializaram gravações em alta definição de partidas de futebol com closes e áudios de um atleta para veiculação publicitária sem sua anuência. O atleta acionou a Justiça e obteve a remuneração devida pela reprodução de sua voz e imagem nas atividades desportivas.",
+            f"• **Aplicação no {art_num}:** Protege a reprodução da imagem e da voz humanas inclusive em modalidades desportivas (direito de arena), bem como os direitos patrimoniais de autores de obras coletivas.",
+            "Salvaguardar os direitos morais e patrimoniais inerentes à imagem, voz e criação artística e esportiva.",
+            "A proteção à reprodução da imagem e voz humanas abrange expressamente as 'atividades desportivas'."
+        )
+
+    # 8. Art. 5º, § 1º - Aplicação imediata das normas definidoras de direitos fundamentais
+    if any(k in txt for k in ["aplicação imediata", "normas definidoras dos direitos e garantias"]) or "§ 1" in art_lower or "parágrafo 1" in art_lower:
+        return (
+            "Um cidadão invocou em juízo uma garantia fundamental expressa no Art. 5º da CF. O órgão estatal argumentou que o direito não poderia ser fruído porque ainda inexistia lei ordinária regulamentadora aprovada pelo Congresso. O magistrado rejeitou a preliminar e concedeu a tutela, visto que as normas definidoras de direitos e garantias fundamentais possuem aplicabilidade imediata.",
+            f"• **Aplicação no {art_num}:** Princípio da máxima efetividade das normas constitucionais — os direitos fundamentais não podem ter seu exercício postergado por inércia ou omissão do legislador ordinário.",
+            "Garantir a força normativa imediata da Constituição Federal em prol da proteção cidadã.",
+            "As normas definidoras dos direitos e garantias fundamentais têm APLICAÇÃO IMEDIATA (CF, Art. 5º, § 1º). Bancas costumam tentar induzir que 'têm aplicação meramente programática' (ERRADO!)."
+        )
+
+    # 9. Art. 1º, Parágrafo único - Todo poder emana do povo (soberania popular)
+    if any(k in txt for k in ["todo o poder emana do povo", "representantes eleitos ou diretamente"]) or "parágrafo único" in art_lower:
+        return (
+            "Cidadãos de um município organizaram a coleta de assinaturas e protocolaram um projeto de lei de iniciativa popular na Câmara de Vereadores para proibir o descarte de resíduos industriais em mananciais. A proposta foi regularmente processada e aprovada, corporificando o exercício direto da soberania popular.",
+            f"• **Aplicação no {art_num}:** Consagra o princípio democrático e a soberania popular, que se manifesta tanto por representantes eleitos quanto diretamente pelos cidadãos (plebiscito, referendo e iniciativa popular).",
+            "Garantir que todo o poder estatal encontre sua fonte e legitimidade exclusiva na vontade do povo.",
+            "O poder emana do povo e é exercido por representantes eleitos OU DIRETAMENTE (CF, Art. 1º, p. único e Art. 14)."
+        )
+
+    # 10. Art. 1º - Fundamentos da República (SO-CI-DI-VA-PLU)
+    if any(k in txt for k in ["dignidade da pessoa humana", "soberania", "cidadania", "pluralismo político", "valores sociais do trabalho"]) or ("art. 1" in art_lower and match_romano("iii", art_lower)):
+        return (
+            "Um município manteve pessoas vulneráveis abrigadas em condições insalubres sem alimentação ou leitos adequados. A Defensoria Pública ingressou com ação pública invocando a dignidade da pessoa humana, e o Judiciário obrigou a transferência imediata para abrigo digno com fornecimento de cuidados médicos e alimentação.",
+            f"• **Aplicação no {art_num}:** Opera como fundamento basilar do Estado Democrático de Direito brasileiro, vinculando todos os poderes da República à proteção intransigente da integridade e do valor intrínseco de cada indivíduo.",
+            "Colocar o ser humano como fim primordial e destinatário de todas as ações e leis estatais.",
+            "Fundamentos da República (Art. 1º) = mnemônico SO-CI-DI-VA-PLU: Soberania, Cidadania, Dignidade da pessoa humana, Valores sociais do trabalho e da livre iniciativa, Pluralismo político."
+        )
+
+    # 11. Art. 4º - Princípios das Relações Internacionais
+    if any(k in txt for k in ["prevalência dos direitos humanos", "autodeterminação dos povos", "não-intervenção", "igualdade entre os estados", "defesa da paz", "solução pacífica", "repúdio ao terrorismo", "cooperação entre os povos", "concessão de asilo"]) or "art. 4" in art_lower:
+        return (
+            "Diante de um conflito armado no exterior com crise humanitária de refugiados, o governo brasileiro e seus diplomatas acolheram famílias perseguidas e concederam asilo e refúgio imediato, fazendo prevalecer a proteção humanitária internacional sobre burocracias aduaneiras comuns.",
+            f"• **Aplicação no {art_num}:** A República rege-se em suas relações externas pela prevalência dos direitos humanos e cooperação pacífica entre os povos.",
+            "Garantir uma inserção internacional solidária, pacifista e defensora inegociável da dignidade humana.",
+            "Não confunda os Princípios das Relações Internacionais (Art. 4º) com os Fundamentos (Art. 1º) ou Objetivos Fundamentais (Art. 3º). Prevalência dos Direitos Humanos é princípio internacional!"
+        )
+
+    # 12. Art. 5º, I - Igualdade entre homens e mulheres
+    if match_romano("i", art_lower) or any(k in txt for k in ["homens e mulheres são iguais"]):
         return (
             "Um edital de concurso público para investigador policial fixou pontuação salarial distinta para homens e mulheres no mesmo cargo e com a mesma carga horária. Uma candidata impetrou mandado de segurança e anulou a cláusula com base na igualdade constitucional absoluta de direitos e obrigações.",
             f"• **Aplicação no {art_num}:** Veda qualquer discriminação arbitrária de gênero na fixação de vencimentos e atribuições públicas.",
@@ -1595,8 +1709,8 @@ def extrair_exemplo_objetivo_personalizado(art_num, texto_original):
             "Diferenciações entre homens e mulheres só são válidas quando justificadas por critérios biológicos razoáveis (ex: teste de aptidão física adaptado ou licença-maternidade)."
         )
 
-    # Art. 5º, II - Princípio da Legalidade
-    if "art. 5" in art_lower and ("inciso ii\b" in art_lower or "ii -" in art_lower) or ("virtude de lei" in txt and "obrigado a fazer" in txt):
+    # 13. Art. 5º, II - Princípio da Legalidade
+    if match_romano("ii", art_lower) or any(k in txt for k in ["virtude de lei", "obrigado a fazer"]):
         return (
             "Um fiscal municipal aplicou multa de trânsito a um motorista baseando-se unicamente em uma portaria interna da secretaria municipal, sem nenhuma previsão em lei formal aprovada pela Câmara. A Justiça anulou a sanção, pois ninguém é obrigado a cumprir dever que não decorra de lei formal.",
             f"• **Aplicação no {art_num}:** Princípio da legalidade estrita — para o particular, tudo o que não é proibido por lei é permitido; já o poder público só pode agir onde a lei expressamente autoriza.",
@@ -1604,8 +1718,8 @@ def extrair_exemplo_objetivo_personalizado(art_num, texto_original):
             "Para os cidadãos vigora a autonomia da vontade (fazer o que a lei não proíbe); para a Administração, vigora a legalidade estrita (fazer apenas o que a lei autoriza)."
         )
 
-    # Art. 5º, III - Vedação à Tortura e Tratamento Desumano
-    if "art. 5" in art_lower and ("inciso iii\b" in art_lower or "iii -" in art_lower) or ("submetido a tortura" in txt or "tratamento desumano" in txt):
+    # 14. Art. 5º, III - Vedação à Tortura e Tratamento Desumano
+    if match_romano("iii", art_lower) or any(k in txt for k in ["submetido a tortura", "tratamento desumano", "degradante"]):
         return (
             "Policiais civis agrediram fisicamente e ameaçaram um suspeito durante o interrogatório em delegacia para forçar uma confissão de roubo. O juiz declarou a nulidade absoluta da confissão, determinou a soltura imediata do réu e ordenou a instauração de ação penal contra os agentes por crime inafiançável de tortura.",
             f"• **Aplicação no {art_num}:** Proibição absoluta e indelegável de tortura ou tratamento cruel, independentemente da gravidade do crime investigado.",
@@ -1613,8 +1727,8 @@ def extrair_exemplo_objetivo_personalizado(art_num, texto_original):
             "O direito de não ser torturado é absoluto no Brasil — não admite exceções nem mesmo em estado de defesa, sítio ou guerra declarada."
         )
 
-    # Art. 5º, IV - Livre Manifestação do Pensamento e Vedação ao Anonimato
-    if "art. 5" in art_lower and ("inciso iv\b" in art_lower or "iv -" in art_lower) or ("manifestação do pensamento" in txt and "vedado o anonimato" in txt):
+    # 15. Art. 5º, IV - Livre Manifestação do Pensamento e Vedação ao Anonimato
+    if match_romano("iv", art_lower) or any(k in txt for k in ["manifestação do pensamento", "vedado o anonimato"]):
         return (
             "Um cidadão publicou em rede social críticas severas à gestão de um prefeito, assinando com seu nome civil real e CPF. O prefeito pediu a censura do post, mas a Justiça negou porque a manifestação é livre quando identificada, ressalvado eventual pedido de indenização caso comprovada calúnia.",
             f"• **Aplicação no {art_num}:** Protege a livre crítica e o debate público, proibindo estritamente denúncias anônimas como único fundamento de sanções estatais.",
@@ -1622,8 +1736,8 @@ def extrair_exemplo_objetivo_personalizado(art_num, texto_original):
             "A banca adora dizer que 'o anonimato é admitido em certas hipóteses' (ERRADO! O anonimato é taxativamente VEDADO pela CF)."
         )
 
-    # Art. 5º, V - Direito de Resposta
-    if "art. 5" in art_lower and ("inciso v\b" in art_lower or "v -" in art_lower) or ("direito de resposta" in txt):
+    # 16. Art. 5º, V - Direito de Resposta
+    if match_romano("v", art_lower) or any(k in txt for k in ["direito de resposta", "proporcional ao agravo"]):
         return (
             "Um telejornal noticiou incorretamente que um empresário local participava de fraude tributária. O empresário obteve na Justiça o direito de veicular sua resposta no mesmo horário e com o mesmo tempo do telejornal, além de receber indenização pecuniária por danos morais à sua imagem comercial.",
             f"• **Aplicação no {art_num}:** Garante o contraditório social através de resposta proporcional ao agravo, cumulável com indenização material e moral.",
@@ -1631,7 +1745,7 @@ def extrair_exemplo_objetivo_personalizado(art_num, texto_original):
             "O direito de resposta é PROPORCIONAL AO AGRAVO e CUMULÁVEL com indenização por dano material, moral ou à imagem."
         )
 
-    # Art. 5º, VI, VII, VIII - Liberdade Religiosa e Escusa de Consciência
+    # 17. Art. 5º, VI, VII, VIII - Liberdade Religiosa e Escusa de Consciência
     if any(k in txt for k in ["liberdade de consciência e de crença", "livre exercício dos cultos", "escusa de consciência", "prestação alternativa"]):
         return (
             "Um jovem adventista convocado para o alistamento militar obrigatório declarou que suas convicções religiosas impedem o porte de armas e o serviço militar aos sábados. As Forças Armadas foram obrigadas a conferir-lhe prestação de serviço alternativo em atividades civis durante os dias úteis.",
@@ -1640,7 +1754,7 @@ def extrair_exemplo_objetivo_personalizado(art_num, texto_original):
             "A perda de direitos políticos só ocorre se o indivíduo invocar escusa de consciência E se RECUSAR a cumprir a prestação alternativa fixada em lei (CF, Art. 15, IV)."
         )
 
-    # Art. 5º, IX, X - Intimidade, Vida Privada, Honra e Imagem
+    # 18. Art. 5º, IX, X - Intimidade, Vida Privada, Honra e Imagem
     if any(k in txt for k in ["intimidade", "vida privada", "honra e a imagem", "indenização pelo dano material ou moral"]):
         return (
             "Um hospital privado teve seu banco de dados invadido e fotos íntimas de prontuários cirúrgicos de pacientes vazaram na internet por negligência na segurança digital. Uma paciente acionou o hospital e foi indenizada em R$ 80.000 por violação direta à sua intimidade e honra.",
@@ -1649,8 +1763,8 @@ def extrair_exemplo_objetivo_personalizado(art_num, texto_original):
             "São invioláveis a intimidade, a vida privada, a honra e a imagem das pessoas, assegurado o direito à indenização pelo dano material ou moral decorrente de sua violação."
         )
 
-    # Art. 5º, XI - Inviolabilidade de domicílio
-    if "xi" in art_lower or any(k in txt for k in ["domicílio", "casa é asilo", "inviolável"]):
+    # 19. Art. 5º, XI - Inviolabilidade de domicílio
+    if any(k in txt for k in ["casa é asilo inviolável", "nela penetrar", "asilo inviolável", "sem consentimento do morador"]) or match_romano("xi", art_lower):
         return (
             "Policiais desconfiam de entorpecentes em uma residência. À noite, eles não podem entrar sem autorização do morador, a não ser em flagrante delito, desastre ou para prestar socorro. Durante o dia, podem cumprir mandado judicial mesmo sem permissão do residente.",
             f"• **Aplicação no {art_num}:** Protege a intimidade doméstica contra invasões arbitrárias do Estado.",
@@ -1658,8 +1772,8 @@ def extrair_exemplo_objetivo_personalizado(art_num, texto_original):
             "Por determinação judicial: SOMENTE DURANTE O DIA. A qualquer hora (dia ou noite): flagrante, desastre ou socorro."
         )
 
-    # Art. 5º, XII - Sigilo de correspondência e telefônico
-    if "xii" in art_lower or any(k in txt for k in ["sigilo da correspondência", "comunicações telegráficas", "dados e das comunicações telefônicas"]):
+    # 20. Art. 5º, XII - Sigilo de correspondência e telefônico
+    if any(k in txt for k in ["sigilo da correspondência", "comunicações telegráficas", "dados e das comunicações telefônicas"]) or match_romano("xii", art_lower):
         return (
             "A polícia realizou escuta telefônica de um investigado por homicídio com base apenas em ordem do delegado, sem prévia autorização judicial. O juiz declarou a gravação ilícita e ordenou o desentranhamento do processo, pois a interceptação telefônica exige estrita reserva de jurisdição.",
             f"• **Aplicação no {art_num}:** Comunicações telefônicas só podem ser interceptadas por ordem judicial, para fins de investigação criminal ou instrução processual penal.",
@@ -1667,8 +1781,8 @@ def extrair_exemplo_objetivo_personalizado(art_num, texto_original):
             "Interceptação telefônica: SOMENTE por ordem judicial, para investigação criminal ou processo penal (NUNCA para processo civil ou administrativo)."
         )
 
-    # Art. 5º, XVI - Direito de Reunião
-    if "xvi" in art_lower or any(k in txt for k in ["reunir", "reunião", "sem armas", "abertos ao público", "prévio aviso"]):
+    # 21. Art. 5º, XVI - Direito de Reunião
+    if any(k in txt for k in ["reunir pacificamente", "sem armas, em locais abertos", "prévio aviso"]) or match_romano("xvi", art_lower):
         return (
             "Estudantes e trabalhadores organizam passeata pacífica em praça pública contra o aumento da tarifa de transporte. Eles NÃO precisam pedir permissão ao prefeito ou ao comandante da PM; basta aviso prévio à autoridade para organizar o trânsito e evitar sobreposição com outro evento marcado.",
             f"• **Aplicação no {art_num}:** O direito de reunião independe de autorização do Poder Público; requer apenas que seja pacífica, sem armas e com aviso prévio.",
@@ -1676,17 +1790,17 @@ def extrair_exemplo_objetivo_personalizado(art_num, texto_original):
             "Pegadinha clássica: 'exige prévia autorização da polícia' (ERRADO!). É INDEPENDENTE de autorização, mas EXIGE PRÉVIO AVISO."
         )
 
-    # Art. 5º, XVII a XXI - Direito de Associação
-    if any(k in txt for k in ["associação", "associar-se", "dissolução compulsória", "suspensão de suas atividades"]):
+    # 22. Art. 5º, XVII a XXI - Direito de Associação
+    if any(k in txt for k in ["dissolução compulsória de associações", "suspensão de suas atividades"]) or match_romano("xvii", art_lower) or match_romano("xix", art_lower):
         return (
-            "Um grupo de moradores funda uma associação de bairro sem pedir licença à prefeitura. Meses depois, o prefeito tentou fechar a entidade por decreto. A Justiça declarou o decreto nulo: a dissolução de associação exige decisão judicial com trânsito em julgado.",
+            "Um grupo de moradores funda uma associação de bairro sem pedir licença à prefeitura. Meses depois, o prefeito tentou fechar a entidade por decreto. A Justiça declarou o decreto nulo: a dissolução compulsória de associação exige decisão judicial transitada em julgado.",
             f"• **Aplicação no {art_num}:** A criação de associações independe de autorização estatal, e sua dissolução forçada exige ordem judicial transitada em julgado.",
             "Garantir a autonomia da sociedade civil contra o arbítrio governamental.",
             "Para SUSPENDER atividades da associação: basta decisão judicial simples. Para DISSOLVER compulsoriamente: EXIGE TRÂNSITO EM JULGADO."
         )
 
-    # Art. 5º, XXII a XXVI - Propriedade, Desapropriação e Pequena Propriedade Rural
-    if any(k in txt for k in ["direito de propriedade", "função social", "desapropriação por necessidade", "pequena propriedade rural", "requisição administrativa"]):
+    # 23. Art. 5º, XXII a XXVI - Propriedade, Desapropriação e Pequena Propriedade Rural
+    if any(k in txt for k in ["direito de propriedade", "função social da propriedade", "desapropriação por necessidade", "pequena propriedade rural", "impenhorável"]) or match_romano("xxvi", art_lower):
         return (
             "Um pequeno agricultor cultiva milho em sítio familiar de 20 hectares para subsistência de sua família. Ele contraiu dívida para comprar sementes e o banco pediu a penhora da terra. O juiz negou a penhora com base no Art. 5º, XXVI, pois a pequena propriedade rural trabalhada pela família é impenhorável por dívidas produtivas.",
             f"• **Aplicação no {art_num}:** Protege o patrimônio mínimo de sobrevivência da família camponesa contra execuções bancárias.",
@@ -1694,8 +1808,8 @@ def extrair_exemplo_objetivo_personalizado(art_num, texto_original):
             "Pequena propriedade rural: trabalhada pela família + dívida da atividade produtiva = IMPENHORÁVEL."
         )
 
-    # Art. 5º, XXXVIII - Tribunal do Júri
-    if "xxxviii" in art_lower or any(k in txt for k in ["tribunal do júri", "plenitude de defesa", "sigilo das votações", "soberania dos veredictos", "crimes dolosos contra a vida"]):
+    # 24. Art. 5º, XXXVIII - Tribunal do Júri
+    if any(k in txt for k in ["tribunal do júri", "soberania dos veredictos", "plenitude de defesa", "crimes dolosos contra a vida"]) or match_romano("xxxviii", art_lower):
         return (
             "Um indivíduo é acusado de homicídio tentado após desferir facadas em um vizinho em briga de bar. O juiz togado não pode condená-lo sozinho no mérito: ele profere pronúncia e remete o acusado a julgamento perante 7 jurados populares no Tribunal do Júri.",
             f"• **Aplicação no {art_num}:** Competência constitucional privativa do Júri para julgar crimes dolosos contra a vida (homicídio, infanticídio, aborto, induzimento ao suicídio).",
@@ -1703,8 +1817,8 @@ def extrair_exemplo_objetivo_personalizado(art_num, texto_original):
             "O Tribunal do Júri julga apenas crimes DOLOSOS contra a vida (latrocínio, embora envolva morte, é crime contra o patrimônio julgado por juiz singular, Súmula 603 do STF)."
         )
 
-    # Art. 5º, XXXIX, XL - Legalidade Penal e Irretroatividade
-    if any(k in txt for k in ["não há crime sem lei anterior", "não há pena sem prévia", "lei penal não retroagirá", "salvo para beneficiar o réu"]):
+    # 25. Art. 5º, XXXIX, XL - Legalidade Penal e Irretroatividade
+    if any(k in txt for k in ["não há crime sem lei anterior", "não há pena sem prévia", "lei penal não retroagirá", "salvo para beneficiar o réu"]) or match_romano("xxxix", art_lower) or match_romano("xl", art_lower):
         return (
             "Um indivíduo foi condenado a 4 anos por um crime. Meses após a sentença, o Congresso aprovou nova lei reduzindo a pena do mesmo delito para 2 anos. O juiz da execução penal aplicou a nova lei retroativamente, reduzindo a pena do condenado para 2 anos de forma imediata.",
             f"• **Aplicação no {art_num}:** A lei penal mais benéfica sempre retroage para alcançar fatos e processos anteriores, inclusive já transitados em julgado.",
@@ -1712,8 +1826,8 @@ def extrair_exemplo_objetivo_personalizado(art_num, texto_original):
             "A lei penal NÃO retroage, SALVO para beneficiar o réu (novatio legis in mellius ou abolitio criminis retroagem SEMPRE)."
         )
 
-    # Art. 5º, XLII, XLIII, XLIV - Racismo, 3T+H e Grupos Armados
-    if any(k in txt for k in ["prática do racismo", "tortura", "tráfico ilícito de entorpecentes", "terrorismo", "hediondos", "grupos armados"]):
+    # 26. Art. 5º, XLII, XLIII, XLIV - Racismo, 3T+H e Grupos Armados
+    if any(k in txt for k in ["prática do racismo", "tortura", "tráfico ilícito de entorpecentes", "terrorismo", "hediondos", "grupos armados"]) or match_romano("xlii", art_lower) or match_romano("xliii", art_lower) or match_romano("xliv", art_lower):
         return (
             "Um homem profere ofensas racistas contra atendente de loja em shopping. Ele é preso em flagrante. O delegado não pode arbitrar fiança, e o advogado sabe que a ação penal não prescreverá mesmo se passarem 20 anos, pois racismo é inafiançável e imprescritível.",
             f"• **Aplicação no {art_num}:** Racismo e Ação de grupos armados são INAFIANÇÁVEIS e IMPRESCRITÍVEIS. Já os 3T+H (tortura, tráfico, terrorismo e hediondos) são inafiançáveis e insuscetíveis de graça/anistia (mas prescrevem!).",
@@ -1721,8 +1835,8 @@ def extrair_exemplo_objetivo_personalizado(art_num, texto_original):
             "Mnemônico de ouro: RACISMO e GRUPOS ARMADOS = RAÇUDOS = IMPRESCRITÍVEIS e INAFIANÇÁVEIS. 3T+H = INAFIANÇÁVEIS e INSUSCETÍVEIS de graça/anistia."
         )
 
-    # Art. 5º, XLVII - Penas vedadas (Morte, Perpétua, Banimento, Cruéis, Trabalhos forçados)
-    if "xlvii" in art_lower or any(k in txt for k in ["de morte", "pena de morte", "guerra declarada", "caráter perpétuo", "perpétu", "trabalhos forçados", "banimento", "cruéis", "não haverá penas"]):
+    # 27. Art. 5º, XLVII - Penas vedadas (Morte, Perpétua, Banimento, Cruéis, Trabalhos forçados)
+    if any(k in txt for k in ["de morte", "pena de morte", "caráter perpétuo", "trabalhos forçados", "banimento", "cruéis", "não haverá penas"]) or match_romano("xlvii", art_lower):
         return (
             "No Brasil, o Código Penal Militar prevê pena de morte por fuzilamento apenas se houver guerra formalmente declarada pelo Presidente com autorização do Congresso Nacional. Em tempo de paz, nenhuma autoridade judicial pode aplicar pena de morte ou de caráter perpétuo.",
             f"• **Aplicação no {art_num}:** Impede punições desumanas, cruéis ou perpétuas no sistema penal brasileiro comum.",
@@ -1730,8 +1844,8 @@ def extrair_exemplo_objetivo_personalizado(art_num, texto_original):
             "Banca adora dizer que 'não há pena de morte em hipótese alguma' (FALSO, há em caso de guerra declarada) ou que 'pena de banimento é permitida' (FALSO, é expressamente vedada)."
         )
 
-    # Art. 5º, XLVIII - Estabelecimentos distintos
-    if "xlviii" in art_lower or any(k in txt for k in ["estabelecimentos distintos", "natureza do delito", "sexo do apenado"]):
+    # 28. Art. 5º, XLVIII - Estabelecimentos distintos
+    if any(k in txt for k in ["estabelecimentos distintos", "natureza do delito", "sexo do apenado"]) or match_romano("xlviii", art_lower):
         return (
             "Um jovem de 19 anos condenado por furto simples não violento não pode ser colocado na mesma ala de reincidentes de alta periculosidade de 40 anos condenados por latrocínio, e homens e mulheres devem cumprir pena em locais separados.",
             f"• **Aplicação no {art_num}:** O Estado deve individualizar a execução penal conforme o sexo, a idade e a natureza do delito.",
@@ -1739,17 +1853,17 @@ def extrair_exemplo_objetivo_personalizado(art_num, texto_original):
             "Critérios constitucionais de separação: natureza do delito, idade e sexo do apenado."
         )
 
-    # Art. 5º, XLIX - Integridade física e moral dos presos
-    if "xlix" in art_lower or any(k in txt for k in ["integridade física e moral", "assegurado aos presos", "respeito à integridade física"]):
+    # 29. Art. 5º, XLIX - Integridade física e moral dos presos
+    if any(k in txt for k in ["integridade física e moral", "assegurado aos presos"]) or match_romano("xlix", art_lower):
         return (
             "Durante uma revista em unidade prisional, detentos imobilizados sofreram agressões verbais e físicas por agentes de segurança. O Ministério Público instaurou ação penal, pois a Constituição assegura que a privação de liberdade jamais retira do preso o direito ao respeito à sua integridade física e moral.",
             f"• **Aplicação no {art_num}:** O Estado tem o dever indeclinável de custódia e garantia da incolumidade física e da dignidade moral dos apenados.",
             "Impedir violências, torturas e desumanização no cárcere, preservando o princípio da dignidade da pessoa humana.",
-            "Pegadinha de prova: bancas costumam afirmar que 'apenas a integridade física é assegurada' ou que 'a garantia moral pode ser suspensa por sanção disciplinar'. FALSO! A garantia constitucional protege a integridade FÍSICA E MORAL do preso."
+            "A garantia constitucional protege a integridade FÍSICA E MORAL do preso."
         )
 
-    # Art. 5º, L - Presidiárias e amamentação
-    if " l" in art_lower or any(k in txt for k in ["presidiária", "amamenta", "filhos durante o período"]):
+    # 30. Art. 5º, L - Presidiárias e amamentação
+    if any(k in txt for k in ["presidiária", "amamenta", "filhos durante o período"]) or (match_romano("l", art_lower) and not any(k in art_lower for k in ["li", "lii", "liii", "liv", "lv", "lvi", "lvii", "lviii", "lix", "lx"])):
         return (
             "Uma detenta deu à luz durante o cumprimento de pena em presídio feminino. O estabelecimento prisional é obrigado a dispor de creche/berçário para que ela amamente o bebê durante os primeiros meses.",
             f"• **Aplicação no {art_num}:** Direito subjetivo da mãe presa e do recém-nascido de permanecerem juntos durante a amamentação.",
@@ -1757,8 +1871,8 @@ def extrair_exemplo_objetivo_personalizado(art_num, texto_original):
             "O direito protege a criança e não pode sofrer corte por falta disciplinar da mãe."
         )
 
-    # Art. 5º, LI / LII - Extradição
-    if "li" in art_lower or "lii" in art_lower or any(k in txt for k in ["extradit", "brasileiro nato", "naturalizado"]):
+    # 31. Art. 5º, LI / LII - Extradição
+    if any(k in txt for k in ["extradição", "brasileiro nato", "naturalizado"]) or match_romano("li", art_lower) or match_romano("lii", art_lower):
         return (
             "Roberto, brasileiro nato, cometeu homicídio na Itália e fugiu para o Brasil. O STF nega qualquer pedido de extradição, pois nato JAMAIS é extraditado (responderá pelo crime perante a Justiça brasileira). Já Pierre, francês naturalizado brasileiro, pode ser extraditado por crime comum praticado ANTES da naturalização ou por tráfico de drogas A QUALQUER TEMPO.",
             f"• **Aplicação no {art_num}:** Garante imunidade absoluta de extradição ao brasileiro nato e fixa os 2 casos estritos do naturalizado.",
@@ -1766,8 +1880,8 @@ def extrair_exemplo_objetivo_personalizado(art_num, texto_original):
             "Nato NUNCA é extraditado. Naturalizado pode em 2 casos: crime comum ANTES da naturalização OU tráfico de entorpecentes a qualquer tempo."
         )
 
-    # Art. 5º, LVI - Provas ilícitas
-    if "lvi" in art_lower or any(k in txt for k in ["provas obtidas por meios ilícitos", "inadmissíveis"]):
+    # 32. Art. 5º, LVI - Provas ilícitas
+    if any(k in txt for k in ["provas obtidas por meios ilícitos", "inadmissíveis"]) or match_romano("lvi", art_lower):
         return (
             "Investigadores invadiram um escritório sem mandado judicial à noite e fotografaram planilhas de propina. Na ação penal, o juiz declarou a prova nula de pleno direito e mandou trancar o processo, pois provas colhidas por meio ilícito não podem fundamentar condenação.",
             f"• **Aplicação no {art_num}:** Teoria dos frutos da árvore envenenada: a prova ilícita contamina todas as demais provas que dela derivarem exclusivamente.",
@@ -1775,8 +1889,8 @@ def extrair_exemplo_objetivo_personalizado(art_num, texto_original):
             "São inadmissíveis no processo as provas obtidas por meios ilícitos (CF, Art. 5º, LVI)."
         )
 
-    # Art. 5º, LVII - Presunção de inocência
-    if "lvii" in art_lower or any(k in txt for k in ["transitou em julgado", "culpado", "presunção de inocência", "trânsito em julgado"]):
+    # 33. Art. 5º, LVII - Presunção de inocência
+    if any(k in txt for k in ["transitou em julgado", "culpado", "presunção de inocência", "trânsito em julgado"]) or match_romano("lvii", art_lower):
         return (
             "Um réu foi condenado em 1ª e 2ª instâncias, mas recorreu ao STJ e STF. Ele não pode ser tratado como culpado nem ter o nome lançado no rol dos culpados antes da decisão final irrecorrível.",
             f"• **Aplicação no {art_num}:** Presunção constitucional de não culpabilidade até o trânsito em julgado de sentença penal condenatória.",
@@ -1784,8 +1898,8 @@ def extrair_exemplo_objetivo_personalizado(art_num, texto_original):
             "Ninguém será considerado culpado até o TRÂNSITO EM JULGADO de sentença penal condenatória."
         )
 
-    # Art. 5º, LXVII - Prisão civil por dívida
-    if "lxvii" in art_lower or any(k in txt for k in ["prisão civil", "alimentícia", "depositário infiel"]):
+    # 34. Art. 5º, LXVII - Prisão civil por dívida
+    if any(k in txt for k in ["prisão civil", "alimentícia", "depositário infiel"]) or match_romano("lxvii", art_lower):
         return (
             "Carlos deixa de pagar voluntariamente 3 parcelas de pensão alimentícia devidas ao filho menor. O juiz decreta a prisão civil de 30 a 90 dias em regime fechado separado dos presos comuns.",
             f"• **Aplicação no {art_num}:** Apenas a obrigação alimentar enseja prisão civil hoje. O depositário infiel não pode mais ser preso (Súmula Vinculante 25).",
@@ -1793,7 +1907,7 @@ def extrair_exemplo_objetivo_personalizado(art_num, texto_original):
             "Na letra da CF: pensão e depositário infiel. Na prática e jurisprudência (SV 25): apenas devedor de alimentos."
         )
 
-    # Art. 5º, LXVIII a LXXIII - Remédios Constitucionais (HC, MS, HD, Ação Popular)
+    # 35. Art. 5º, LXVIII a LXXIII - Remédios Constitucionais (HC, MS, HD, Ação Popular)
     if any(k in txt for k in ["habeas corpus", "locomoção", "liberdade de ir e vir"]):
         return (
             "Um cidadão tem prisão preventiva decretada por autoridade incompetente. O advogado impetra habeas corpus diretamente no Tribunal para expedição imediata de alvará de soltura.",
@@ -1826,8 +1940,8 @@ def extrair_exemplo_objetivo_personalizado(art_num, texto_original):
             "É personalíssimo (apenas sobre dados do próprio impetrante) e EXIGE prévia recusa administrativa (Súmula 2 do STJ)."
         )
 
-    # Art. 5º, LXXVIII - Razoável duração do processo e celeridade
-    if "lxxviii" in art_lower or any(k in txt for k in ["razoável duração", "celeridade", "tramitação"]):
+    # 36. Art. 5º, LXXVIII - Razoável duração do processo e celeridade
+    if any(k in txt for k in ["razoável duração", "celeridade", "tramitação"]) or match_romano("lxxviii", art_lower):
         return (
             "Um cidadão aguarda há mais de 10 anos a decisão final em um processo administrativo de aposentadoria no INSS sem qualquer complexidade que justifique tamanha demora. Diante da inércia desproporcional, ele impetra mandado de segurança exigindo conclusão imediata e pleiteia indenização por danos morais.",
             f"• **Aplicação no {art_num}:** Garante a qualquer jurisdicionado o direito a um processo sem dilações indevidas, tanto judicial quanto administrativo.",
@@ -1835,17 +1949,8 @@ def extrair_exemplo_objetivo_personalizado(art_num, texto_original):
             "Atenção: a garantia se aplica a processos JUDICIAIS e ADMINISTRATIVOS (banca adora restringir a 'apenas judiciais')."
         )
 
-    # Art. 5º, LXXIX - Proteção de dados digitais
-    if "lxxix" in art_lower or any(k in txt for k in ["dados pessoais", "meios digitais"]):
-        return (
-            "Uma empresa de tecnologia ou órgão público sofre vazamento de dados de cidadãos sem consentimento. O titular pode acionar o Poder Judiciário invocando direito fundamental expresso à proteção de dados inclusive digitais.",
-            f"• **Aplicação no {art_num}:** Eleva a privacidade digital ao patamar de cláusula pétrea fundamental autônoma (EC 115).",
-            "Resguardar a autodeterminação informativa no ambiente cibernético moderno.",
-            "Incluído pela Emenda 115/2022 como garantia individual fundamental expressa."
-        )
-
-    # Art. 84 - Competências do Presidente
-    if "84" in art_lower or any(k in txt for k in ["competência privativa do presidente", "sancionar, promulgar", "decretar o estado de defesa"]):
+    # 37. Art. 84 - Competências do Presidente
+    if "competência privativa do presidente" in txt or ("art. 84" in art_lower and any(k in txt for k in ["sancionar, promulgar", "decretar o estado de defesa", "decreto autônomo"])):
         return (
             "O Presidente da República edita um decreto autônomo extinguindo cargos públicos federais que se encontram vagos, sem criar novas despesas nem órgãos públicos (Art. 84, VI, 'b').",
             f"• **Aplicação no {art_num}:** Exercício de competências privativas privativas do Chefe do Executivo da União.",
@@ -1853,8 +1958,8 @@ def extrair_exemplo_objetivo_personalizado(art_num, texto_original):
             "Atenção aos incisos que admitem DELEGAÇÃO: VI (decreto autônomo), XII (indulto) e XXV (prover cargos federais nos termos da lei)."
         )
 
-    # Art. 37 - Administração Pública e Concursos
-    if "37" in art_lower or any(k in txt for k in ["administração pública", "concurso público", "acumulação remunerada", "investidura em cargo"]):
+    # 38. Art. 37 - Administração Pública e Concursos
+    if "administração pública" in txt or ("art. 37" in art_lower and any(k in txt for k in ["concurso público", "acumulação remunerada", "investidura em cargo"])):
         return (
             "Um médico concursado do SUS é aprovado para outro cargo de médico em hospital municipal. Como há compatibilidade de horários, ele pode acumular os dois cargos de profissional de saúde regulamentada.",
             f"• **Aplicação no {art_num}:** Exceção constitucional permitida à regra geral que proíbe acumulação de cargos públicos.",
