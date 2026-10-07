@@ -274,20 +274,66 @@ def supabase_restore_all_from_cloud(cfg_override=None):
         
     return sucessos, erros
 
-# Restauração automática inicial na inicialização do servidor (se estiver no Render sem banco prévio)
-if supabase_is_configured():
+def supabase_startup_auto_restore():
+    """Restauração automática inicial ao ligar o servidor ou fazer novo deploy no Render."""
+    if not supabase_is_configured():
+        return
     try:
-        # Se o banco local não existe ou tem menos de 100 bytes (recém-iniciado no Render efêmero)
-        if not DB_FILE.exists() or DB_FILE.stat().st_size < 100:
+        supabase_ensure_bucket()
+        # Lista arquivos no bucket
+        remotos = supabase_list_files("")
+        nomes_raiz = [item.get("name") for item in remotos if isinstance(item, dict) and item.get("name")]
+        
+        # Se decorando_lei.db estiver no Supabase, baixa e substitui o arquivo local
+        if "decorando_lei.db" in nomes_raiz:
             supabase_download_file("decorando_lei.db", DB_FILE)
-            # Baixa PDFs que faltarem
-            remotos = supabase_list_files("leis_importadas")
-            for item in remotos:
+            
+        # Baixa todos os PDFs que faltarem
+        remotos_pdf = supabase_list_files("leis_importadas")
+        for item in remotos_pdf:
+            if isinstance(item, dict):
                 n = item.get("name")
                 if n and n.endswith(".pdf"):
-                    supabase_download_file(f"leis_importadas/{n}", PDF_DIR / n)
+                    dest = PDF_DIR / n
+                    if not dest.exists():
+                        supabase_download_file(f"leis_importadas/{n}", dest)
     except Exception:
         pass
+
+# Executa restauração automática da nuvem na inicialização
+supabase_startup_auto_restore()
+
+def trigger_cloud_backup_async():
+    """Dispara upload assíncrono do banco SQLite para o Supabase em segundo plano."""
+    if not supabase_is_configured():
+        return
+    def _worker():
+        try:
+            supabase_ensure_bucket()
+            if DB_FILE.exists():
+                supabase_upload_file(DB_FILE, "decorando_lei.db")
+        except Exception:
+            pass
+    import threading
+    t = threading.Thread(target=_worker, daemon=True)
+    t.start()
+
+def trigger_pdf_upload_async(pdf_path: Path):
+    """Dispara upload de PDF de lei e do banco para o Supabase em segundo plano."""
+    if not supabase_is_configured():
+        return
+    def _worker():
+        try:
+            supabase_ensure_bucket()
+            if pdf_path.exists():
+                supabase_upload_file(pdf_path, f"leis_importadas/{pdf_path.name}")
+            if DB_FILE.exists():
+                supabase_upload_file(DB_FILE, "decorando_lei.db")
+        except Exception:
+            pass
+    import threading
+    t = threading.Thread(target=_worker, daemon=True)
+    t.start()
 
 # Definição do e-mail de administrador exclusivo
 ADMIN_EMAIL = "fabiolucio277@gmail.com"
@@ -504,6 +550,7 @@ def cadastrar_usuario(username, senha, autorizado=0):
         )
         conn.commit()
         conn.close()
+        trigger_cloud_backup_async()
         return True, "Cadastro realizado! Aguarde a liberação do administrador para acessar o sistema." if autorizado == 0 else "Utilizador criado e autorizado!"
     except sqlite3.IntegrityError:
         conn.close()
@@ -514,12 +561,14 @@ def alterar_status_autorizacao(user_id, status):
     conn.execute("UPDATE usuarios SET autorizado = ? WHERE id = ?", (status, user_id))
     conn.commit()
     conn.close()
+    trigger_cloud_backup_async()
 
 def excluir_usuario(user_id):
     conn = db()
     conn.execute("DELETE FROM usuarios WHERE id = ?", (user_id,))
     conn.commit()
     conn.close()
+    trigger_cloud_backup_async()
 
 def listar_usuarios():
     conn = db()
@@ -585,6 +634,7 @@ def add_discipline(name):
     conn.execute("INSERT OR IGNORE INTO disciplinas(nome) VALUES(?)", (name.strip(),))
     conn.commit()
     conn.close()
+    trigger_cloud_backup_async()
 
 def get_disciplines():
     conn = db()
@@ -601,6 +651,7 @@ def add_law(discipline_id, name, filename):
     law_id = cur.lastrowid
     conn.commit()
     conn.close()
+    trigger_cloud_backup_async()
     return law_id
 
 def delete_law(law_id):
@@ -609,6 +660,7 @@ def delete_law(law_id):
     conn.execute("DELETE FROM leis WHERE id = ?", (law_id,))
     conn.commit()
     conn.close()
+    trigger_cloud_backup_async()
 
 def get_laws(discipline_id=None):
     conn = db()
@@ -881,6 +933,7 @@ def parse_and_store_pdf(pdf_path, law_id):
 
     conn.commit()
     conn.close()
+    trigger_cloud_backup_async()
     return quantidade
 
 def get_articles(law_id):
@@ -899,6 +952,7 @@ def save_filter(name, discipline_id, law_id, article_ids, qtd_questoes):
     filter_id = cur.lastrowid
     conn.commit()
     conn.close()
+    trigger_cloud_backup_async()
     return filter_id
 
 def delete_filter(filter_id):
@@ -907,6 +961,7 @@ def delete_filter(filter_id):
     conn.execute("DELETE FROM filtros_salvos WHERE id = ? AND usuario_id = ?", (filter_id, USER_ID))
     conn.commit()
     conn.close()
+    trigger_cloud_backup_async()
 
 def get_saved_filters(discipline_id=None):
     conn = db()
@@ -2036,6 +2091,7 @@ def generate_questions_for_articles(discipline_id, law_id, article_ids, qtd_tota
 
     conn.commit()
     conn.close()
+    trigger_cloud_backup_async()
     return generated
 
 def record_answer(question_id, answer, cycle):
@@ -2072,6 +2128,7 @@ def record_answer(question_id, answer, cycle):
 
     conn.commit()
     conn.close()
+    trigger_cloud_backup_async()
     return correct
 
 def zerar_historico_dashboard():
@@ -2080,6 +2137,7 @@ def zerar_historico_dashboard():
     conn.execute("DELETE FROM revisoes WHERE usuario_id = ?", (USER_ID,))
     conn.commit()
     conn.close()
+    trigger_cloud_backup_async()
 
 def stats():
     conn = db()
@@ -2280,6 +2338,7 @@ with tab1:
 
             law_id = add_law(disc_id, law_title, uploaded_file.name)
             qtd = parse_and_store_pdf(file_path, law_id)
+            trigger_pdf_upload_async(file_path)
             st.success(f"Lei processada com sucesso! {qtd} artigos importados.")
 
     st.divider()
@@ -2914,8 +2973,5 @@ if is_admin_user:
                     st.rerun()
                 else:
                     st.error("Preencha a URL e a Chave API.")
-
-
-
 
 
