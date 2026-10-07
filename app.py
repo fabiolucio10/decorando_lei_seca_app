@@ -109,10 +109,12 @@ def init_db():
         autorizado INTEGER DEFAULT 0,
         criado_em TEXT NOT NULL
     );
+
     CREATE TABLE IF NOT EXISTS disciplinas (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         nome TEXT UNIQUE NOT NULL
     );
+
     CREATE TABLE IF NOT EXISTS leis (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         disciplina_id INTEGER NOT NULL,
@@ -121,6 +123,7 @@ def init_db():
         criado_em TEXT NOT NULL,
         FOREIGN KEY(disciplina_id) REFERENCES disciplinas(id)
     );
+
     CREATE TABLE IF NOT EXISTS artigos (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         lei_id INTEGER NOT NULL,
@@ -129,6 +132,7 @@ def init_db():
         texto TEXT NOT NULL,
         FOREIGN KEY(lei_id) REFERENCES leis(id)
     );
+
     CREATE TABLE IF NOT EXISTS filtros_salvos (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         usuario_id INTEGER,
@@ -137,8 +141,12 @@ def init_db():
         lei_id INTEGER NOT NULL,
         artigos_ids TEXT NOT NULL,
         qtd_questoes INTEGER NOT NULL,
-        criado_em TEXT NOT NULL
+        criado_em TEXT NOT NULL,
+        FOREIGN KEY(usuario_id) REFERENCES usuarios(id),
+        FOREIGN KEY(disciplina_id) REFERENCES disciplinas(id),
+        FOREIGN KEY(lei_id) REFERENCES leis(id)
     );
+
     CREATE TABLE IF NOT EXISTS questoes (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         lei_id INTEGER NOT NULL,
@@ -152,8 +160,10 @@ def init_db():
         explicacao TEXT,
         dificuldade TEXT DEFAULT 'Média',
         origem TEXT DEFAULT 'regra',
-        criada_em TEXT NOT NULL
+        criada_em TEXT NOT NULL,
+        FOREIGN KEY(filtro_id) REFERENCES filtros_salvos(id)
     );
+
     CREATE TABLE IF NOT EXISTS respostas (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         usuario_id INTEGER,
@@ -161,8 +171,11 @@ def init_db():
         resposta INTEGER NOT NULL,
         acertou INTEGER NOT NULL,
         respondida_em TEXT NOT NULL,
-        ciclo INTEGER NOT NULL
+        ciclo INTEGER NOT NULL,
+        FOREIGN KEY(usuario_id) REFERENCES usuarios(id),
+        FOREIGN KEY(questao_id) REFERENCES questoes(id)
     );
+
     CREATE TABLE IF NOT EXISTS revisoes (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         usuario_id INTEGER,
@@ -171,6 +184,8 @@ def init_db():
         proxima_revisao TEXT,
         erros INTEGER DEFAULT 0,
         acertos INTEGER DEFAULT 0,
+        FOREIGN KEY(usuario_id) REFERENCES usuarios(id),
+        FOREIGN KEY(questao_id) REFERENCES questoes(id),
         UNIQUE(usuario_id, questao_id)
     );
     """)
@@ -195,7 +210,7 @@ def cadastrar_usuario(username, senha, autorizado=0):
         )
         conn.commit()
         conn.close()
-        return True, "Cadastro realizado com sucesso!" if autorizado == 1 else "Cadastro realizado! Aguarde a liberação do administrador."
+        return True, "Cadastro realizado! Aguarde a liberação do administrador para acessar o sistema." if autorizado == 0 else "Utilizador criado e autorizado!"
     except sqlite3.IntegrityError:
         conn.close()
         return False, "Nome de utilizador já existe!"
@@ -314,6 +329,7 @@ def normalizar_estrutura_dispositivo(texto):
     padrao_inciso = rf'(?:;|\.|\n|\s)\s*(?={REGEX_ROMANO}\s*[-–—\.]\s*)'
     texto = re.sub(padrao_inciso, '\n', texto, flags=re.IGNORECASE)
     texto = re.sub(r'(?:;|\.|\n|\s)\s*(?=[a-z]\s*[\)\-]\s*)', '\n', texto, flags=re.IGNORECASE)
+    texto = re.sub(r'(?<=[;])\s+(?=\d+[\)\.-]\s*)', '\n', texto)
     texto = re.sub(r'\n{2,}', '\n', texto)
     return texto.strip()
 
@@ -347,11 +363,32 @@ def extrair_blocos_por_marcador(texto, tipo):
         blocos.append((atual_marcador, ' '.join(atual_texto).strip()))
     return [(m, t) for m, t in blocos if m and t.strip()]
 
+def fragmentar_texto_muito_longo(rotulo_base, texto, max_chars=450):
+    texto = texto.strip()
+    if len(texto) <= max_chars: return [{'numero': rotulo_base, 'texto': texto}]
+    partes = [p.strip() for p in re.split(r'(?<=;)\s+|(?<=\.)\s+', texto) if len(p.strip()) > 15]
+    if len(partes) <= 1: return [{'numero': rotulo_base, 'texto': texto}]
+    resultado = []
+    acumulado = ""
+    parte_idx = 1
+    for p in partes:
+        if len(acumulado) + len(p) + 1 <= max_chars:
+            acumulado = f"{acumulado} {p}".strip()
+        else:
+            if acumulado:
+                resultado.append({'numero': f"{rotulo_base} (trecho {parte_idx})", 'texto': acumulado})
+                parte_idx += 1
+            acumulado = p
+    if acumulado:
+        resultado.append({'numero': f"{rotulo_base} (trecho {parte_idx})" if parte_idx > 1 else rotulo_base, 'texto': acumulado})
+    return resultado if resultado else [{'numero': rotulo_base, 'texto': texto}]
+
 def fracionar_artigo_extenso(num_art, corpo_limpo):
     texto = normalizar_estrutura_dispositivo(corpo_limpo)
     paragrafos = extrair_blocos_por_marcador(texto, 'paragrafo')
     incisos = extrair_blocos_por_marcador(texto, 'inciso')
     if len(paragrafos) == 0 and len(incisos) == 0:
+        if len(corpo_limpo) > 500: return fragmentar_texto_muito_longo(f"{num_art} (caput)", corpo_limpo)
         return [{'numero': f"{num_art} (caput)" if len(corpo_limpo) > 100 else num_art, 'texto': corpo_limpo.strip()}]
     alvos = []
     padroes_primeiro = [r'(?m)^§\s*\d+º?', r'(?m)^Parágrafo único\b', rf'(?m)^{REGEX_ROMANO}\s*[-–—\.]\s*']
@@ -359,15 +396,26 @@ def fracionar_artigo_extenso(num_art, corpo_limpo):
     inicio = texto[:min(marcadores)].strip() if marcadores else texto.strip()
     if inicio and len(inicio) > 10:
         inicio_limpo = re.sub(r'^Art\.\s*\d+[\w\-]*[\.\º\ª]?\s*[-–—]?\s*', '', inicio, flags=re.IGNORECASE).strip()
-        if inicio_limpo:
-            alvos.append({'numero': f'{num_art} (caput)', 'texto': inicio_limpo})
-    for marcador, texto_inciso in incisos:
+        if inicio_limpo: alvos.append({'numero': f'{num_art} (caput)', 'texto': inicio_limpo})
+    
+    posicao_primeiro_paragrafo = re.search(r'(?m)^(?:§\s*\d+º?|Parágrafo único)\b', texto, re.IGNORECASE).start() if paragrafos else None
+    trecho_incisos_caput = texto[:posicao_primeiro_paragrafo].strip() if posicao_primeiro_paragrafo is not None else texto
+    incisos_caput = extrair_blocos_por_marcador(trecho_incisos_caput, 'inciso')
+    numeros_existentes = {a['numero'] for a in alvos}
+
+    for marcador, texto_inciso in incisos_caput:
         if marcador and texto_inciso and len(texto_inciso) > 5:
             clean_marc = str(marcador).rstrip("-–—.").strip()
-            alvos.append({'numero': f'{num_art}, Inciso {clean_marc}', 'texto': f'{marcador} {texto_inciso}'.strip()})
+            num_formatado = f'{num_art}, Inciso {clean_marc}'
+            alvos.append({'numero': num_formatado, 'texto': f'{marcador} {texto_inciso}'.strip()})
+            numeros_existentes.add(num_formatado)
+
     for marcador_par, texto_par in paragrafos:
         if marcador_par and texto_par and len(texto_par) > 5:
-            alvos.append({'numero': f'{num_art}, {marcador_par}', 'texto': f'{marcador_par} {texto_par}'.strip()})
+            num_par = f'{num_art}, {marcador_par}'
+            alvos.append({'numero': num_par, 'texto': f'{marcador_par} {texto_par}'.strip()})
+            numeros_existentes.add(num_par)
+
     return alvos if alvos else [{'numero': num_art, 'texto': corpo_limpo.strip()}]
 
 def parse_and_store_pdf(pdf_path, law_id):
@@ -376,15 +424,25 @@ def parse_and_store_pdf(pdf_path, law_id):
     doc.close()
     artigo_regex = re.compile(r'(?m)^(Art\.\s*\d+[\w\-]*[\.\º\ª]?)', re.IGNORECASE)
     partes = artigo_regex.split(full_text)
-    conn = db()
-    quantidade = 0
+    artigos_brutos = []
     if len(partes) > 1:
         for i in range(1, len(partes), 2):
             num_art = partes[i].strip()
             corpo_limpo = limpar_e_formatar_texto_lei(partes[i + 1] if (i + 1) < len(partes) else "")
-            if corpo_limpo and len(corpo_limpo) > 10:
-                conn.execute("INSERT INTO artigos(lei_id, numero, titulo, texto) VALUES(?,?,?,?)", (law_id, num_art, num_art, corpo_limpo))
-                quantidade += 1
+            if corpo_limpo and len(corpo_limpo) > 10: artigos_brutos.append((num_art, corpo_limpo))
+    else:
+        artigo_regex_alt = re.compile(r'(Art\.\s*\d+[\w\-]*[\.\º\ª]?)', re.IGNORECASE)
+        partes = artigo_regex_alt.split(full_text)
+        for i in range(1, len(partes), 2):
+            num_art = partes[i].strip()
+            corpo_limpo = limpar_e_formatar_texto_lei(partes[i + 1] if (i + 1) < len(partes) else "")
+            if corpo_limpo and len(corpo_limpo) > 10: artigos_brutos.append((num_art, corpo_limpo))
+
+    conn = db()
+    quantidade = 0
+    for num_art, corpo_limpo in artigos_brutos:
+        conn.execute("INSERT INTO artigos(lei_id, numero, titulo, texto) VALUES(?,?,?,?)", (law_id, num_art, num_art, corpo_limpo))
+        quantidade += 1
     conn.commit()
     conn.close()
     return quantidade
@@ -414,7 +472,7 @@ def delete_filter(filter_id):
 def get_saved_filters(discipline_id=None):
     conn = db()
     if discipline_id:
-        rows = conn.execute("SELECT f.*, d.nome disciplina, l.nome lei FROM filtros_salvos f JOIN disciplinas d ON d.id = f.disciplina_id JOIN leis l ON l.id = f.lei_id WHERE f.usuario_id = ? AND f.disciplina_id = ? ORDER BY f.id DESC", (USER_ID, discipline_id)).fetchall()
+        rows = conn.execute("SELECT f.*, d.nome disciplina, l.nome lei FROM filtros_salvos f JOIN disciplinas d ON d.id = f.disciplina_id JOIN leis l ON l.id = f.lei_id WHERE f.usuario_id = ? AND f.disciplina_id = ? ORDER BY d.nome, f.id DESC", (USER_ID, discipline_id)).fetchall()
     else:
         rows = conn.execute("SELECT f.*, d.nome disciplina, l.nome lei FROM filtros_salvos f JOIN disciplinas d ON d.id = f.disciplina_id JOIN leis l ON l.id = f.lei_id WHERE f.usuario_id = ? ORDER BY f.id DESC", (USER_ID,)).fetchall()
     conn.close()
@@ -563,11 +621,21 @@ def gerar_explicacao_humana(art_num, texto_original, foi_correto=False, tipo_tro
     detalhe_erro = "O enunciado reproduz com exatidão a literalidade da legislação." if foi_correto else f"<br>⚠️ <strong>Pegadinha:</strong> {tipo_troca or 'Alteração indevida'}"
     tag_ia = f'<span style="background-color: #fef3c7; color: #b45309; padding: 2px 8px; border-radius: 6px; font-size: 11px; font-weight: 600;">✨ Gerado com {nome_ia}</span>' if foi_ia else '<span style="background-color: #eff6ff; color: #1d4ed8; padding: 2px 8px; border-radius: 6px; font-size: 11px; font-weight: 600;">⚖️ Exemplo Prático</span>'
     
+    bloco_caput = ""
+    if caput_texto and str(caput_texto).strip() and str(caput_texto).strip() != str(texto_original).strip():
+        bloco_caput = f"""
+        <div style="margin-top: 10px; padding-top: 8px; border-top: 1px dashed #cbd5e1; font-size: 12.5px; color: #475569;">
+            <span style="font-weight: 600; color: #1e3a8a;">📜 Contexto do Artigo Principal (Caput de Origem):</span><br>
+            <span style="font-style: italic;">"{str(caput_texto).strip()}"</span>
+        </div>
+        """
+
     return f"""
     <div style="margin-bottom: 10px; font-size: 13.5px;">💡 <strong>Gabarito e Justificativa:</strong> {status_txt} {detalhe_erro}</div>
     <div style="background-color: #f8fafc; border: 1px solid #bfdbfe; border-radius: 10px; padding: 15px; margin-bottom: 14px;">
         <div style="font-weight: 600; color: #1e3a8a; font-size: 13.5px; margin-bottom: 6px;">📖 Dispositivo Literal ({art_num})</div>
         <div style="color: #334155; font-style: italic; border-left: 3px solid #3b82f6; padding-left: 12px;">"{texto_original}"</div>
+        {bloco_caput}
     </div>
     <div style="background-color: #fffbeb; border: 1px solid #fde68a; border-radius: 12px; padding: 18px; margin-bottom: 14px;">
         <div style="display: flex; justify-content: space-between; margin-bottom: 10px; font-weight: 700; color: #78350f;">💡 Exemplo Prático {tag_ia}</div>
@@ -580,7 +648,7 @@ def gerar_explicacao_humana(art_num, texto_original, foi_correto=False, tipo_tro
     </div>
     """
 
-def generate_questions_for_articles(discipline_id, law_id, article_ids, qtd_total, filter_id=None, motor_ia="♊ Gemini IA", chave_ia_manual=None):
+def generate_questions_for_articles(discipline_id, law_id, article_ids, qtd_total, filter_id=None, motor_ia="♊ Gemini IA", chave_ia_manual=None, progress_callback=None):
     conn = db()
     lei_row = conn.execute("SELECT nome FROM leis WHERE id=?", (law_id,)).fetchone()
     nome_lei = lei_row["nome"] if lei_row else "Legislação"
@@ -633,6 +701,13 @@ def record_answer(question_id, answer, cycle):
     conn.close()
     return correct
 
+def zerar_historico_dashboard():
+    conn = db()
+    conn.execute("DELETE FROM respostas WHERE usuario_id = ?", (USER_ID,))
+    conn.execute("DELETE FROM revisoes WHERE usuario_id = ?", (USER_ID,))
+    conn.commit()
+    conn.close()
+
 def stats():
     conn = db()
     total = conn.execute("SELECT COUNT(*) n FROM respostas WHERE usuario_id=?", (USER_ID,)).fetchone()["n"]
@@ -641,19 +716,40 @@ def stats():
     pct = (hits / total * 100) if total else 0
     b_disc = pd.read_sql_query("SELECT d.nome disciplina, COUNT(r.id) respondidas, COALESCE(SUM(r.acertou),0) acertos FROM respostas r JOIN questoes q ON q.id=r.questao_id JOIN disciplinas d ON d.id=q.disciplina_id WHERE r.usuario_id = ? GROUP BY d.id", conn, params=(USER_ID,)) if pd else None
     b_filt = pd.read_sql_query("SELECT f.nome filtro, COUNT(r.id) respondidas FROM respostas r JOIN questoes q ON q.id=r.questao_id JOIN filtros_salvos f ON f.id=q.filtro_id WHERE r.usuario_id = ? GROUP BY f.id", conn, params=(USER_ID,)) if pd else None
+    b_cont = pd.read_sql_query("SELECT d.nome disciplina, q.conteudo, COUNT(r.id) respondidas FROM respostas r JOIN questoes q ON q.id=r.questao_id JOIN disciplinas d ON d.id=q.disciplina_id WHERE r.usuario_id = ? GROUP BY d.id, q.conteudo", conn, params=(USER_ID,)) if pd else None
     due = conn.execute("SELECT COUNT(*) n FROM revisoes WHERE usuario_id = ? AND proxima_revisao <= ?", (USER_ID, datetime.now().isoformat())).fetchone()["n"]
     conn.close()
-    return total, hits, errors, pct, b_disc, b_filt, due
+    return total, hits, errors, pct, b_disc, b_filt, b_cont, due
 
 with st.sidebar:
     st.markdown(f"👤 Utilizador: **{USERNAME}**")
     if st.button("🚪 Sair"):
         st.session_state.clear()
         st.rerun()
+    st.divider()
+    st.markdown("### 🤖 Inteligência Artificial")
+    chave_gemini_detectada = obter_chave_gemini()
+    status_ia = "🟢 Ativa" if chave_gemini_detectada else "⚪ Offline"
+    st.caption(f"Status: **{status_ia}**")
+    
+    with st.expander("🔑 Chave API Gemini", expanded=False):
+        nova_chave = st.text_input("GEMINI_API_KEY:", type="password", key="sidebar_key")
+        if st.button("Salvar Chave", key="sidebar_save_key"):
+            if nova_chave.strip():
+                st.session_state["gemini_api_key"] = nova_chave.strip()
+                st.success("Salvo!")
+                st.rerun()
 
 st.title("⚖ Decorando Lei Seca")
 
-tab1, tab2, tab3, tab4, tab5 = st.tabs(["📚 Importar Leis", "🎯 Criar Caderno", "📝 Resolver Questões", "📊 Desempenho", "🔄 Revisões"])
+if is_admin_user:
+    tab1, tab2, tab3, tab4, tab5, tab_admin = st.tabs([
+        "📚 Importar Leis", "🎯 Criar Caderno", "📝 Resolver Questões", "📊 Desempenho", "🔄 Revisões", "🛡 Painel Admin"
+    ])
+else:
+    tab1, tab2, tab3, tab4, tab5 = st.tabs([
+        "📚 Importar Leis", "🎯 Criar Caderno", "📝 Resolver Questões", "📊 Desempenho", "🔄 Revisões"
+    ])
 
 with tab1:
     st.header("Importar Nova Lei")
@@ -725,30 +821,48 @@ with tab3:
             else:
                 q = questoes[idx]
                 st.markdown(f"**Dispositivo:** `{q['artigo_numero']}`")
-                st.markdown(q["enunciado"])
-                resp = st.radio("Resposta:", ["Certo", "Errado"], key=f"ans_{q['id']}")
-                if st.button("Responder", type="primary"):
-                    val = 1 if resp == "Certo" else 0
-                    acertou = record_answer(q["id"], val, 1)
-                    st.session_state[f"resp_{q['id']}"] = acertou
-                    st.rerun()
                 
-                if f"resp_{q['id']}" in st.session_state:
-                    acertou = st.session_state[f"resp_{q['id']}"]
-                    if acertou: st.success("✨ Correto!")
-                    else: st.error("❌ Incorreto!")
+                # Contexto do Caput
+                is_subdevice = any(tag in q['artigo_numero'].lower() for tag in ["§", "parágrafo", "inciso", "alínea"]) or re.search(rf'\b{REGEX_ROMANO}\b', q['artigo_numero'], re.IGNORECASE)
+                if is_subdevice and q.get("artigo_id"):
+                    caput_text = obter_texto_caput(q["artigo_id"])
+                    if caput_text:
+                        with st.expander("📜 Contexto: Artigo Principal (Caput)", expanded=False):
+                            st.write(f"_{caput_text}_")
+
+                st.markdown(q["enunciado"])
+                q_id = q["id"]
+                ja_respondida = q_id in st.session_state.get("answered_q", {})
+                
+                if "answered_q" not in st.session_state:
+                    st.session_state["answered_q"] = {}
+
+                resp = st.radio("Resposta:", ["Certo", "Errado"], key=f"ans_{q_id}", disabled=ja_respondida)
+                
+                if not ja_respondida:
+                    if st.button("Responder", type="primary", key=f"btn_resp_{q_id}"):
+                        val = 1 if resp == "Certo" else 0
+                        acertou = record_answer(q_id, val, 1)
+                        st.session_state["answered_q"][q_id] = {"acertou": acertou, "resposta": resp}
+                        st.rerun()
+                else:
+                    dados_resp = st.session_state["answered_q"][q_id]
+                    if dados_resp["acertou"]:
+                        st.success("✨ Correto!")
+                    else:
+                        st.error("❌ Incorreto!")
                     
-                    # CORREÇÃO CRUCIAL APLICADA AQUI (unsafe_allow_html=True)
-                    explicacao_exibir = st.session_state.get(f"custom_explicacao_{q['id']}", q['explicacao'])
+                    # CORREÇÃO PRINCIPAL: unsafe_allow_html=True aplicado aqui!
+                    explicacao_exibir = st.session_state.get(f"custom_explicacao_{q_id}", q['explicacao'])
                     st.markdown(explicacao_exibir, unsafe_allow_html=True)
                     
-                    if st.button("Próxima Questão ➡️"):
+                    if st.button("Próxima Questão ➡️", key=f"next_{q_id}", type="primary"):
                         st.session_state["q_idx"] += 1
                         st.rerun()
 
 with tab4:
     st.header("Desempenho")
-    tot, ac, err, pct, b_disc, b_filt, due = stats()
+    tot, ac, err, pct, b_disc, b_filt, b_cont, due = stats()
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Respondidas", tot)
     c2.metric("Acertos", ac)
@@ -757,5 +871,12 @@ with tab4:
 
 with tab5:
     st.header("Revisão Espaçada")
-    tot, ac, err, pct, b_disc, b_filt, due = stats()
+    tot, ac, err, pct, b_disc, b_filt, b_cont, due = stats()
     st.metric("Pendentes", due)
+
+if is_admin_user:
+    with tab_admin:
+        st.header("🛡 Painel Admin")
+        usuarios_cadastrados = listar_usuarios()
+        for u in usuarios_cadastrados:
+            st.markdown(f"**{u['username']}** - Autorizado: {u['autorizado']}")
