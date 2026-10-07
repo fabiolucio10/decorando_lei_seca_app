@@ -8,6 +8,9 @@ import logging
 import textwrap
 import urllib.request
 import urllib.error
+import time
+import shutil
+import requests
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -52,9 +55,239 @@ except ImportError:
         genai = None
 
 APP_DIR = Path(__file__).parent
-DB_FILE = APP_DIR / "decorando_lei.db"
-PDF_DIR = APP_DIR / "leis_importadas"
-PDF_DIR.mkdir(exist_ok=True)
+
+# Suporte automático a Disco Persistente (Render Persistent Disk ou diretório customizado)
+DATA_DIR_ENV = os.environ.get("DATA_DIR")
+if DATA_DIR_ENV:
+    DATA_DIR = Path(DATA_DIR_ENV)
+elif Path("/var/data").exists() and os.access("/var/data", os.W_OK):
+    DATA_DIR = Path("/var/data")
+elif Path("/data").exists() and os.access("/data", os.W_OK):
+    DATA_DIR = Path("/data")
+else:
+    DATA_DIR = APP_DIR
+
+DATA_DIR.mkdir(parents=True, exist_ok=True)
+DB_FILE = DATA_DIR / "decorando_lei.db"
+PDF_DIR = DATA_DIR / "leis_importadas"
+PDF_DIR.mkdir(parents=True, exist_ok=True)
+
+# Se estiver em disco persistente montado e o banco ainda não existir nele, copia o banco inicial do repositório
+if DATA_DIR != APP_DIR:
+    initial_db = APP_DIR / "decorando_lei.db"
+    if initial_db.exists() and not DB_FILE.exists():
+        try:
+            import shutil
+            shutil.copy2(initial_db, DB_FILE)
+        except Exception:
+            pass
+
+# ==============================================================================
+# MOTOR DE SINCRONIZAÇÃO EM NUVEM COM SUPABASE (PERSISTÊNCIA DEFINITIVA NO RENDER)
+# ==============================================================================
+SUPABASE_CONFIG_FILE = DATA_DIR / "supabase_config.json"
+
+def get_supabase_config():
+    """Recupera credenciais do Supabase das variáveis de ambiente ou do arquivo local."""
+    url = os.environ.get("SUPABASE_URL", "").strip().rstrip("/")
+    key = (os.environ.get("SUPABASE_KEY", "") or 
+           os.environ.get("SUPABASE_SECRET_KEY", "") or 
+           os.environ.get("SUPABASE_SERVICE_KEY", "") or
+           os.environ.get("SUPABASE_PUBLISHABLE_KEY", "")).strip()
+    bucket = os.environ.get("SUPABASE_BUCKET", "decorando-data").strip()
+    
+    if (not url or not key) and SUPABASE_CONFIG_FILE.exists():
+        try:
+            with open(SUPABASE_CONFIG_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                url = url or data.get("url", "").strip().rstrip("/")
+                key = key or data.get("key", "").strip()
+                bucket = bucket or data.get("bucket", "decorando-data").strip()
+        except Exception:
+            pass
+    return {"url": url, "key": key, "bucket": bucket or "decorando-data"}
+
+def save_supabase_config(url: str, key: str, bucket: str = "decorando-data"):
+    """Salva credenciais inseridas na interface pelo administrador."""
+    try:
+        with open(SUPABASE_CONFIG_FILE, "w", encoding="utf-8") as f:
+            json.dump({"url": url.strip().rstrip("/"), "key": key.strip(), "bucket": bucket.strip() or "decorando-data"}, f)
+        return True
+    except Exception:
+        return False
+
+def supabase_is_configured():
+    cfg = get_supabase_config()
+    return bool(cfg["url"] and cfg["key"] and cfg["url"].startswith("http"))
+
+def get_supabase_headers(key_override=None):
+    cfg = get_supabase_config()
+    k = key_override or cfg["key"]
+    return {
+        "apikey": k,
+        "Authorization": f"Bearer {k}"
+    }
+
+def supabase_ensure_bucket(cfg_override=None):
+    cfg = cfg_override or get_supabase_config()
+    u, k, b = cfg["url"], cfg["key"], cfg["bucket"]
+    if not (u and k and b):
+        return False, "Credenciais incompletas."
+    try:
+        headers = {**get_supabase_headers(k), "Content-Type": "application/json"}
+        # Tenta criar o bucket caso ainda não exista
+        resp = requests.post(
+            f"{u}/storage/v1/bucket",
+            headers=headers,
+            json={"id": b, "name": b, "public": True},
+            timeout=10
+        )
+        if resp.status_code in [200, 201, 400, 409]:
+            return True, "Bucket pronto para uso!"
+        return False, f"HTTP {resp.status_code}: {resp.text}"
+    except Exception as e:
+        return False, str(e)
+
+def supabase_upload_file(local_file_path: Path, remote_filename: str, cfg_override=None):
+    cfg = cfg_override or get_supabase_config()
+    u, k, b = cfg["url"], cfg["key"], cfg["bucket"]
+    if not (u and k and b):
+        return False, "Supabase não configurado."
+    try:
+        with open(local_file_path, "rb") as f:
+            file_bytes = f.read()
+        headers = {
+            **get_supabase_headers(k),
+            "x-upsert": "true",
+            "Content-Type": "application/octet-stream"
+        }
+        resp = requests.post(
+            f"{u}/storage/v1/object/{b}/{remote_filename}",
+            headers=headers,
+            data=file_bytes,
+            timeout=45
+        )
+        if resp.status_code in [200, 201]:
+            return True, "Arquivo enviado com sucesso ao Supabase!"
+        return False, f"HTTP {resp.status_code}: {resp.text}"
+    except Exception as e:
+        return False, str(e)
+
+def supabase_download_file(remote_filename: str, local_dest_path: Path, cfg_override=None):
+    cfg = cfg_override or get_supabase_config()
+    u, k, b = cfg["url"], cfg["key"], cfg["bucket"]
+    if not (u and k and b):
+        return False, "Supabase não configurado."
+    try:
+        # Tenta endpoint autenticado primeiro, depois público
+        headers = get_supabase_headers(k)
+        resp = requests.get(
+            f"{u}/storage/v1/object/authenticated/{b}/{remote_filename}",
+            headers=headers,
+            timeout=45
+        )
+        if resp.status_code != 200:
+            resp = requests.get(
+                f"{u}/storage/v1/object/public/{b}/{remote_filename}",
+                headers=headers,
+                timeout=45
+            )
+        if resp.status_code == 200 and len(resp.content) > 0:
+            local_dest_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(local_dest_path, "wb") as f:
+                f.write(resp.content)
+            return True, "Download concluído com sucesso!"
+        return False, f"Erro {resp.status_code} ao buscar arquivo no Supabase."
+    except Exception as e:
+        return False, str(e)
+
+def supabase_list_files(prefix: str = "", cfg_override=None):
+    cfg = cfg_override or get_supabase_config()
+    u, k, b = cfg["url"], cfg["key"], cfg["bucket"]
+    if not (u and k and b):
+        return []
+    try:
+        headers = {**get_supabase_headers(k), "Content-Type": "application/json"}
+        resp = requests.post(
+            f"{u}/storage/v1/object/list/{b}",
+            headers=headers,
+            json={"prefix": prefix, "limit": 100},
+            timeout=15
+        )
+        if resp.status_code == 200:
+            return resp.json()
+        return []
+    except Exception:
+        return []
+
+def supabase_sync_all_to_cloud(cfg_override=None):
+    """Envia o banco de dados SQLite e todos os PDFs de leis importadas para a nuvem do Supabase."""
+    supabase_ensure_bucket(cfg_override)
+    sucessos = 0
+    erros = []
+    
+    # Upload do banco decorando_lei.db
+    if DB_FILE.exists():
+        ok, msg = supabase_upload_file(DB_FILE, "decorando_lei.db", cfg_override)
+        if ok:
+            sucessos += 1
+        else:
+            erros.append(f"Banco decorando_lei.db: {msg}")
+            
+    # Upload de todos os arquivos PDF
+    if PDF_DIR.exists():
+        for pdf in PDF_DIR.glob("*.pdf"):
+            ok, msg = supabase_upload_file(pdf, f"leis_importadas/{pdf.name}", cfg_override)
+            if ok:
+                sucessos += 1
+            else:
+                erros.append(f"PDF {pdf.name}: {msg}")
+                
+    return sucessos, erros
+
+def supabase_restore_all_from_cloud(cfg_override=None):
+    """Baixa o banco de dados e todos os PDFs do Supabase para restaurar o sistema."""
+    sucessos = 0
+    erros = []
+    
+    # Baixa o banco decorando_lei.db
+    ok, msg = supabase_download_file("decorando_lei.db", DB_FILE, cfg_override)
+    if ok:
+        sucessos += 1
+    else:
+        erros.append(f"Banco decorando_lei.db: {msg}")
+        
+    # Baixa todos os PDFs
+    try:
+        remotos = supabase_list_files("leis_importadas", cfg_override)
+        for item in remotos:
+            nome = item.get("name")
+            if nome and nome.endswith(".pdf"):
+                dest = PDF_DIR / nome
+                ok, msg = supabase_download_file(f"leis_importadas/{nome}", dest, cfg_override)
+                if ok:
+                    sucessos += 1
+                else:
+                    erros.append(f"PDF {nome}: {msg}")
+    except Exception as e:
+        erros.append(f"Listagem PDFs: {e}")
+        
+    return sucessos, erros
+
+# Restauração automática inicial na inicialização do servidor (se estiver no Render sem banco prévio)
+if supabase_is_configured():
+    try:
+        # Se o banco local não existe ou tem menos de 100 bytes (recém-iniciado no Render efêmero)
+        if not DB_FILE.exists() or DB_FILE.stat().st_size < 100:
+            supabase_download_file("decorando_lei.db", DB_FILE)
+            # Baixa PDFs que faltarem
+            remotos = supabase_list_files("leis_importadas")
+            for item in remotos:
+                n = item.get("name")
+                if n and n.endswith(".pdf"):
+                    supabase_download_file(f"leis_importadas/{n}", PDF_DIR / n)
+    except Exception:
+        pass
 
 # Definição do e-mail de administrador exclusivo
 ADMIN_EMAIL = "fabiolucio277@gmail.com"
@@ -85,6 +318,22 @@ st.markdown("""
     /* Garante alinhamento justificado e legibilidade perfeita dos enunciados e citações */
     .stMarkdown, p, div[data-testid="stMarkdownContainer"] {
         text-align: justify !important;
+    }
+
+    /* Estilização do texto da assertiva/questão (citação entre aspas com a barra vertical) */
+    blockquote {
+        color: #0f172a !important; /* Cor da letra da assertiva (preto/cinza escuro nítido) */
+        font-size: 1.05rem !important;
+        font-weight: 500 !important;
+        border-left: 4px solid #2563eb !important; /* Cor da barra lateral azul */
+        background-color: #f8fafc !important; /* Fundo suave para contraste */
+        padding: 10px 16px !important;
+        border-radius: 6px !important;
+        margin: 12px 0 !important;
+    }
+    blockquote p {
+        color: inherit !important;
+        margin-bottom: 0 !important;
     }
 
     /* Garante que o botão de alternar/expandir a sidebar permaneça sempre visível */
@@ -2487,3 +2736,186 @@ if is_admin_user:
                     st.error(msg)
             else:
                 st.warning("Preencha todos os campos para prosseguir.")
+
+        st.divider()
+        st.subheader("💾 Backup e Persistência de Dados (Evitar Perda no Render)")
+        st.markdown("""
+        No **Render (render.com)** ou outros serviços na nuvem, os dados podem ser perdidos em reinicializações se você não estiver usando um Disco Persistente.
+        Com as ferramentas abaixo, você pode **baixar um backup completo** a qualquer momento e **restaurá-lo em 2 segundos** caso o servidor seja reiniciado!
+        """)
+
+        # Informações sobre o diretório de dados atual
+        is_persistent = str(DATA_DIR).startswith("/var/data") or str(DATA_DIR).startswith("/data") or os.environ.get("DATA_DIR")
+        c_status_disc, c_stats_data = st.columns([1, 1])
+        with c_status_disc:
+            if is_persistent:
+                st.success(f"🟢 **Disco Persistente Ativo:** `{DATA_DIR}` (Dados seguros contra reinicializações)")
+            else:
+                st.info(f"📁 **Armazenamento:** `{DATA_DIR}` (Faça backups periódicos ou configure um Persistent Disk no Render)")
+
+        with c_stats_data:
+            try:
+                conn_st = db()
+                qtd_l = conn_st.execute("SELECT COUNT(*) n FROM leis").fetchone()["n"]
+                qtd_q = conn_st.execute("SELECT COUNT(*) n FROM questoes").fetchone()["n"]
+                qtd_f = conn_st.execute("SELECT COUNT(*) n FROM filtros_salvos").fetchone()["n"]
+                conn_st.close()
+                st.write(f"📊 **No banco agora:** {qtd_l} Leis | {qtd_q} Questões | {qtd_f} Cadernos criados")
+            except Exception:
+                pass
+
+        col_bk1, col_bk2 = st.columns(2)
+
+        with col_bk1:
+            with st.container(border=True):
+                st.markdown("#### ⬇️ 1. Baixar Cópias de Segurança")
+                st.caption("Baixe seus dados para o seu computador. Você pode restaurá-los quando quiser.")
+                
+                # Download do SQLite .db
+                if DB_FILE.exists():
+                    try:
+                        with open(DB_FILE, "rb") as f_db:
+                            bytes_db = f_db.read()
+                        st.download_button(
+                            label="📥 Baixar Banco de Dados Completo (.db)",
+                            data=bytes_db,
+                            file_name="decorando_lei.db",
+                            mime="application/x-sqlite3",
+                            use_container_width=True,
+                            type="primary",
+                            help="Contém todas as leis, artigos, cadernos de questões, gabaritos e histórico de respostas."
+                        )
+                    except Exception as e:
+                        st.error(f"Erro ao ler banco: {e}")
+                else:
+                    st.warning("Arquivo de banco ainda não foi criado.")
+
+                # Download do ZIP dos PDFs
+                pdfs_salvos = list(PDF_DIR.glob("*.pdf")) if PDF_DIR.exists() else []
+                if pdfs_salvos:
+                    import zipfile
+                    import io
+                    buf_zip = io.BytesIO()
+                    with zipfile.ZipFile(buf_zip, "w", zipfile.ZIP_DEFLATED) as zf:
+                        for p in pdfs_salvos:
+                            zf.write(p, arcname=p.name)
+                    buf_zip.seek(0)
+                    st.download_button(
+                        label=f"📦 Baixar PDFs Importados ({len(pdfs_salvos)} arquivos .zip)",
+                        data=buf_zip.getvalue(),
+                        file_name="leis_importadas_backup.zip",
+                        mime="application/zip",
+                        use_container_width=True,
+                        help="Baixa todos os arquivos PDF originais das leis importadas."
+                    )
+                else:
+                    st.caption("Nenhum arquivo PDF armazenado no momento.")
+
+        with col_bk2:
+            with st.container(border=True):
+                st.markdown("#### ⬆️ 2. Restaurar Cópia de Segurança")
+                st.caption("Suba o arquivo `decorando_lei.db` que você baixou para recuperar todo o sistema.")
+                
+                up_db = st.file_uploader("Selecionar arquivo de banco (.db):", type=["db", "sqlite", "sqlite3"], key="up_restore_db")
+                if up_db is not None:
+                    if st.button("🚀 Restaurar Banco de Dados Agora", type="primary", use_container_width=True):
+                        try:
+                            # Faz backup temporário antes de substituir
+                            if DB_FILE.exists():
+                                shutil.copy2(DB_FILE, DB_FILE.with_suffix(".bak"))
+                            with open(DB_FILE, "wb") as f_out:
+                                f_out.write(up_db.getbuffer())
+                            st.success("🎉 Banco de dados restaurado com sucesso! Atualizando...")
+                            time.sleep(1)
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Erro ao restaurar banco: {e}")
+
+                # Restauração de PDFs via ZIP
+                up_zip = st.file_uploader("Restaurar PDFs via arquivo ZIP:", type=["zip"], key="up_restore_zip")
+                if up_zip is not None:
+                    if st.button("📂 Extrair PDFs Importados", use_container_width=True):
+                        try:
+                            import zipfile
+                            import io
+                            with zipfile.ZipFile(io.BytesIO(up_zip.getbuffer())) as zf:
+                                zf.extractall(PDF_DIR)
+                            st.success(f"🎉 PDFs extraídos com sucesso na pasta `{PDF_DIR}`!")
+                            time.sleep(1)
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Erro ao extrair ZIP: {e}")
+
+        # Seção de Sincronização Direta com o Supabase
+        st.markdown("---")
+        st.markdown("#### ☁️ 3. Sincronização em Nuvem com Supabase (Permanência Gratuita no Render)")
+        st.markdown("""
+        Conectando o **Supabase Storage** (plano gratuito do [supabase.com](https://supabase.com)), 
+        o Render salva o banco `decorando_lei.db` e todas as leis importadas na nuvem.
+        **Toda vez que o Render reiniciar ou você fizer deploy, ele baixa e restaura tudo automaticamente!**
+        """)
+
+        sb_cfg = get_supabase_config()
+        sb_conectado = supabase_is_configured()
+
+        c_sb_stat, c_sb_btn = st.columns([1.2, 0.8])
+        with c_sb_stat:
+            if sb_conectado:
+                st.success(f"🟢 **Supabase Conectado:** `{sb_cfg['url']}` (Bucket: `{sb_cfg['bucket']}`)")
+            else:
+                st.warning("⚠️ **Supabase ainda não sincronizado.** Configure as credenciais abaixo ou no Render Environment.")
+
+        with c_sb_btn:
+            if st.button("🧪 Testar Conexão Supabase", use_container_width=True):
+                if not sb_conectado:
+                    st.error("Preencha a URL e a Chave API primeiro.")
+                else:
+                    ok_bkt, msg_bkt = supabase_ensure_bucket()
+                    if ok_bkt:
+                        st.success(f"✅ Conexão bem-sucedida! Bucket `{sb_cfg['bucket']}` acessível.")
+                    else:
+                        st.error(f"❌ Falha de conexão: {msg_bkt}")
+
+        # Botões de Ação na Nuvem
+        c_sync_up, c_sync_down = st.columns(2)
+        with c_sync_up:
+            if st.button("⬆️ Salvar Tudo no Supabase Agora (Upload Nuvem)", type="primary", use_container_width=True, disabled=not sb_conectado):
+                with st.spinner("Enviando banco de dados e PDFs para o Supabase..."):
+                    sucessos, erros = supabase_sync_all_to_cloud()
+                    if erros:
+                        st.warning(f"Concluído com avisos: {sucessos} arquivos enviados. Erros: {', '.join(erros)}")
+                    else:
+                        st.success(f"🎉 Sincronização concluída! {sucessos} arquivos salvos com segurança na nuvem do Supabase.")
+                    time.sleep(1)
+
+        with c_sync_down:
+            if st.button("⬇️ Baixar e Restaurar do Supabase Agora", use_container_width=True, disabled=not sb_conectado):
+                with st.spinner("Baixando e restaurando banco e PDFs do Supabase..."):
+                    sucessos, erros = supabase_restore_all_from_cloud()
+                    if erros:
+                        st.warning(f"Restauração parcial: {sucessos} recuperados. Erros: {', '.join(erros)}")
+                    else:
+                        st.success(f"🎉 Sucesso! {sucessos} arquivos restaurados da nuvem. Recarregando...")
+                        time.sleep(1)
+                        st.rerun()
+
+        # Configuração das credenciais (pode ser configurada direto aqui caso não use as vars do Render)
+        with st.expander("⚙️ Configurar Credenciais do Supabase (URL e API Key)"):
+            st.caption("Caso já tenha configurado `SUPABASE_URL` e `SUPABASE_KEY` no painel do Render (Environment), elas serão usadas automaticamente.")
+            sb_url_in = st.text_input("Supabase Project URL:", value=sb_cfg["url"], placeholder="https://xxxxxxxx.supabase.co")
+            sb_key_in = st.text_input("Supabase Project API Key (anon ou service_role):", value=sb_cfg["key"], type="password", placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...")
+            sb_bucket_in = st.text_input("Nome do Bucket:", value=sb_cfg["bucket"], placeholder="decorando-data")
+
+            if st.button("💾 Salvar Credenciais Localmente"):
+                if sb_url_in and sb_key_in:
+                    save_supabase_config(sb_url_in, sb_key_in, sb_bucket_in)
+                    st.success("Configuração salva com sucesso!")
+                    time.sleep(1)
+                    st.rerun()
+                else:
+                    st.error("Preencha a URL e a Chave API.")
+
+
+
+
+

@@ -11,3 +11,17 @@ services:
         value: 3.11.9
       - key: GEMINI_API_KEY
         sync: false
+      - key: DATA_DIR
+        value: /var/data
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_KEY
+        sync: false
+      - key: SUPABASE_BUCKET
+        value: decorando-data
+    # Para ativar disco persistente permanente no Render (plano Starter ou pelo Dashboard):
+    # disk:
+    #   name: decorando-data
+    #   mountPath: /var/data
+    #   sizeGB: 1
+

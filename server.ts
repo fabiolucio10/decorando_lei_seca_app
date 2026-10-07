@@ -139,6 +139,21 @@ app.get('/api/instrucoes', (req, res) => {
   }
 });
 
+// Endpoint to fetch iniciar.bat
+app.get('/api/iniciar-bat', (req, res) => {
+  try {
+    const filePath = path.join(__dirname, 'iniciar.bat');
+    if (fs.existsSync(filePath)) {
+      const content = fs.readFileSync(filePath, 'utf-8');
+      res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+      return res.send(content);
+    }
+    return res.status(404).send('Arquivo iniciar.bat não encontrado');
+  } catch (err: any) {
+    return res.status(500).send('Erro ao ler iniciar.bat: ' + err.message);
+  }
+});
+
 async function startServer() {
   const isProd = process.env.NODE_ENV === 'production';
 
