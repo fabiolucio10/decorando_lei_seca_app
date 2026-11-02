@@ -1,8 +1,9 @@
-# Dependências Python para execução local no VSCode e deploy no Render
+# Dependências do PPPE TÁTICO
 streamlit>=1.35.0
 pandas>=2.0.0
 pymupdf>=1.23.0
-google-genai>=0.1.0
+google-genai>=1.0.0
 requests>=2.31.0
 python-dotenv>=1.0.0
-psycopg2-binary
+psycopg2-binary>=2.9.9
+Pillow>=10.0.0
