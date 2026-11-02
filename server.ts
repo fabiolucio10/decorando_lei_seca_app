@@ -50,6 +50,13 @@ Dispositivo legal: ${dispositivo}
 Texto da Lei: "${textoLegal}"
 
 Crie um exemplo prático e objetivo da vida real, extremamente claro e direto, demonstrando como esse dispositivo legal é aplicado na prática (em um tribunal, delegacia, repartição pública ou cotidiano do cidadão).
+DIRETRIZ OBRIGATÓRIA: O exemplo DEVE corresponder estritamente ao tema da regra acima.
+- Se o texto for sobre proteção de dados pessoais (inclusive nos meios digitais), seu exemplo DEVE abordar vazamento, privacidade ou uso indevido de dados pessoais na internet/aplicativos;
+- Se for sobre domicílio, aborde entrada em residência;
+- Se for sobre herança, aborde inventário ou sucessão;
+- Se for sobre gratuidade de justiça, aborde defensoria e hipossuficiência;
+- Se for sobre tribunal do júri, aborde crimes dolosos contra a vida.
+Use nomes fictícios simples (ex: Pedro, Maria, empresa Alfa) e uma narrativa fluida de 2 a 3 frases.
 
 Responda em formato JSON válido com as seguintes chaves:
 {
@@ -60,7 +67,7 @@ Responda em formato JSON válido com as seguintes chaves:
 }`;
 
     const response = await aiClient.models.generateContent({
-      model: 'gemini-3.8-flash',
+      model: 'gemini-flash-latest',
       contents: prompt,
       config: {
         responseMimeType: 'application/json',
@@ -136,6 +143,21 @@ app.get('/api/instrucoes', (req, res) => {
     return res.status(404).send('Arquivo de instruções não encontrado');
   } catch (err: any) {
     return res.status(500).send('Erro ao ler instruções: ' + err.message);
+  }
+});
+
+// Endpoint to fetch iniciar.bat
+app.get('/api/iniciar-bat', (req, res) => {
+  try {
+    const filePath = path.join(__dirname, 'iniciar.bat');
+    if (fs.existsSync(filePath)) {
+      const content = fs.readFileSync(filePath, 'utf-8');
+      res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+      return res.send(content);
+    }
+    return res.status(404).send('Arquivo iniciar.bat não encontrado');
+  } catch (err: any) {
+    return res.status(500).send('Erro ao ler iniciar.bat: ' + err.message);
   }
 });
 

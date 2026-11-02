@@ -71,12 +71,12 @@ export function gerarExemploObjetivo(deviceLabel: string, rawText: string): Prac
   }
 
   // Proteção de dados pessoais e meios digitais (Art. 5º, LXXIX)
-  if (txt.includes('dados pessoais') || txt.includes('meios digitais')) {
+  if (txt.includes('dados pessoais') || txt.includes('meios digitais') || txt.includes('proteção dos dados')) {
     return {
-      situacaoReal: 'Uma instituição bancária comercializa o histórico de compras de seus correntistas para agências de publicidade sem o expresso consentimento. O cliente pode acionar o Poder Judiciário fundamentando que a proteção de dados pessoais é garantia constitucional autônoma.',
-      aplicacaoRegra: `• Aplicação no ${deviceLabel}: Eleva a privacidade de dados virtuais ao patamar de direito fundamental individual autônomo (Emenda Constitucional 115).`,
-      objetivoRegra: 'Garantir a autodeterminação informativa no ambiente cibernético moderno.',
-      bizu: 'Incluído pela EC 115/2022, é cláusula pétrea e protege inclusive dados tratados em ambiente digital.'
+      situacaoReal: 'Uma plataforma de aplicativo de entregas e comércio eletrônico coletou CPFs, senhas e histórico de navegação de clientes e compartilhou com anunciantes na internet sem o consentimento dos titulares. Uma usuária vítima de golpes cibernéticos acionou a Justiça e obteve a exclusão imediata de seus dados dos servidores e indenização por violação ao direito fundamental de proteção aos dados pessoais nos meios digitais.',
+      aplicacaoRegra: `• Aplicação no ${deviceLabel}: A proteção de dados pessoais, inclusive nos meios virtuais e digitais, é garantia individual fundamental autônoma (EC 115/2022), exigindo das empresas e do Estado padrões estritos de segurança cibernética, finalidade legítima e consentimento.`,
+      objetivoRegra: 'Garantir a autodeterminação informativa, a privacidade e a segurança dos indivíduos no ambiente digital contra a comercialização e vazamento abusivo de suas informações.',
+      bizu: 'A proteção de dados pessoais (inclusive nos meios digitais) foi elevada a DIREITO FUNDAMENTAL no Art. 5º pela Emenda Constitucional 115/2022. Pegadinha clássica de concurso: afirmar que "a proteção de dados é mera norma infraconstitucional (LGPD)" ou "não abrange meios digitais".'
     };
   }
 
