@@ -100,34 +100,6 @@ def init_db():
     cursor.execute("UPDATE usuarios SET autorizado = 1 WHERE LOWER(TRIM(username)) = %s", (ADMIN_EMAIL,))
     conn.commit()
 
-    # TABELA TÁTICA EXCLUSIVA PARA PRINCÍPIOS PROCESSUAIS PENAIS
-    TABELA_PRINCIPIOS_FIXA = [
-        {
-            "titulo": "Princípio da Presunção de Inocência (Não Culpabilidade)",
-            "campo1_label": "Regra Constitucional",
-            "campo1_valor": "Exige trânsito em julgado para cumprimento de pena (CF, art. 5º, LVII)",
-            "campo2_label": "Prisão Cautelar / Exceção",
-            "campo2_valor": "Admite prisão preventiva motivada no Art. 312 do CPP (periculum libertatis)",
-            "detalhes": "STF (ADCs 43, 44 e 54): Vedada execução provisória da pena. Prisões cautelares são admitidas se estritamente fundamentadas.",
-            "sit": "Princípio da Presunção de Inocência (Não Culpabilidade)",
-            "preso": "Exige fundamentação cautelar expressa (Art. 312 CPP)",
-            "solto": "Responde em liberdade até o trânsito em julgado",
-            "prorrogacao": "CF/88, art. 5º, LVII e ADCs 43, 44 e 54/STF"
-        },
-        {
-            "titulo": "Princípio do Contraditório e Ampla Defesa (Defesa Técnica)",
-            "campo1_label": "Defesa Técnica (Obrigatória)",
-            "campo1_valor": "Indisponível (Art. 261 CPP; Súmula 523/STF: falta de defesa gera nulidade absoluta)",
-            "campo2_label": "Autodefesa (Direito ao Silêncio)",
-            "campo2_valor": "Direito de presença e silêncio (nemo tenetur se detegere - renunciável)",
-            "detalhes": "Art. 5º, LV da CF/88, Art. 261 do CPP e Súmula Vinculante 14 do STF.",
-            "sit": "Contraditório e Ampla Defesa (Defesa Técnica vs Autodefesa)",
-            "preso": "Intimação pessoal do réu preso e requisição obrigatória para audiência",
-            "solto": "Intimação via advogado ou edital se em lugar incerto",
-            "prorrogacao": "Art. 5º, LV, CF/88, Art. 261 CPP e Súmula 523 do STF"
-        }
-    ]
-
     try:
         pegadinhas_corrigidas_base = [
             {
@@ -186,10 +158,6 @@ def init_db():
     conn.close()
 
 init_db()
-
-def resolver_enunciado_exclusivo(q, idx, todas_questoes, cards=None):
-    enunciado_original = q.get('enunciado', '').strip()
-    return enunciado_original if enunciado_original else f"Questão #{idx + 1}: Analise a assertiva jurídica."
 
 def auto_reparar_enunciados_duplicados(item_id, pegadinhas, cards=None):
     if not pegadinhas:
@@ -634,7 +602,6 @@ elif aba_principal == "📄 Cadastrar / Gerenciar com IA":
                         model="gemini-2.5-flash",
                         contents=[types.Part.from_bytes(data=img_bytes, mime_type=uploaded_image.type), "Extraia um resumo em JSON."]
                     )
-                    # Processa resposta se houver
                 except Exception:
                     pass
 
